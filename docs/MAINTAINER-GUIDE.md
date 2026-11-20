@@ -243,24 +243,24 @@ Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomi
 
 ### The fixed channel chain
 
-Per channel: **HPF → 4-band EQ → compressor (Opto/FET/VCA) → sends → pan → bus assign → fader → mute/solo.** This order is fixed by product constraint #2 — it is not configurable, and that is the point.
+Per channel: **HPF → 4-band EQ → compressor (Multi-Comp 2: Opto/FET/VCA) → sends → pan → bus assign → fader → mute/solo.** This order is fixed by product constraint #2 — it is not configurable, and that is the point.
 
 ### Where the actual EQ/comp/tape code lives (vendored DSP)
 
-This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). The channel EQ `duskaudio::FourKEQDSP`, the channel, bus and master compressor `duskaudio::UniversalCompressorDSP`, the master tube EQ `duskaudio::MultiQTube`, the mastering multiband `UniversalCompressor` and the Tape Machine 2 plug-in come from there.
+This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). The channel EQ `duskaudio::FourKEQDSP`, the master tube EQ `duskaudio::MultiQTube`, the Multi-Comp 2 plug-in behind every compressor (channel, bus, master and the mastering multiband) and the Tape Machine 2 plug-in come from there.
 
 If the plugins repo can't be fetched, configure stops with an error. There is no build without it: the mastering EQ, loudness meter and oversampler include donor headers too. Reconfigure with network access, or point `-DDUSK_PLUGINS_PATH` at a plugins checkout.
 
 ### Feeding parameters to vendored DSP (the one pattern to copy)
 
-Every vendored core but one takes its parameters through plain setters. At the top of each block the strip reads the session atomics and calls those setters: `ChannelStrip::updateCompParameters()` in [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) drives `duskaudio::UniversalCompressorDSP`, whose setters are atomic stores, and `ChannelStrip::updateEqParameters()` drives `duskaudio::FourKEQDSP` when the EQ settings have changed. Copy that shape for any new vendored processor: no string lookup, no allocation, no host notification.
+Vendored cores take their parameters through plain setters. At the top of each block the strip reads the session atomics and calls those setters: `ChannelStrip::updateEqParameters()` in [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) drives `duskaudio::FourKEQDSP` when the EQ settings have changed. Copy that shape for any new vendored processor: no string lookup, no allocation, no host notification.
 
-The exception exposes its parameters through a JUCE `AudioProcessorValueTreeState` (APVTS): the mastering multiband `UniversalCompressor`. Looking up an APVTS parameter by name (`getRawParameterValue("threshold")`) is a **string hash lookup, forbidden on the audio thread.** So `MasteringChain::bindCompParams()` in [src/dsp/MasteringChain.cpp](../src/dsp/MasteringChain.cpp) caches each returned `std::atomic<float>*` once in `prepare`, `MasteringChain::updateCompParameters()` writes the session value through it with `storeAtom(cachedPtr, value)` every block, and the donor's `processBlock` reads the same atomics. Do not add another APVTS-backed processor.
+A whole donor plug-in built in as one of Dusk's DAF plug-ins follows the same rule through its stage class: `MultiCompStage` ([src/dsp/MultiCompStage.cpp](../src/dsp/MultiCompStage.cpp)) for Multi-Comp 2 and `MasterTape` ([src/dsp/MasterTape.cpp](../src/dsp/MasterTape.cpp)) for Tape Machine 2. The session holds the plug-in's parameters (`CompParams` in Multi-Comp 2's host domain, under its own symbols), the stage resolves each parameter index from its symbol once when it is built, and `pushParameters` on the audio thread sends only the values that changed at the top of each block. No processor in `src/` exposes a JUCE `AudioProcessorValueTreeState`; do not add one.
 
 ### Parameters: the two sources
 
 1. **Session atomics** — plain `std::atomic<T>` members of the param structs in [src/session/Session.h](../src/session/Session.h) (`faderDb`, `eqLfGainDb`, …). UI stores, audio loads, both `relaxed`. **New audio params go here.**
-2. **APVTS atoms in vendored DSP** — reached via the cached-pointer pattern above.
+2. **Donor plug-in parameters** — `CompParams` and `TapeParams`, session atomics too, pushed into the plug-in by its stage as above.
 
 Metering uses `mutable std::atomic<float>` on the param struct so DSP holding a `const Params*` can still update meters.
 
@@ -268,7 +268,7 @@ Metering uses `mutable std::atomic<float>` on the param struct so DSP holding a 
 
 There is **one** oversampling control: the **Effect Oversampling** dropdown in Audio Device settings. The engine drives the chosen factor (1×/2×/4×) through every processor. Individual DSP units **must not** enable their own internal oversampling — doing so double-oversamples and wastes CPU. When you add a processor, wire it to read the engine-wide setting; never call its `setInternalOversamplingEnabled`.
 
-Three units in the mastering chain run a fixed 4× of their own on purpose, and are not violations to fix. [BrickwallLimiter](../src/dsp/BrickwallLimiter.h) cannot limit true peak without it, and as the terminal stage it has nothing downstream to double-oversample. [MasteringDigitalEq](../src/dsp/MasteringDigitalEq.h) runs its biquads at 4× so its curves do not cramp near Nyquist. The [LoudnessMeter](../src/dsp/LoudnessMeter.cpp) true-peak detector measures at 4×, as ITU-R BS.1770 Annex 2 defines true peak; it is a meter and changes no audio.
+Every compressor runs at a fixed 2× of its own on purpose: each is Multi-Comp 2 at the plug-in's own Oversampling setting, where its parity with the plug-in was established, and `MultiCompStage` never writes that parameter. Three units in the mastering chain run a fixed 4× of their own on purpose. None of these are violations to fix. [BrickwallLimiter](../src/dsp/BrickwallLimiter.h) cannot limit true peak without it, and as the terminal stage it has nothing downstream to double-oversample. [MasteringDigitalEq](../src/dsp/MasteringDigitalEq.h) runs its biquads at 4× so its curves do not cramp near Nyquist. The [LoudnessMeter](../src/dsp/LoudnessMeter.cpp) true-peak detector measures at 4×, as ITU-R BS.1770 Annex 2 defines true peak; it is a meter and changes no audio.
 
 ---
 
@@ -297,7 +297,7 @@ CMake auto-detects three external repos at configure time, on top of four git su
 - **Submodules** (`external/clap`, `external/dusk-fizz`, `external/sheenbidi`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in different ways, which is worth knowing before you debug the wrong one. Missing `external/sheenbidi` is fatal whenever the native UI or the tests are built: configure stops with "SheenBidi is missing at external/sheenbidi". Missing `external/clap` is fatal: the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all**: the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (Dusk's mirror `dusk-audio/JUCE-wayland`, built on plugdata-team's `wayland-juce8` branch and cloned by CI at the tag set as `JUCE_TAG` in the Linux workflows; it carries local commits Dusk Studio depends on: XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
-- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
+- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, follow "Moving the donor and DAF pins" below.
 - **SFZ repository libraries:** [cmake/SfzDependencies.cmake](../cmake/SfzDependencies.cmake)
   links libcurl >= 7.62.0 for HTTPS and libarchive >= 3.4.0 for ZIP extraction.
   Linux uses pkg-config for libcurl and libarchive. Install `libarchive-dev`
@@ -341,6 +341,46 @@ To move DAF, merge the change in DAF first, then put the new DAF commit in
 third-party component, update that component's LICENSES.txt entry in the same
 commit. Pugl and the widget kit are vendored inside DAF; no extra checkout is
 needed.
+
+#### Moving the donor and DAF pins
+
+Dusk Studio builds the plug-in and framework code the two pins name, so a fix
+released in either repository reaches the app only when its pin moves.
+[`scripts/check-pins.sh`](../scripts/check-pins.sh) says whether they are
+current: the newest release tag of every plug-in built in (`4k-eq-2`,
+`duskverb-2`, `tapemachine-2`, `tape-echo-2`, `sunset-circuits`, `multi-q`,
+`multi-comp-2` once it has one) must
+be an ancestor of `DONOR_REV`, and `DAF_REV` must be on DAF's default branch,
+which must hold nothing newer outside its tests, examples, CI and documents.
+A git checkout runs it when it configures and on every build, from a cache it
+refreshes twice a day, and prints a CMake warning naming each tag the pin lacks
+(`-DDUSKSTUDIO_PIN_CHECK=OFF` silences it). CI and a Windows host do not ask,
+and a build of some other target does not either. The release workflow runs it
+as a gate, on a dry run too, and stops when a pin is behind or cannot be
+checked. For the donor, ancestry is all it proves: it does not compare the
+pin's tree with the tag's.
+
+To move them:
+
+1. DAF: write the newest commit on its default branch into `DAF_REV`, then
+   fetch and check that commit out in the DAF checkout CMake uses (`../DAF`,
+   or `DAF_PATH`), so configure stops warning that the two differ.
+2. Donor: `DONOR_REV` names a commit on the donor's `dusk-studio-pin` branch:
+   a merge of that branch and the donor commit to pin, carrying that commit's
+   tree, so the branch moves forward without a force and every release tag
+   pinned before stays an ancestor. The commit to pin is the one the newest
+   release tag names. While no release tag holds the accessors Dusk Studio
+   embeds Multi-Comp 2 through (`plugins/multi-comp/daf-plugin/MultiCompAccess.hpp`,
+   donor PR #382), pin that tag's commit with the PR's commits on top instead.
+   Make the merge with
+   `git commit-tree <commit>^{tree} -p <dusk-studio-pin head> -p <commit>`,
+   push it, then write its hash into `DONOR_REV` and into the two donor
+   revisions in LICENSES.txt.
+3. Reconfigure both build trees, build, and run the suite. A donor that added
+   a source file to a plug-in fails at link time until the file joins that
+   plug-in's list in the root `CMakeLists.txt`; one that added a parameter
+   fails the test that pins the plug-in's parameter table.
+4. `scripts/check-pins.sh` must end with both pins current.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 
@@ -860,10 +900,9 @@ instruments play region MIDI and live keys on tracks in different lanes.
 
 The CI job `rtsan-app` in `linux-sanitizer.yml` runs the same two on the
 ubuntu-26.04 runner, with the same suppressions, and fails on any report
-outside them; it stops before the build when `llvm-symbolizer` is missing. Two
-lines stand today: the mastering chain's multiband compressor (donor
-Multi-Comp) allocates every block (#1045), and JUCE's VST3 host, the standard
-`PluginSlot` path, locks on the audio thread (#1046).
+outside them; it stops before the build when `llvm-symbolizer` is missing. One
+line stands today: JUCE's VST3 host, the standard `PluginSlot` path, locks on
+the audio thread (#1046).
 
 #### Reader pool measurements
 
@@ -1773,6 +1812,14 @@ Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 feeds only DEB/RPM package metadata. Neither format is among the seven assets the
 current tag workflows publish, so nothing a tagged release produces uses it.
 
+Before step 1, `scripts/check-pins.sh` must say both pins are current; move
+them first if it does not ("Moving the donor and DAF pins" in Part 5). The
+release workflow refuses a tag built from a pin that is behind, so run the
+script once more right before pushing the tag: if it now reports a pin behind,
+move that pin in a new release commit. **Re-run failed jobs** on a tag workflow whose gate passed does
+not run the gate again, so a platform job that failed can be retried;
+**Re-run all jobs** does.
+
 1. Finish the `## [X.Y.Z] - Unreleased` section in
    [CHANGELOG.md](../CHANGELOG.md), then run
    [`scripts/bump-version.sh`](../scripts/bump-version.sh)
@@ -2239,7 +2286,7 @@ OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…
 
 THE HEART        AudioEngine::audioDeviceIOCallback()              src/engine/AudioEngine.cpp
 THE DATA         src/session/Session.h
-THE PATTERN      ChannelStrip::updateCompParameters()              src/dsp/ChannelStrip.cpp
+THE PATTERN      ChannelStrip::updateEqParameters()                src/dsp/ChannelStrip.cpp
 THE NERVOUS SYS  UI writes atom → audio reads atom → audio writes meter atom → UI timer reads it
 THE RULES        Part 3's thread table — no alloc / lock / I/O / UI on the audio thread
 ```

@@ -6,6 +6,11 @@
 
 namespace duskstudio
 {
+namespace
+{
+const CompStageBlock kNoCompStage {};
+} // namespace
+
 MasterBus::MasterBus() = default;
 
 void MasterBus::bind (const MasterBusParams& params) noexcept
@@ -57,12 +62,9 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
         tapeDryDelayR.reset();
     }
 
-    // Master oversampler around (TubeEQ + busComp). Both stages have donor
-    // saturation that aliases at native rate; the wrap moves them to
-    // oversampled rate. The comp core's internal oversampling path is never
-    // engaged because Dusk Studio does the up/downsample around the chain.
-    // The tape has its own internal oversampling, so it processes at native
-    // rate AFTER this wrap.
+    // Master oversampler around the TubeEQ, whose tube stage aliases at native
+    // rate; the wrap moves it to oversampled rate. The compressor and the tape
+    // oversample internally, so they process at native rate AFTER this wrap.
     const int bsClamped = std::max (1, blockSize);
     oversampler.setFactor (currentOxFactor);
     oversampler.prepare (bsClamped);
@@ -83,15 +85,10 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tubeEQ.prepare (prepSr, prepBs, 2);
     tubeEQ.reset();
 
-    busComp.setMode (3);            // Bus mode
-    busComp.setMix (100.0f);
-    busComp.setBusMix (100.0f);
-    busComp.setAutoMakeup (false);
-    // The core does not port the donor's analog-noise stage, so no explicit
-    // force-off is needed - the master chain stays clean under signal.
-    busComp.prepare (prepSr, prepBs);
-    busComp.reset();
-    compMaxBlock = prepBs;
+    busComp.prepare (sampleRate, bsClamped, 2);
+    compAlign.prepare (bsClamped, busComp.latencySamples());
+#else
+    compAlign.prepare (std::max (1, blockSize), 0);
 #endif
 }
 
@@ -131,37 +128,6 @@ void MasterBus::updateEqParameters() noexcept
     // - no external memcmp cache needed.
     tubeEQ.setParameters (p);
 }
-
-void MasterBus::updateCompParameters() noexcept
-{
-    if (paramsRef == nullptr) return;
-
-    busComp.setBypass (! paramsRef->compEnabled.load (std::memory_order_relaxed));
-    busComp.setBusThreshold (paramsRef->compThreshDb.load (std::memory_order_relaxed));
-    // bus_ratio / bus_attack are SSL-style stepped Choice params, NOT
-    // continuous. Map the raw knob value to the nearest discrete index.
-    //   bus_ratio: 0=2:1 1=4:1 2=10:1.  bus_attack: 0=0.1 1=0.3 2=1 3=3 4=10
-    //   5=30 ms.
-    const float ratio  = paramsRef->compRatio.load (std::memory_order_relaxed);
-    busComp.setBusRatio (ratio < 3.0f ? 0 : (ratio < 7.0f ? 1 : 2));
-    const float atkMs  = paramsRef->compAttackMs.load (std::memory_order_relaxed);
-    busComp.setBusAttack (atkMs < 0.2f ? 0
-                        : (atkMs < 0.65f ? 1
-                        : (atkMs < 2.0f ? 2
-                        : (atkMs < 6.5f ? 3
-                        : (atkMs < 20.0f ? 4 : 5)))));
-    // bus_release is a Choice indexed 0..4 over {0.1s, 0.3s, 0.6s, 1.2s, Auto}.
-    // Map the continuous release knob to the nearest discrete index, or send 4
-    // ("Auto") when the Auto toggle is engaged so the comp uses its
-    // program-dependent envelope.
-    const bool autoRel = paramsRef->compReleaseAuto.load (std::memory_order_relaxed);
-    const float relMs  = paramsRef->compReleaseMs.load   (std::memory_order_relaxed);
-    busComp.setBusRelease (autoRel ? 4
-                         : (relMs < 200.0f ? 0
-                         : (relMs < 450.0f ? 1
-                         : (relMs < 900.0f ? 2 : 3))));
-    busComp.setBusMakeup (paramsRef->compMakeupDb.load (std::memory_order_relaxed));
-}
 #endif
 
 void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
@@ -189,18 +155,16 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     updateEqParameters();
-    updateCompParameters();
 
-    // The master tube EQ and bus comp are the only saturating stages inside
-    // this wrap (the tape core oversamples internally, below). When BOTH are bypassed
-    // the up/downsample round-trip is pure waste - both donors would just pass
-    // the signal through dry - so we skip the oversampler entirely.
+    // The master tube EQ is the only stage inside this wrap (the compressor and
+    // the tape core oversample internally, below). When it is bypassed the
+    // up/downsample round-trip is pure waste, so we skip the oversampler.
     const bool eqOn   = paramsRef != nullptr
                      && paramsRef->eqEnabled.load (std::memory_order_relaxed);
     const bool compOn = paramsRef != nullptr
                      && paramsRef->compEnabled.load (std::memory_order_relaxed);
 
-    const bool wrapActive = currentOxFactor > 1 && (eqOn || compOn);
+    const bool wrapActive = currentOxFactor > 1 && eqOn;
     if (wrapActive && ! prevWrapActive)
         oversampler.reset();
     prevWrapActive = wrapActive;
@@ -218,62 +182,39 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             }
         }
 
-        // Oversampled path. Wrap (TubeEQ + busComp) inside the up/down so their
-        // saturation is band-limited before downsampling. Both were prepped at
+        // Oversampled path. Wrap the TubeEQ inside the up/down so its
+        // saturation is band-limited before downsampling. It was prepped at
         // oversampled rate / block size in prepare().
         auto up = oversampler.processSamplesUp (L, R, numSamples);
-        if (eqOn)
-        {
-            float* eqPtrs[2] = { up.L, up.R };
-            tubeEQ.process (eqPtrs, 2, up.numSamples);
-        }
-        if (compOn)
-        {
-            for (int offset = 0; offset < up.numSamples; offset += compMaxBlock)
-            {
-                const int n = std::min (compMaxBlock, up.numSamples - offset);
-                const float* compIn[2]  = { up.L + offset, up.R + offset };
-                float*       compOut[2] = { up.L + offset, up.R + offset };
-                busComp.processBlock (compIn, compOut, 2, n);
-            }
-        }
+        float* eqPtrs[2] = { up.L, up.R };
+        tubeEQ.process (eqPtrs, 2, up.numSamples);
         oversampler.processSamplesDown (L, R, numSamples);
     }
-    else if (eqOn || compOn)
+    else if (eqOn)
     {
-        // Native-rate path (factor == 1). The tube EQ has no block-size limit;
-        // chunk only the comp to honor compMaxBlock.
-        if (eqOn)
-        {
-            float* eqPtrs[2] = { L, R };
-            tubeEQ.process (eqPtrs, 2, numSamples);
-        }
-        if (compOn)
-        {
-            for (int offset = 0; offset < numSamples; offset += compMaxBlock)
-            {
-                const int n = std::min (compMaxBlock, numSamples - offset);
-                const float* compIn[2]  = { L + offset, R + offset };
-                float*       compOut[2] = { L + offset, R + offset };
-                busComp.processBlock (compIn, compOut, 2, n);
-            }
-        }
+        // Native-rate path (factor == 1). The tube EQ has no block-size limit.
+        float* eqPtrs[2] = { L, R };
+        tubeEQ.process (eqPtrs, 2, numSamples);
     }
     else if (currentOxFactor > 1 && osLatencySamples > 0)
     {
-        // EQ + comp both bypassed -> oversampler skipped. Delay by its latency
-        // so the master's latency stays invariant to the EQ/comp toggle.
+        // EQ bypassed -> oversampler skipped. Delay by its latency so the
+        // master's latency stays invariant to the EQ toggle.
         for (int i = 0; i < numSamples; ++i)
         {
             osSkipDelayL.pushSample (L[i]);  L[i] = osSkipDelayL.popSample();
             osSkipDelayR.pushSample (R[i]);  R[i] = osSkipDelayR.popSample();
         }
     }
-    // else (factor == 1, both off): signal passes through. The tape core still
-    // runs below.
+    // else (factor == 1, EQ off): signal passes through.
+
+    if (paramsRef != nullptr && (compOn || compAlign.compressorRunning() || busComp.editorOpen()))
+        busComp.pushParameters (paramsRef->comp, true, 0);
+    compAlign.process (L, R, numSamples, compStage != nullptr ? *compStage : kNoCompStage,
+                       compOn, &busComp);
 
     if (paramsRef != nullptr)
-        paramsRef->meterGrDb.store (compOn ? busComp.getGainReduction() : 0.0f,
+        paramsRef->meterGrDb.store (compAlign.compressorRunning() ? busComp.gainReductionDb() : 0.0f,
                                      std::memory_order_relaxed);
 #endif
 

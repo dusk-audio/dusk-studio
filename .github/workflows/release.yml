@@ -71,6 +71,14 @@ jobs:
           scripts/release-metadata-check.sh --tag "${GITHUB_REF_NAME}" \
             --commit-date "$(git log -1 --format=%cs)"
 
+      - name: Verify the donor and DAF pins hold what has been released
+        # A release never ships plug-in or framework code older than what the
+        # two repositories have published. A dry run fails the same way, so a
+        # pin that is behind is found before the tag. The pins are checked
+        # when this job runs: re-running only the jobs that failed keeps its
+        # answer, and builds the pins the tag holds.
+        run: scripts/check-pins.sh --cache-dir "${RUNNER_TEMP}/pin-check"
+
   supporters:
     needs: preflight
     name: Fetch the Patreon supporters list

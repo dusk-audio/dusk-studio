@@ -122,6 +122,8 @@ add_executable(dusk-studio-tests
     channel_strip_hardware_insert_lanes.cpp
     channel_strip_idle_gains.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
+    comp_stage_align.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/CompStageAlign.cpp
     insert_mode_defaults.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
     channel_strip_context_rename.cpp
@@ -152,6 +154,9 @@ add_executable(dusk-studio-tests
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
     session_appendix_parameters.cpp
+    session_comp_params.cpp
+    session_comp_serialization.cpp
+    session_comp_migration.cpp
     session_format_version.cpp
     session_write_atomic.cpp
     session_portable_paths.cpp
@@ -208,6 +213,7 @@ add_executable(dusk-studio-tests
     aux_send_text.cpp
     dsp_readout_severity.cpp
     loop_timeline.cpp
+    capture_schedule.cpp
     generated_midi_budget.cpp
     midi_bindings_preset.cpp
     midi_button_edges.cpp
@@ -305,6 +311,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     session_arm_input_gate.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/CompMigration.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/CompParams.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiSyncReceiver.cpp
@@ -446,6 +454,9 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sfz_dependencies)
+if(TARGET duskstudio-pin-check)
+    add_dependencies(dusk-studio-tests duskstudio-pin-check)
+endif()
 
 if(DUSK_PLUGINS_PATH)
     # Built-in units are the app's own static libraries of the donor's DAF
@@ -1186,14 +1197,16 @@ target_compile_definitions(dusk-studio-tests PRIVATE
     DUSKSTUDIO_TESTS=1
     DUSKSTUDIO_SFZ_LICENSE_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/licenses\")
 
-# UniversalCompressor (multi-comp donor) tests — gated on the donor being
-# available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
-# tests link against the same DSP code paths the channel strip uses.
+# Donor DSP tests, gated on the donor being available. Mirrors the main app's
+# DUSK_PLUGINS_PATH wiring exactly so the tests link against the same DSP code
+# paths the strips, buses and master use.
 if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
-        comp_static_curve.cpp
-        comp_timing.cpp
-        bus_stereo_link.cpp
+        multi_comp_stage.cpp
+        comp_editor_host.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/CompEditorHost.cpp
+        comp_stage_strips.cpp
+        comp_donor_guards.cpp
         tape_core_regression.cpp
         bus_strip.cpp
         channel_strip_signal_order.cpp
@@ -1215,8 +1228,8 @@ if(DUSK_PLUGINS_PATH)
         eq_core_regression.cpp
         eq_nyquist_response.cpp
         session_eq_dial_migration.cpp
+        eq_knob_travel.cpp
         tube_multiq_ab.cpp
-        comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
         master_tape_alignment.cpp
@@ -1224,21 +1237,26 @@ if(DUSK_PLUGINS_PATH)
         master_strip_chain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MultiCompStage.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MultibandCompPresets.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
-        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
+        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp")
+
+    # eq_knob_travel.cpp reads 4K EQ 2's parameter defaults; only that file
+    # sees the plug-in's directory.
+    set_source_files_properties(eq_knob_travel.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${DUSK_PLUGINS_PATH}/plugins/4k-eq/daf-plugin")
 
     # The master tape is the Tape Machine 2 built-in, which also carries the
-    # tape core tape_core_regression.cpp measures.
-    target_link_libraries(dusk-studio-tests PRIVATE dusk_daf_tape_machine_2)
+    # tape core tape_core_regression.cpp measures. The strips, buses and
+    # master compress through the Multi-Comp 2 built-in.
+    target_link_libraries(dusk-studio-tests PRIVATE
+        dusk_daf_tape_machine_2
+        dusk_daf_multi_comp_2)
 
     # projucer-shim satisfies TubeEQProcessor.h's `#include <JuceHeader.h>`
     # (the donor EQ under A/B test in tube_multiq_ab.cpp); the shim pulls in a
@@ -1248,11 +1266,10 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared"
         "${DUSKSTUDIO_DONOR_SHARED_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
+        # Multi-Comp 2's framework-free core, which comp_donor_guards.cpp
+        # holds the session's copied tables to.
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine")
 
@@ -1262,18 +1279,7 @@ if(DUSK_PLUGINS_PATH)
         juce::juce_events
         juce::juce_gui_extra)
 
-    target_compile_definitions(dusk-studio-tests PRIVATE
-        DUSKSTUDIO_HAS_DUSK_DSP=1
-        # Projucer-style macros the donor sources reference unguarded.
-        # Mirror the main app's defaults — the values are not load-bearing
-        # for tests; they just need to exist.
-        JucePlugin_VersionString="${PROJECT_VERSION}"
-        JucePlugin_Name="DuskStudio_Comp_Tests"
-        JucePlugin_Manufacturer="Marc Korte"
-        JucePlugin_IsMidiEffect=0
-        JucePlugin_IsSynth=0
-        JucePlugin_WantsMidiInput=0
-        JucePlugin_ProducesMidiOutput=0)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
 endif()
 
 # The native path-opening regression runs even without LAME; encoding coverage

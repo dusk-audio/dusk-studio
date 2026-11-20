@@ -12,8 +12,8 @@ swept the residue (orphaned umbrella includes in FileImporter/DpImporter/
 DpAligner headers) and closed the docs. Net allowlist −2
 (LameMp3Writer.{h,cpp} cleaned → gate 182) — the honest-yield "zero
 movement" prediction missed this. Zero production call sites remain on the
-JUCE audio-format APIs. juce_audio_utils has since unlinked, so the module
-unlink now waits on juce_dsp, whose module declaration depends on it. Bench
+JUCE audio-format APIs. juce_audio_utils and, from the app, juce_dsp have
+since unlinked; juce_audio_formats is still on the app's own link line. Bench
 debts at §Owed.**
 This spec is archival once PR-2 merges.
 
@@ -34,10 +34,10 @@ unlink from this tower alone. Every consumer keeps other JUCE (AudioBuffer,
 File/String, TimeSliceThread, dsp, GUI). When this was written
 `juce_audio_utils` (AudioThumbnail) also kept `juce_audio_formats` compiling;
 that link is gone, and `juce_dsp`, whose module declaration depends on
-`juce_audio_formats`, is now the only thing keeping it in the build. The
-deliverable is: zero production call sites on the JUCE audio-format APIs, so
-`juce_audio_formats` becomes unlinkable the moment `juce_dsp` goes, with no
-residual work. That unlink will
+`juce_audio_formats`, has since unlinked from the app too (the test binary
+still links it). The deliverable is: zero production call sites on the JUCE
+audio-format APIs, so `juce_audio_formats` can leave the app's link line with
+no residual work. That unlink will
 be global rather than platform-scoped: libsndfile is required on every
 platform, so no JUCE fallback path survives anywhere. The gate ratchet does
 not move; do not chase it.

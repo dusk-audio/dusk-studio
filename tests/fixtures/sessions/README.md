@@ -31,3 +31,13 @@ This fixture contains 24 empty tracks and a 48 kHz session rate, with no audio,
 MIDI, markers, mastering source or personal session data. It covers the actual
 released writer's schema, the nondefault mixer value, rate and defaults for
 fields introduced later. It does not supply released MIDI or marker coverage.
+
+# Hand-written format-11 compressor fixture
+
+`format11-compressors.json` is written by hand, not by a released binary. It
+holds only the keys format 11 stored for the compressors, each away from its
+default: three tracks, one in each mode (Opto, FET, VCA), whose comp objects
+set every mode's controls, two buses, the master and the mastering chain. The
+second bus keeps the default Auto release, the one setting it needs to show.
+The loader fills the rest from the model defaults. It exists to pin the 11 -> 12
+conversion of every compressor key to Multi-Comp 2's host values.

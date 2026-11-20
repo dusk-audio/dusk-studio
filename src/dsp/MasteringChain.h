@@ -1,6 +1,5 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
 #include <atomic>
 #include "BrickwallLimiter.h"
@@ -10,25 +9,27 @@
 #include "../session/Session.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  #include "UniversalCompressor.h"
+  #include "CompStageAlign.h"
+  #include "MultiCompStage.h"
 #endif
 
 namespace duskstudio
 {
-// Mastering-stage signal chain: Tube EQ -> Bus comp -> Brickwall limiter.
-// Reads its parameters from MasteringParams (a sibling of MasterBusParams);
-// the same DSP cores are used so the sound carries from the live master
-// into mastering, with the limiter as the new final stage.
+// Mastering-stage signal chain: digital EQ -> multiband compressor ->
+// brickwall limiter. Reads its parameters from MasteringParams.
 //
 // Tape saturation is intentionally NOT in this chain. Mastering happens
 // AFTER the bounce, where the master tape sat (if engaged in Mixing) is
-// already baked in. A dedicated mastering tape stage is a future option.
+// already baked in.
 class MasteringChain
 {
 public:
     MasteringChain() = default;
 
-    void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
+    // Neither the engine's Effect Oversampling nor anything else reaches the
+    // chain's rates: the EQ and the limiter run fixed 4x, and the compressor
+    // Multi-Comp 2's own 2x.
+    void prepare (double sampleRate, int blockSize);
     void bind (const MasteringParams& params) noexcept;
 
     void processInPlace (float* L, float* R, int numSamples, bool capturePhase = true) noexcept;
@@ -46,6 +47,8 @@ public:
     void restoreLoudnessHistory (const LoudnessMeter::History& history) noexcept;
 
     // EQ (oversampler), comp and limiter are in series, so their latencies add.
+    // The compressor's counts whether it is in or out: out, its place is a plain
+    // delay of the same length, so a bounce always trims one lead-in.
     int getLatencySamples() const noexcept
     {
         return digitalEq.getLatencySamples()
@@ -53,16 +56,12 @@ public:
              + limiter.getLatencySamples();
     }
 
-    // UI-side accessors. The Mastering view embeds the UniversalCompressor's
-    // own AudioProcessorEditor for the Multi-Comp panel and drives the
-    // limiter atomics through a custom editor. Returns null when the donor
-    // DSP isn't compiled in (DUSKSTUDIO_HAS_DUSK_DSP=0 build).
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    UniversalCompressor* getCompProcessor() noexcept { return &busComp; }
-#else
-    juce::AudioProcessor* getCompProcessor() noexcept { return nullptr; }
+    // Multi-Comp 2 in Multiband mode, for its editor and the presets. Message
+    // thread.
+    MultiCompStage& getCompressor() noexcept { return comp; }
 #endif
-    BrickwallLimiter&    getLimiter() noexcept { return limiter; }
+    BrickwallLimiter& getLimiter() noexcept { return limiter; }
 
     // Spectrum-analyzer feed (post-EQ)
     // The audio thread writes mono-summed post-EQ samples into a free-running
@@ -97,32 +96,18 @@ private:
     void pushScope (const float* L, const float* R, int n) noexcept;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    UniversalCompressor         busComp;
-    juce::MidiBuffer            compMidi;
-    juce::AudioBuffer<float>    compStereoBuffer;
-
-    std::atomic<float>* compModeAtom        = nullptr;
-    std::atomic<float>* compBypassAtom      = nullptr;
-    std::atomic<float>* compMixAtom         = nullptr;
-    std::atomic<float>* compAutoMakeupAtom  = nullptr;
-    std::atomic<float>* compBusThreshAtom   = nullptr;
-    std::atomic<float>* compBusRatioAtom    = nullptr;
-    std::atomic<float>* compBusAttackAtom   = nullptr;
-    std::atomic<float>* compBusReleaseAtom  = nullptr;
-    std::atomic<float>* compBusMakeupAtom   = nullptr;
-    std::atomic<float>* compBusMixAtom      = nullptr;
-
-    void bindCompParams();
-    void updateCompParameters() noexcept;
-
-    static inline void storeAtom (std::atomic<float>* a, float v) noexcept
-    {
-        if (a != nullptr) a->store (v, std::memory_order_relaxed);
-    }
+    MultiCompStage comp { CompStage::Multiband };
+    // The compressor's place as a member of a stage whose latency is always on:
+    // the plug-in runs only while engaged and fading, a plain delay of its
+    // latency stands in for it otherwise, and the two crossfade time-aligned.
+    // The clock is snapped on in prepare and never advanced, so its block plays
+    // as a fixed stage.
+    CompStageClock compClock;
+    CompStageAlign compAlign;
 #endif
 
-    // The donor comp's latency, read once in prepare: its own counter is a plain
-    // int the audio thread may rewrite, and the bounce reads this from another thread.
+    // The compressor's latency, read once in prepare, for the bounce, which
+    // reads it from another thread.
     std::atomic<int> compLatencySamples { 0 };
 
     int preparedBlockSize = 0;

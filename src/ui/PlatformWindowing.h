@@ -90,6 +90,18 @@ std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t nativeChild
 //        reach the input queue but need the window focused at the OS level.
 bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow);
 
+// One edge of the left button at a native window through the display server,
+// read by the window's own event loop as it reads the user's pointer: the
+// pointer moves to x, y in the window's own pixels, the button held through
+// the move when `held`, then the button goes down (button 1), comes up (-1)
+// or neither (0). GUI scenarios use it to work a plug-in's own editor.
+//
+// Linux: MotionNotify, then ButtonPress or ButtonRelease, via XSendEvent on a
+//        connection of its own. False when the window is gone or the server
+//        refused an event.
+// macOS / Windows: false, not implemented.
+bool sendPointerThroughDisplayServer (std::uintptr_t nativeWindow, int x, int y, int button, bool held);
+
 // Bring the given window's native peer to the foreground and grant it
 // focus. Used after creating a fresh top-level window (main window,
 // plugin editor) so the WM doesn't bury it under existing windows or

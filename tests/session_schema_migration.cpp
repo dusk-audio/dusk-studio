@@ -85,7 +85,7 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
     // every step.
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 11);
+    REQUIRE (root["version"].get<int>() == 12);
     REQUIRE (root.contains ("tempo"));
     REQUIRE (root["tempo"].get<double>() == 98.5);
 }
@@ -102,7 +102,7 @@ TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 5));
-    REQUIRE (migrated["version"].get<int>() == 11);
+    REQUIRE (migrated["version"].get<int>() == 12);
     REQUIRE (migrated["tracks"][0]["aux_sends_bypassed"].get<bool>());
 
     const auto dir = makeTempMigrationDir();
@@ -116,7 +116,7 @@ TEST_CASE ("migrateSession carries v5 AUX-send bypass data to the current schema
 
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 11);
+    REQUIRE (saved["version"].get<int>() == 12);
     REQUIRE (saved["tracks"][0]["aux_sends_bypassed"].get<bool>());
     dir.deleteRecursively();
 }
@@ -139,7 +139,7 @@ TEST_CASE ("migrateSession carries an ordinary v6 session to the current format"
 
     auto migrated = root;
     REQUIRE (duskstudio::migrateSession (migrated, 6));
-    CHECK (migrated["version"].get<int>() == 11);
+    CHECK (migrated["version"].get<int>() == 12);
     CHECK (migrated["tracks"][0]["name"].get<std::string>() == "Legacy strip");
     CHECK_FALSE (migrated["tracks"][0].contains ("builtin_id"));
 
@@ -155,20 +155,22 @@ TEST_CASE ("migrateSession carries an ordinary v6 session to the current format"
     REQUIRE (SessionSerializer::save (*session, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (saved["version"].get<int>() == 11);
+    CHECK (saved["version"].get<int>() == 12);
 
     dir.deleteRecursively();
 }
 
-TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 session",
+TEST_CASE ("migrateSession keeps a v7 session's EQ band dials as markings and rewrites only its filter frequencies",
            "[session][serializer][migration][eq]")
 {
     // v7 -> v8 turns each stored EQ and filter dial position into the Hz it
-    // played and keeps the position beside it as freq_dial, which the strip
-    // plays until the frequency moves (session_eq_dial_migration.cpp checks
-    // the values and the sound against the core). A filter at OFF keeps its
-    // frequency and gets its dial too. Everything else, gains, Qs and filter
-    // switches included, passes through.
+    // played and keeps the position beside it as freq_dial. v11 -> v12 turns a
+    // band's kept dial back into its frequency marking, which the strip plays
+    // through the core's dial law, and drops it; a filter keeps its Hz and its
+    // dial, which the strip plays until the frequency moves
+    // (session_eq_dial_migration.cpp checks the values and the sound against
+    // the core). A filter at OFF keeps its frequency and gets its dial too.
+    // Everything else, gains, Qs and filter switches included, passes through.
     nlohmann::json root {
         { "version", 7 },
         { "tempo", 97.0 },
@@ -187,27 +189,22 @@ TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 sess
 
     const auto original = root;
     REQUIRE (duskstudio::migrateSession (root, 7));
-    CHECK (root["version"].get<int>() == 11);
+    CHECK (root["version"].get<int>() == 12);
 
-    const auto& eq = root["tracks"][0]["eq"];
-    CHECK (std::abs (eq["lf"]["freq"].get<double>() - 100.0) > 1.0);
-    CHECK (std::abs (eq["hm"]["freq"].get<double>() - 2000.0) > 1.0);
-    CHECK (eq["hf"]["freq"].get<double>() < 8000.0);
     CHECK (root["tracks"][0]["hpf"]["freq"].get<double>() < 100.0);
     CHECK (root["tracks"][1]["lpf"]["freq"].get<double>() > 9000.0);
 
     auto expected = original;
-    expected["version"] = 11;
-    for (const char* band : { "lf", "hm", "hf" })
-    {
-        expected["tracks"][0]["eq"][band]["freq"] = eq[band]["freq"];
-        expected["tracks"][0]["eq"][band]["freq_dial"] = original["tracks"][0]["eq"][band]["freq"];
-    }
+    expected["version"] = 12;
     expected["tracks"][0]["hpf"]["freq"] = root["tracks"][0]["hpf"]["freq"];
     expected["tracks"][0]["hpf"]["freq_dial"] = 120.0;
     expected["tracks"][0]["lpf"]["freq_dial"] = 20000.0;
     expected["tracks"][1]["lpf"]["freq"] = root["tracks"][1]["lpf"]["freq"];
     expected["tracks"][1]["lpf"]["freq_dial"] = 8000.0;
+    // v11 -> v12 gives every track its converted comp object
+    // (session_comp_migration.cpp holds those values).
+    for (std::size_t t = 0; t < 2; ++t)
+        expected["tracks"][t]["comp"] = root["tracks"][t]["comp"];
     CHECK (root == expected);
 }
 
@@ -216,7 +213,8 @@ TEST_CASE ("migrateSession carries a v8 session's LV2 state tags to the current 
 {
     // v8 -> v9 only advances the stamp: lv2_state_tag, which a moved track
     // carries, is what a v8 build would lose. With no regions, v9 -> v10 has no
-    // take history to move, so the payload passes through.
+    // take history to move, so the payload passes through but for the comp
+    // object v11 -> v12 gives each track.
     nlohmann::json root {
         { "version", 8 },
         { "tracks", nlohmann::json::array ({
@@ -225,8 +223,10 @@ TEST_CASE ("migrateSession carries a v8 session's LV2 state tags to the current 
         }) }
     };
     auto expected = root;
-    expected["version"] = 11;
+    expected["version"] = 12;
     REQUIRE (duskstudio::migrateSession (root, 8));
+    for (std::size_t t = 0; t < 2; ++t)
+        expected["tracks"][t]["comp"] = root["tracks"][t]["comp"];
     CHECK (root == expected);
 }
 
@@ -263,7 +263,7 @@ TEST_CASE ("Loading a v6 session clears built-ins the live session was holding",
     REQUIRE (SessionSerializer::save (live, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (saved["version"].get<int>() == 11);
+    CHECK (saved["version"].get<int>() == 12);
     CHECK_FALSE (saved["tracks"][0].contains ("builtin_id"));
 
     dir.deleteRecursively();
@@ -292,7 +292,7 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 11);
+    REQUIRE (root["version"].get<int>() == 12);
 
     dir.deleteRecursively();
 }
@@ -327,7 +327,7 @@ TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a current
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (saved.is_object());
-    CHECK (saved["version"].get<int>() == 11);
+    CHECK (saved["version"].get<int>() == 12);
     CHECK (saved["tracks"][0]["plugin_desc_xml"].get<std::string>() == legacyXml);
     CHECK (saved["tracks"][0]["plugin_state"].get<std::string>()
            == "bGVnYWN5LXN0YXRl");
@@ -375,7 +375,7 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     REQUIRE (SessionSerializer::save (*source, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 11);
+    REQUIRE (saved["version"].get<int>() == 12);
     const auto& savedAudio = saved["tracks"][0]["regions"][0];
     CHECK (savedAudio["take_provenance"]["captured_at_ms"].get<std::int64_t>() == 101);
     CHECK (savedAudio["take_provenance"]["loop_pass"].get<int>() == 2);
@@ -490,7 +490,7 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     REQUIRE (SessionSerializer::save (*clamped, target));
     const auto upgraded = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (upgraded["version"].get<int>() == 11);
+    CHECK (upgraded["version"].get<int>() == 12);
 
     dir.deleteRecursively();
 }

@@ -708,7 +708,7 @@ TEST_CASE ("SessionSerializer round-trips the mixer", "[session][serializer]")
     bus.hpfEnabled.store (true);
     bus.hpfFreq.store (140.0f);
     bus.compEnabled.store (true);
-    bus.compThreshDb.store (-12.0f);
+    bus.comp.set (duskstudio::CompParamId::BusThreshold, -12.0f);
 
     auto& master = a.master();
     master.faderDb.store (-1.5f);
@@ -741,7 +741,7 @@ TEST_CASE ("SessionSerializer round-trips the mixer", "[session][serializer]")
     CHECK (busB.hpfEnabled.load());
     CHECK_THAT (busB.hpfFreq.load(), WithinAbs (140.0f, 1.0e-6f));
     CHECK (busB.compEnabled.load());
-    CHECK_THAT (busB.compThreshDb.load(), WithinAbs (-12.0f, 1.0e-6f));
+    CHECK_THAT (busB.comp.get (duskstudio::CompParamId::BusThreshold), WithinAbs (-12.0f, 1.0e-6f));
 
     const auto& masterB = b->master();
     CHECK_THAT (masterB.faderDb.load(), WithinAbs (-1.5f, 1.0e-6f));

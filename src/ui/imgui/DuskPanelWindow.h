@@ -57,8 +57,7 @@ public:
     virtual bool inputSettledForScenario() const { return true; }
 
     // The body's size in design pixels, before the window's scale. Read every frame,
-    // so a view whose layout depends on its own state (the comp editor's mode row)
-    // may change it between frames.
+    // so a view whose layout depends on its own state may change it between frames.
     virtual ImVec2 preferredSize() const = 0;
 
     // Draw the body. `origin` is the body's top-left in window coordinates and

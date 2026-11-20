@@ -8,64 +8,82 @@
 # Lower values after a fix with: bash scripts/regress/perf-ratchet.sh --update
 # It only lowers values and drops rows the suite no longer runs. Raising a
 # value or adding a row is a hand edit, and the change has to say why.
-# Recorded with 0.16.1 (07571ad8), the lowest of six runs, for the rows it has.
-# The Multicore with one or two busy strips rows are newer than 0.16.1 and
-# carry the 0.17 candidate's values (507f9013 plus the JSON rows), also the
-# lowest of six runs.
+# Recorded with the 0.17 candidate (5fa8c095), the lowest of eight runs. Every
+# row was re-recorded there, 35 up and 21 down from the values before it,
+# because every mixer compressor became Multi-Comp 2, which runs at its own 2x
+# whatever Effect Oversampling says. At Effect Oversampling 1x a row with the
+# compressors in costs up to 3.1 times what it did at 48 kHz and up to 1.6
+# times at 96 kHz. At 2x it costs 1.4 times as much at 48 kHz. At 4x, and at
+# 96 kHz from 2x, it costs less than before: the compressor left the strip's
+# oversampler. With the compressors out a row costs less, since a compressor
+# that is out is not run.
+#host;
+# anywhere else the leg is a SKIP, and CI never runs it.
+# Lower values after a fix with: bash scripts/regress/perf-ratchet.sh --update
+# It only lowers values and drops rows the suite no longer runs. Raising a
+# value or adding a row is a hand edit, and the change has to say why.
+# Recorded with the 0.17 candidate (5fa8c095), the lowest of eight runs. Every
+# row was re-recorded there, 35 up and 21 down from the values before it,
+# because every mixer compressor became Multi-Comp 2, which runs at its own 2x
+# whatever Effect Oversampling says. With the compressors in, a row costs about
+# 3.1 times what it did at 48 kHz and 1.6 times at 96 kHz at Effect
+# Oversampling 1x, 1.4 times at 2x, and less than before at 4x, where the
+# compressor left the strip's oversampler. With the compressors out a row costs
+# less, since a compressor that is out is not run.
 #host	Intel(R) Core(TM) i7-8809G CPU @ 3.10GHz, 8 threads
-48k/128 | idle (1 track, EQ off, comp off)	20.0
-48k/128 | 16ch EQ only (comp off)	101.0
-48k/128 | 16ch comp only (EQ off)	446.0
-48k/128 | 16ch + EQ + comp (full mixer) @1x	448.0
-48k/128 | 16ch + EQ + comp + tape on @1x	768.0
-48k/128 | 16ch + EQ + comp + tape on @2x	1336.0
-48k/128 | 16ch + EQ + comp + tape on @4x	2273.0
-48k/256 | idle (1 track, EQ off, comp off)	35.0
-48k/256 | 16ch EQ only (comp off)	206.0
-48k/256 | 16ch comp only (EQ off)	886.0
-48k/256 | 16ch + EQ + comp (full mixer) @1x	876.0
-48k/256 | 16ch + EQ + comp + tape on @1x	1533.0
-48k/256 | 16ch + EQ + comp + tape on @2x	2651.0
-48k/256 | 16ch + EQ + comp + tape on @4x	4526.0
-48k/512 | idle (1 track, EQ off, comp off)	65.0
-48k/512 | 16ch EQ only (comp off)	412.0
-48k/512 | 16ch comp only (EQ off)	1779.0
-48k/512 | 16ch + EQ + comp (full mixer) @1x	1761.0
-48k/512 | 16ch + EQ + comp + tape on @1x	3042.0
-48k/512 | 16ch + EQ + comp + tape on @2x	5336.0
-48k/512 | 16ch + EQ + comp + tape on @4x	9027.0
-96k/256 | idle (1 track, EQ off, comp off)	35.0
-96k/256 | 16ch EQ only (comp off)	204.0
-96k/256 | 16ch comp only (EQ off)	885.0
-96k/256 | 16ch + EQ + comp (full mixer) @1x	892.0
-96k/256 | 16ch + EQ + comp + tape on @1x	1513.0
-96k/256 | 16ch + EQ + comp + tape on @2x	2642.0
-96k/256 | 16ch + EQ + comp + tape on @4x	4496.0
-96k/512 | idle (1 track, EQ off, comp off)	65.0
-96k/512 | 16ch EQ only (comp off)	411.0
-96k/512 | 16ch comp only (EQ off)	1776.0
-96k/512 | 16ch + EQ + comp (full mixer) @1x	1769.0
-96k/512 | 16ch + EQ + comp + tape on @1x	3012.0
-96k/512 | 16ch + EQ + comp + tape on @2x	5241.0
-96k/512 | 16ch + EQ + comp + tape on @4x	9005.0
-96k/1024 | idle (1 track, EQ off, comp off)	128.0
-96k/1024 | 16ch EQ only (comp off)	819.0
-96k/1024 | 16ch comp only (EQ off)	3530.0
-96k/1024 | 16ch + EQ + comp (full mixer) @1x	3518.0
-96k/1024 | 16ch + EQ + comp + tape on @1x	6010.0
-96k/1024 | 16ch + EQ + comp + tape on @2x	10484.0
-96k/1024 | 16ch + EQ + comp + tape on @4x	18191.0
-Multicore scaling (48k/256, 16ch + EQ + comp @1x) | serial (0 workers)	896.0
-Multicore scaling (48k/256, 16ch + EQ + comp @1x) | 6 workers (cores-2)	285.0
-Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, serial (0 workers)	59.0
-Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, 6 workers	60.0
-Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, 6 workers, every block pooled	77.0
-Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, serial (0 workers)	109.0
-Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, 6 workers	108.0
-Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, 6 workers, every block pooled	137.0
-Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, serial (0 workers)	237.0
-Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, 6 workers	234.0
-Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, 6 workers, every block pooled	328.0
-Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, serial (0 workers)	469.0
-Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, 6 workers	468.0
-Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, 6 workers, every block pooled	573.0
+48k/128 | idle (1 track, EQ off, comp off)	13.0
+48k/128 | 16ch EQ only (comp off)	95.0
+48k/128 | 16ch comp only (EQ off)	1389.0
+48k/128 | 16ch + EQ + comp (full mixer) @1x	1390.0
+48k/128 | 16ch + EQ + comp + tape on @1x	1687.0
+48k/128 | 16ch + EQ + comp + tape on @2x	1882.0
+48k/128 | 16ch + EQ + comp + tape on @4x	2153.0
+48k/256 | idle (1 track, EQ off, comp off)	21.0
+48k/256 | 16ch EQ only (comp off)	181.0
+48k/256 | 16ch comp only (EQ off)	2734.0
+48k/256 | 16ch + EQ + comp (full mixer) @1x	2730.0
+48k/256 | 16ch + EQ + comp + tape on @1x	3313.0
+48k/256 | 16ch + EQ + comp + tape on @2x	3733.0
+48k/256 | 16ch + EQ + comp + tape on @4x	4262.0
+48k/512 | idle (1 track, EQ off, comp off)	38.0
+48k/512 | 16ch EQ only (comp off)	372.0
+48k/512 | 16ch comp only (EQ off)	5415.0
+48k/512 | 16ch + EQ + comp (full mixer) @1x	5409.0
+48k/512 | 16ch + EQ + comp + tape on @1x	6598.0
+48k/512 | 16ch + EQ + comp + tape on @2x	7429.0
+48k/512 | 16ch + EQ + comp + tape on @4x	8471.0
+96k/256 | idle (1 track, EQ off, comp off)	21.0
+96k/256 | 16ch EQ only (comp off)	181.0
+96k/256 | 16ch comp only (EQ off)	1443.0
+96k/256 | 16ch + EQ + comp (full mixer) @1x	1443.0
+96k/256 | 16ch + EQ + comp + tape on @1x	2011.1
+96k/256 | 16ch + EQ + comp + tape on @2x	2453.0
+96k/256 | 16ch + EQ + comp + tape on @4x	2967.0
+96k/512 | idle (1 track, EQ off, comp off)	38.0
+96k/512 | 16ch EQ only (comp off)	365.0
+96k/512 | 16ch comp only (EQ off)	2854.0
+96k/512 | 16ch + EQ + comp (full mixer) @1x	2847.0
+96k/512 | 16ch + EQ + comp + tape on @1x	4021.1
+96k/512 | 16ch + EQ + comp + tape on @2x	4850.0
+96k/512 | 16ch + EQ + comp + tape on @4x	5906.0
+96k/1024 | idle (1 track, EQ off, comp off)	71.0
+96k/1024 | 16ch EQ only (comp off)	750.0
+96k/1024 | 16ch comp only (EQ off)	5666.0
+96k/1024 | 16ch + EQ + comp (full mixer) @1x	5661.0
+96k/1024 | 16ch + EQ + comp + tape on @1x	7999.0
+96k/1024 | 16ch + EQ + comp + tape on @2x	9661.0
+96k/1024 | 16ch + EQ + comp + tape on @4x	11751.0
+Multicore scaling (48k/256, 16ch + EQ + comp @1x) | serial (0 workers)	2721.0
+Multicore scaling (48k/256, 16ch + EQ + comp @1x) | 6 workers (cores-2)	812.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, serial (0 workers)	169.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, 6 workers	169.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, 6 workers, every block pooled	218.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, serial (0 workers)	333.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, 6 workers	179.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, 6 workers, every block pooled	424.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, serial (0 workers)	703.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, 6 workers	703.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, 6 workers, every block pooled	835.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, serial (0 workers)	1362.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, 6 workers	761.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, 6 workers, every block pooled	1510.0

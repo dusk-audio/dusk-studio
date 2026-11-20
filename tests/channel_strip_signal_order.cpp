@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/ChannelStrip.h"
+#include "dsp/CompStageAlign.h"
 #include "session/Session.h"
 
 #include <algorithm>
@@ -65,6 +66,8 @@ struct Rig
     duskstudio::ChannelStripParams   params;
     duskstudio::HardwareInsertParams hw;
     ChannelStrip strip;
+    // The strips' compressor stage, held where an engaged compressor puts it.
+    duskstudio::CompStageClock compStage;
 
     std::vector<float> in, masterL, masterR, sendL, sendR, returnL, returnR;
     std::array<std::vector<float>, ChannelStrip::kNumBuses>    busL, busR;
@@ -103,7 +106,13 @@ struct Rig
         strip.insertMode.store (insertMode, std::memory_order_release);
     }
 
-    void prepare() { strip.prepare (kSr, kBlock); }
+    void prepare()
+    {
+        strip.prepare (kSr, kBlock);
+        compStage.prepare (kSr, strip.getCompressor (false).latencySamples());
+        compStage.snap (params.compEnabled.load());
+        strip.setCompStage (&compStage.block());
+    }
 
     // `returnTone` null: the outboard is a wire, returning exactly what it was
     // sent in the same block.
@@ -154,14 +163,21 @@ struct Rig
 
     void compressHard()
     {
-        // VCA at the bottom of its threshold range, 8:1, so any tone the tests
-        // use sits well into gain reduction.
+        // VCA at the bottom of its threshold range, about 9:1 (COMPRESSION 80),
+        // so any tone the tests use sits well into gain reduction.
         params.compEnabled.store (true);
         params.compMode.store (2);
-        params.compVcaThreshDb.store (-38.0f);
-        params.compVcaRatio.store (8.0f);
+        params.comp.set (duskstudio::CompParamId::VcaThreshold, -55.0f);
+        params.comp.set (duskstudio::CompParamId::VcaCompression, 80.0f);
     }
 };
+
+// Where the dial law plays an LM band marked 1 kHz at gainDb, in Brown.
+double lmPlayedHz (float gainDb)
+{
+    using EQ = duskaudio::FourKEQDSP;
+    return EQ::calibratedEqFrequency (1000.0f, gainDb, EQ::Band::LM, false, true);
+}
 } // namespace
 
 TEST_CASE ("channel strip order: phase invert comes before the insert", "[channel-strip][order]")
@@ -231,7 +247,7 @@ TEST_CASE ("channel strip order: the insert comes before HPF / EQ / LPF", "[chan
     }
     SECTION ("EQ band")
     {
-        check (1000.0, [] (duskstudio::ChannelStripParams& p)
+        check (lmPlayedHz (12.0f), [] (duskstudio::ChannelStripParams& p)
         {
             p.lmFreq.store (1000.0f);
             p.lmGainDb.store (12.0f);
@@ -278,8 +294,8 @@ TEST_CASE ("channel strip order: HPF / EQ / LPF come before the compressor", "[c
     }
     SECTION ("EQ band")
     {
-        const double open = grDb (1000.0, none);
-        const double cut  = grDb (1000.0, [] (duskstudio::ChannelStripParams& p)
+        const double open = grDb (lmPlayedHz (-12.0f), none);
+        const double cut  = grDb (lmPlayedHz (-12.0f), [] (duskstudio::ChannelStripParams& p)
         {
             p.lmFreq.store (1000.0f);
             p.lmGainDb.store (-12.0f);

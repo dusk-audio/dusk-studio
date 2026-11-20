@@ -246,6 +246,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
 bool hasUsableDisplay() { return true; }   // native windowing always present
 bool captureNativeWindowToPpm (std::uintptr_t, const std::string&) { return false; }
 bool sendEscapeThroughDisplayServer (std::uintptr_t) { return false; }
+bool sendPointerThroughDisplayServer (std::uintptr_t, int, int, int, bool) { return false; }
 
 std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t nativeChild)
 {

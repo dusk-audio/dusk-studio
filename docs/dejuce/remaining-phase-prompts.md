@@ -147,6 +147,9 @@ consolidation is done and H1d + H2 are unblocked.
 
 ## Prompt 5 — H2-donor (Multiband compressor DAF port, plugins repo)
 
+Done: Multi-Comp 2's Multiband mode is the port; Prompt 6 is done too
+(`feat/017-multi-comp-2`). Kept for the record.
+
 ```
 You are executing the donor half of hosting-tower phase H2 of the Dusk Studio
 de-JUCE campaign. Precondition: donor consolidation done (one donor rev, no
@@ -263,7 +266,8 @@ tri-platform), JUCE_PLUGINHOST_* defines, and every JUCE-host fallback rung in
 the slot ladders (ladder becomes CLAP > LV2 > VST3 > MS [> AU on mac]).
 Unlink juce_audio_processors from CMake on ALL THREE platforms. Recount the
 current links before recording module totals: juce_audio_utils is already
-unlinked, and juce_audio_formats stays while juce_dsp depends on it. Retire
+unlinked, juce_dsp has unlinked from the app (tests still link it), and
+juce_audio_formats is still on the app's link line. Retire
 tools/tsan_suppressions.txt entries tied to deleted primitives in the SAME PR.
 Update tools/juce-allowlist.txt — expect a large ratchet drop; record
 before/after. Sweep per CLAUDE.md rule 10: grep for every deleted symbol

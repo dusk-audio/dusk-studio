@@ -1295,8 +1295,9 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     // baked in and replayed late. MIDI instruments are excluded: the scheduler
     // pre-shifts their events by the plugin latency, so their capture is
     // already aligned. Every track's capture also carries the strip's
-    // oversampler at the render factor; frozen playback adds back what the
-    // live path has at the session's factor. Render that many extra samples
+    // oversampler at the render factor and the strips' compressor stage as the
+    // render's prepare set it; frozen playback adds back what the live path
+    // has at the session's factor and stage. Render that many extra samples
     // and drop them from the head.
     const bool isMidiTrack =
         session.track (trackIndex).mode.load (std::memory_order_relaxed)
@@ -1308,7 +1309,8 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         : (! isMidiTrack && insertMode == ChannelStrip::kInsertPlugin
             ? frozenStrip.getInsertPluginLatencySamples() : 0);
     const std::int64_t leadIn = (std::int64_t) insertLatency
-                            + (std::int64_t) frozenStrip.getOversamplingLatencySamples();
+                            + (std::int64_t) frozenStrip.getOversamplingLatencySamples()
+                            + (std::int64_t) engine.getStripCompLatencySamples();
     const std::int64_t toRender = lenSamples + leadIn;
 
     std::int64_t done = 0, written = 0, dropped = 0;

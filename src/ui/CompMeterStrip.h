@@ -26,16 +26,12 @@ public:
         std::function<float()>     getGrDb;           // ≤ 0, peak gain reduction dB
         std::function<float()>     getThresholdDb;    // current threshold (drives triangle position)
         std::function<void(float)> setThresholdDb;    // drag writes a clamped value
-        std::function<void()>      resetThreshold;    // dbl-click: no-comp reset
+        std::function<void()>      resetThreshold;    // dbl-click: the plug-in's default
         std::function<bool()>      isEngaged;         // controls triangle colour
         std::function<void()>      autoEnable;        // touching threshold auto-enables the comp
+        std::function<void()>      bypass;            // dbl-click undoes its first press's autoEnable
         float floorDb   = -60.0f;                     // bottom of IN-meter scale
-        // Raised from 0 to +12 so the drag handle can reach the VCA
-        // threshold's +12 dB neutral ceiling (compVcaThreshDb range is
-        // -38..+12, defaulting to +12 = no compression). OPTO/FET clamp
-        // their per-mode params at 0 dB threshold so dragging above 0
-        // there is a no-op; only VCA actually uses the extra range.
-        float ceilingDb =  12.0f;                     // top of IN-meter scale
+        float ceilingDb =   0.0f;                     // top of IN-meter scale
     };
 
     explicit CompMeterStrip (Source src);
@@ -151,6 +147,7 @@ private:
     bool hasCaptions = false;            // computed in resized(); paint reads without re-querying bounds
 
     bool draggingThreshold = false;
+    bool bypassedBeforeGesture = false;
     bool showInputBar = true;
     bool showHandle   = true;
     bool handleOnRight = false;

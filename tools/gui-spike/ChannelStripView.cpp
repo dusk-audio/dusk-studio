@@ -296,10 +296,10 @@ StripFrameResult ChannelStripView::draw (dw::Context& ctx, ImVec2 origin, float 
         struct Cell { const char* id; const char* label; std::atomic<float>* value;
                       const Range* range; float def; const char* fmt; };
         const Cell cells[] = {
-            { "##rat", "RAT", &params.compFetRatioIndex, nullptr, 0.0f, nullptr },
-            { "##atk", "ATK", &params.compFetAttack,  &StripParams::atkRange(), 0.2f,   "%.2f" },
-            { "##rel", "REL", &params.compFetRelease, &StripParams::relRange(), 400.0f, "%.0f" },
-            { "##mak", "MAK", &params.compFetOutput,  &StripParams::makRange(), 0.0f,   "%+.1f" },
+            { "##rat", "RAT", &params.compRatioIndex, nullptr, 0.0f, nullptr },
+            { "##atk", "ATK", &params.compAttack,  &StripParams::atkRange(), 0.2f,   "%.2f" },
+            { "##rel", "REL", &params.compRelease, &StripParams::relRange(), 400.0f, "%.0f" },
+            { "##mak", "MAK", &params.compMakeup,  &StripParams::makRange(), 0.0f,   "%+.1f" },
         };
         static const Range ratioRange { 0.0f, 4.0f, 1.0f };
         static const char* kRatios[] = { "4:1", "8:1", "12:1", "20:1", "All" };
@@ -441,9 +441,9 @@ StripFrameResult ChannelStripView::draw (dw::Context& ctx, ImVec2 origin, float 
             const auto threshold = dw::gainReduction (
                 ctx, "##thr", ImVec2 (grX, meterTop),
                 ImVec2 (grX + s (layout::kGrLedW), meterBottom), displayedGrDb,
-                params.compFetThresholdDb.load (std::memory_order_relaxed), style);
+                params.compThresholdDb.load (std::memory_order_relaxed), style);
             if (threshold.changed)
-                params.compFetThresholdDb.store (threshold.threshold, std::memory_order_relaxed);
+                params.compThresholdDb.store (threshold.threshold, std::memory_order_relaxed);
         }
 
         // Bus buttons track the fader's 0 dB and -inf marks, as in the shipping layout.

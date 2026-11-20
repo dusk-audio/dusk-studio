@@ -74,6 +74,12 @@ using HostFile   = std::decay_t<decltype (std::declval<const Session&>().getSess
 using HostString = std::decay_t<decltype (std::declval<const Session&>()
                                               .getSessionDirectory().getFullPathName())>;
 
+// The framework's slider, named through the fader helper that takes one.
+template <typename> struct FirstParameter;
+template <typename Result, typename Parameter, typename... Rest>
+struct FirstParameter<Result (*) (Parameter&, Rest...)> { using Type = Parameter; };
+using Knob = FirstParameter<decltype (&faderYForDb)>::Type;
+
 struct ScenarioInputScope
 {
     explicit ScenarioInputScope (bool& value) : flag (value), previous (std::exchange (value, true)) {}
@@ -1997,6 +2003,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool capturePanel (const std::string& panel, const std::filesystem::path& path) override
     {
+        if (panel == "main")
+        {
+            auto* peer = owner.getTopLevelComponent() != nullptr ? owner.getTopLevelComponent()->getPeer() : nullptr;
+            return peer != nullptr && ! nativeWaylandWindow()
+                && platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()),
+                                                       path.u8string());
+        }
        #if DUSKSTUDIO_HAS_NATIVE_UI
         const auto* window = openPanel (panel);
         return window != nullptr
@@ -2197,6 +2210,166 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (auto* master = owner.consoleView->getMasterStripComponent())
             master->closeTapeEditor();
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorHost (StripKind kind, int index) const
+    {
+        if (owner.consoleView == nullptr) return nullptr;
+        switch (kind)
+        {
+            case StripKind::Channel:
+                if (auto* strip = owner.consoleView->getStripComponent (index)) return strip->compEditorForScenario();
+                break;
+            case StripKind::Bus:
+                if (auto* bus = owner.consoleView->getBusComponent (index)) return bus->compEditorForScenario();
+                break;
+            case StripKind::Master:
+                if (auto* master = owner.consoleView->getMasterStripComponent()) return master->compEditorForScenario();
+                break;
+            case StripKind::Aux: break;
+        }
+        return nullptr;
+    }
+   #endif
+    bool openCompEditor (StripKind kind, int index) override
+    {
+        if (owner.consoleView == nullptr) return false;
+        switch (kind)
+        {
+            case StripKind::Channel:
+                if (auto* strip = owner.consoleView->getStripComponent (index)) { strip->openCompEditorPopup(); return true; }
+                break;
+            case StripKind::Bus:
+                if (auto* bus = owner.consoleView->getBusComponent (index)) { bus->openCompEditorPopup(); return true; }
+                break;
+            case StripKind::Master:
+                if (auto* master = owner.consoleView->getMasterStripComponent()) { master->openCompEditorPopup(); return true; }
+                break;
+            case StripKind::Aux: break;
+        }
+        return false;
+    }
+    bool compEditorOpen (StripKind kind, int index) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen();
+       #else
+        (void) kind; (void) index;
+        return false;
+       #endif
+    }
+    bool compEditorDrawn (StripKind kind, int index) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() && editor->hasRenderedFrame();
+       #else
+        (void) kind; (void) index;
+        return false;
+       #endif
+    }
+    bool compEditorEdit (StripKind kind, int index, const std::string& paramSymbol, float value) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() && editor->editForScenario (paramSymbol, value);
+       #else
+        (void) kind; (void) index; (void) paramSymbol; (void) value;
+        return false;
+       #endif
+    }
+    std::optional<float> compEditorShows (StripKind kind, int index, const std::string& paramSymbol) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() ? editor->shownValueForScenario (paramSymbol) : std::nullopt;
+       #else
+        (void) kind; (void) index; (void) paramSymbol;
+        return std::nullopt;
+       #endif
+    }
+    const MultiCompStage* compEditorStage (StripKind kind, int index) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr ? editor->shownStage() : nullptr;
+       #else
+        (void) kind; (void) index;
+        return nullptr;
+       #endif
+    }
+    void closeCompEditor (StripKind kind, int index) override
+    {
+        if (owner.consoleView == nullptr) return;
+        switch (kind)
+        {
+            case StripKind::Channel:
+                if (auto* strip = owner.consoleView->getStripComponent (index)) strip->closeCompEditorPopup();
+                break;
+            case StripKind::Bus:
+                if (auto* bus = owner.consoleView->getBusComponent (index)) bus->closeCompEditorPopup();
+                break;
+            case StripKind::Master:
+                if (auto* master = owner.consoleView->getMasterStripComponent()) master->closeCompEditorPopup();
+                break;
+            case StripKind::Aux: break;
+        }
+    }
+    bool anyCompEditorOpen() const
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (compEditorOpen (StripKind::Channel, t)) return true;
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            if (compEditorOpen (StripKind::Bus, b)) return true;
+        return compEditorOpen (StripKind::Master, 0) || masteringCompEditorOpen();
+    }
+    std::string stripCompLabel (int track) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        return strip != nullptr ? strip->compLabelForScenario() : std::string {};
+    }
+    // The centre of a strip face's compressor control, in the window's coordinates.
+    bool stripCompPoint (StripKind kind, int index, const std::string& control, float& x, float& y)
+    {
+        auto* console = owner.consoleView.get();
+        const auto centre = [this, &x, &y] (auto* strip, auto area)
+        {
+            if (area.isEmpty()) return false;
+            const auto at = owner.getTopLevelComponent()->getLocalPoint (strip, area.getCentre()).toFloat();
+            x = at.x;
+            y = at.y;
+            return true;
+        };
+        if (console == nullptr) return false;
+        if (kind == StripKind::Channel)
+        {
+            auto* strip = console->getStripComponent (index);
+            return strip != nullptr && centre (strip, strip->compControlAreaForScenario (control));
+        }
+        if (kind == StripKind::Bus)
+        {
+            auto* bus = console->getBusComponent (index);
+            return bus != nullptr && centre (bus, bus->compControlAreaForScenario (control));
+        }
+        auto* master = kind == StripKind::Master ? console->getMasterStripComponent() : nullptr;
+        return master != nullptr && centre (master, master->compControlAreaForScenario (control));
+    }
+    bool dragStripComp (StripKind kind, int index, const std::string& control, int pixels) override
+    {
+        float x = 0.0f, y = 0.0f;
+        return stripCompPoint (kind, index, control, x, y) && dragAt (x, y, x, y - (float) pixels);
+    }
+    bool clickStripComp (StripKind kind, int index, const std::string& control, int clicks) override
+    {
+        float x = 0.0f, y = 0.0f;
+        return stripCompPoint (kind, index, control, x, y) && clickAt (x, y, clicks);
+    }
+    bool clickCompEditorDim() override
+    {
+        if (! anyCompEditorOpen()) return false;
+        const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
+        return clickAt (corner.x, corner.y, 1);
     }
     bool clickInsert (int track, bool right) override
     {
@@ -2572,6 +2745,144 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.masteringView != nullptr ? owner.masteringView->unpaintedCompPanelPixelsForScenario() : -1;
     }
+    bool clickMasteringCompHeader (bool label) override
+    {
+        auto* view = owner.masteringView.get();
+        auto* header = view != nullptr && view->isShowing() ? view->compHeaderForScenario() : nullptr;
+        if (header == nullptr || ! header->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            header, header->getLocalBounds().getRelativePoint (label ? 0.6f : 0.1f, 0.5f)).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* masteringCompEditor() const
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->compEditorForScenario() : nullptr;
+    }
+   #endif
+    bool masteringCompEditorOpen() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->isCompEditorOpen();
+    }
+    bool masteringCompEditorDrawn() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr && editor->isOpen() && editor->hasRenderedFrame();
+       #else
+        return false;
+       #endif
+    }
+    bool masteringCompEditorEdit (const std::string& paramSymbol, float value) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr && editor->isOpen() && editor->editForScenario (paramSymbol, value);
+       #else
+        (void) paramSymbol; (void) value;
+        return false;
+       #endif
+    }
+    std::optional<float> masteringCompEditorShows (const std::string& paramSymbol) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr && editor->isOpen() ? editor->shownValueForScenario (paramSymbol) : std::nullopt;
+       #else
+        (void) paramSymbol;
+        return std::nullopt;
+       #endif
+    }
+    const MultiCompStage* masteringCompEditorStage() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr ? editor->shownStage() : nullptr;
+       #else
+        return nullptr;
+       #endif
+    }
+    std::vector<int> masteringCompEditorBounds() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.masteringView != nullptr ? owner.masteringView->compEditorBoundsForScenario() : std::vector<int> {};
+       #else
+        return {};
+       #endif
+    }
+    void closeMasteringCompEditor() override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->closeCompEditorPopup();
+    }
+    // The window of an open compressor editor, or 0.
+    std::uintptr_t compEditorWindow (StripKind kind, int index, bool mastering) const
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = mastering ? masteringCompEditor() : compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() ? editor->nativeWindow() : 0;
+       #else
+        (void) kind; (void) index; (void) mastering;
+        return 0;
+       #endif
+    }
+    FacePixels readFace (std::uintptr_t window, const std::filesystem::path& ppm) const
+    {
+        FacePixels face;
+       #if defined (__linux__)
+        if (nativeWaylandWindow()) return face;
+        face.status = FacePixels::Status::notShown;
+        if (window == 0) return face;
+        face.status = FacePixels::Status::captureFailed;
+        const auto file = ppm.u8string();
+        if (! platform::captureNativeWindowToPpm (window, file)) return face;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return face;
+        int width = 0, height = 0, maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
+        face.rgb.resize (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (face.rgb.data(), 1, face.rgb.size(), in) == face.rgb.size();
+        std::fclose (in);
+        if (! read) return face;
+        face.width = width;
+        face.height = height;
+        face.status = FacePixels::Status::read;
+       #else
+        (void) window;
+        (void) ppm;
+       #endif
+        return face;
+    }
+    FacePixels compEditorPixels (StripKind kind, int index, const std::filesystem::path& ppm) override
+    {
+        return readFace (compEditorWindow (kind, index, false), ppm);
+    }
+    FacePixels masteringCompEditorPixels (const std::filesystem::path& ppm) override
+    {
+        return readFace (compEditorWindow (StripKind::Master, 0, true), ppm);
+    }
+    bool facePointer (std::uintptr_t window, float x, float y, int button)
+    {
+       #if defined (__linux__)
+        if (window == 0 || nativeWaylandWindow()) return false;
+        const bool held = button <= 0 && faceButtonHeld;
+        const bool sent = platform::sendPointerThroughDisplayServer (window, (int) std::lround (x),
+                                                                     (int) std::lround (y), button, held);
+        if (button != 0) faceButtonHeld = button > 0;
+        return sent;
+       #else
+        (void) window; (void) x; (void) y; (void) button;
+        return false;
+       #endif
+    }
+    bool compEditorPointer (StripKind kind, int index, float x, float y, int button) override
+    {
+        return facePointer (compEditorWindow (kind, index, false), x, y, button);
+    }
+    bool masteringCompEditorPointer (float x, float y, int button) override
+    {
+        return facePointer (compEditorWindow (StripKind::Master, 0, true), x, y, button);
+    }
     std::string masteringTargetText() const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();
@@ -2743,6 +3054,28 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return "<no value box>";
     }
 
+    Knob* findTitledKnob (const std::string& title)
+    {
+        return dynamic_cast<Knob*> (findTitledControl (*owner.getTopLevelComponent(), title));
+    }
+
+    std::optional<double> knobTravelPosition (const std::string& title) override
+    {
+        auto* knob = findTitledKnob (title);
+        if (knob == nullptr) return std::nullopt;
+        return knob->valueToProportionOfLength (knob->getValue());
+    }
+
+    bool turnKnobTo (const std::string& title, double position) override
+    {
+        auto* knob = findTitledKnob (title);
+        auto* handler = knob != nullptr ? knob->getAccessibilityHandler() : nullptr;
+        auto* valueInterface = handler != nullptr ? handler->getValueInterface() : nullptr;
+        if (valueInterface == nullptr || valueInterface->isReadOnly()) return false;
+        valueInterface->setValue (knob->proportionOfLengthToValue (position));
+        return true;
+    }
+
     bool clickTitledControl (const std::string& title, bool right) override
     {
         auto* control = findTitledControl (*owner.getTopLevelComponent(), title);
@@ -2834,10 +3167,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
             return lane != nullptr && click (lane, lane->controlPointForScenario (control));
         }
-        if (kind == StripKind::Bus && control == "eq")
+        if (kind == StripKind::Bus && (control == "eq" || control == "comp"))
         {
             auto* bus = owner.consoleView != nullptr ? owner.consoleView->getBusComponent (index) : nullptr;
-            auto* header = bus != nullptr ? bus->eqHeaderForScenario() : nullptr;
+            auto* header = bus == nullptr ? nullptr
+                         : control == "eq" ? bus->eqHeaderForScenario() : bus->compHeaderForScenario();
+            return header != nullptr && click (header, header->getLocalBounds().getRelativePoint (0.6f, 0.5f));
+        }
+        if (kind == StripKind::Master && control == "comp")
+        {
+            auto* master = owner.consoleView != nullptr ? owner.consoleView->getMasterStripComponent() : nullptr;
+            auto* header = master != nullptr ? master->compButtonForScenario() : nullptr;
             return header != nullptr && click (header, header->getLocalBounds().getRelativePoint (0.6f, 0.5f));
         }
         return false;
@@ -2960,6 +3300,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int consoleFocusedStrip() const override
     {
         return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
+    }
+    void restoreTrackFocus (int tapeTrack, int consoleStrip) override
+    {
+        if (owner.consoleView != nullptr) owner.consoleView->restoreFocusForScenario (consoleStrip);
+        if (owner.tapeStrip != nullptr) owner.tapeStrip->setSelectedTrack (tapeTrack);
     }
     std::string stripInputText (int track) const override
     {
@@ -3581,6 +3926,12 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
         if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (compEditorOpen (StripKind::Channel, t)) lines.push_back ("track " + std::to_string (t + 1) + " compressor editor open");
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            if (compEditorOpen (StripKind::Bus, b)) lines.push_back ("bus " + std::to_string (b + 1) + " compressor editor open");
+        if (compEditorOpen (StripKind::Master, 0)) lines.push_back ("master compressor editor open");
+        if (masteringCompEditorOpen()) lines.push_back ("mastering compressor editor open");
         if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
         if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
         if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
@@ -3641,10 +3992,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             owner.tapeStrip->cancelTrackMoveDrag();
         }
         if (heldTapePress) releaseTapeTrackName (-1);
+        faceButtonHeld = false;
         closeStartupDialog();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
         closeMasterTape();
+        closeCompEditor (StripKind::Master, 0);
+        closeMasteringCompEditor();
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            closeCompEditor (StripKind::Bus, b);
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* component = owner.consoleView != nullptr
                                       ? owner.consoleView->getStripComponent (track) : nullptr)
@@ -3765,6 +4121,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     LaunchState launch;
     // Where a name drag went down, while the button is held.
     std::optional<std::pair<float, float>> heldTapePress;
+    // The button a compressor editor was last sent through the display server.
+    bool faceButtonHeld = false;
     std::vector<std::string> startupErrors;
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;

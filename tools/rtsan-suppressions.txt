@@ -3,7 +3,5 @@
 # A call-stack-contains line hides every report whose symbolized stack holds a
 # function whose demangled name matches; ^ anchors it at the name's start. Each
 # line sits under a comment naming its issue, and goes when that issue is fixed.
-# #1045: the mastering chain's multiband compressor allocates every block; delete this line when #1045 is fixed.
-call-stack-contains:^UniversalCompressor::processBlock(
 # #1046: JUCE's VST3 host locks on the audio thread every block; delete this line when #1046 is fixed.
 call-stack-contains:^juce::VST3PluginInstanceHeadless::processBlock(

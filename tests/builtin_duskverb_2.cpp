@@ -69,6 +69,10 @@ TEST_CASE ("The reverb built-in is DuskVerb 2 under its existing id",
     REQUIRE (std::string (unit->category) == "Fx|Reverb");
     REQUIRE_FALSE (unit->isInstrument);
     REQUIRE (unit->createPlugin != nullptr);
+    const auto plugin = unit->createPlugin();
+    REQUIRE (plugin != nullptr);
+    CHECK (plugin->isParameterSnapshotState ("parameters"));
+    CHECK_FALSE (plugin->isParameterSnapshotState ("mix_lock"));
 
     NativeBuiltinSlot slot;
     load (slot);
@@ -259,4 +263,56 @@ TEST_CASE ("A session saved with the old Reverb unit loads as DuskVerb 2 default
     REQUIRE (dusk::json::getInt (migrated, "version", 0) == 3);
     REQUIRE_FALSE (dusk::json::getString (
         dusk::json::child (migrated, "state"), "parameters").empty());
+}
+
+TEST_CASE ("DuskVerb 2's MIX LOCK is saved with the session, and a session from before it restores unlocked",
+           "[builtin][DuskVerb][reverb][session]")
+{
+    const auto toBlob = [] (const dusk::json::Json& root)
+    {
+        const auto text = root.dump();
+        return std::vector<std::uint8_t> (text.begin(), text.end());
+    };
+    const auto mixLockOf = [] (const NativeBuiltinSlot& slot)
+    {
+        std::vector<std::uint8_t> blob;
+        REQUIRE (slot.saveState (blob));
+        const auto root = parseBlob (blob);
+        const auto& state = dusk::json::child (root, "state");
+        REQUIRE (state.contains ("mix_lock"));
+        return dusk::json::getString (state, "mix_lock");
+    };
+
+    NativeBuiltinSlot fresh;
+    load (fresh);
+    REQUIRE (mixLockOf (fresh) == "0");
+
+    // The editor's MIX LOCK switch writes this state key; a saved session is
+    // the only other way in.
+    std::vector<std::uint8_t> unlockedBlob;
+    REQUIRE (fresh.saveState (unlockedBlob));
+    auto locked = parseBlob (unlockedBlob);
+    locked["state"]["mix_lock"] = "1";
+
+    NativeBuiltinSlot saver;
+    load (saver);
+    set (saver, "mix", 0.68f);
+    REQUIRE (saver.loadState (toBlob (locked)));
+    REQUIRE (mixLockOf (saver) == "1");
+
+    std::vector<std::uint8_t> savedBlob;
+    REQUIRE (saver.saveState (savedBlob));
+    NativeBuiltinSlot loader;
+    load (loader);
+    REQUIRE (loader.loadState (savedBlob));
+    CHECK (mixLockOf (loader) == "1");
+
+    SECTION ("a blob without the key, as 0.16 saved, restores unlocked")
+    {
+        auto withoutKey = parseBlob (savedBlob);
+        withoutKey["state"].erase ("mix_lock");
+        REQUIRE (withoutKey["state"].contains ("parameters"));
+        REQUIRE (loader.loadState (toBlob (withoutKey)));
+        CHECK (mixLockOf (loader) == "0");
+    }
 }

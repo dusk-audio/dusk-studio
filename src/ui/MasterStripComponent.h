@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <string>
+#include <utility>
 #include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
@@ -12,7 +13,7 @@
 #include "SplitModuleButton.h"
 #include "LevelMeterDraw.h"
 #include "RepaintGate.h"
-#include "imgui/DafEditorHost.h"
+#include "imgui/CompEditorHost.h"
 #include "../foundation/MessageThread.h"
 
 namespace duskstudio
@@ -45,6 +46,23 @@ public:
         return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty()
             && compMeter->handleShownForScenario();
     }
+    // Where a press reaches a compressor control on the face, in this strip's
+    // coordinates: "handle", the meter's threshold handle, or a knob's parameter
+    // symbol, its value text left out. Empty while it is not showing.
+    auto compControlAreaForScenario (const std::string& control) const
+    {
+        auto area = decltype (getLocalBounds()) {};
+        if (control == "handle" && compMeter != nullptr && compMeter->isShowing())
+            area = getLocalArea (compMeter.get(), compMeter->getLocalBounds());
+        const std::pair<const decltype (compRatio)*, CompParamId> knobs[] {
+            { &compRatio, CompParamId::BusRatio },     { &compAttack, CompParamId::BusAttack },
+            { &compRelease, CompParamId::BusRelease }, { &compMakeup, CompParamId::BusMakeup },
+        };
+        for (const auto& [knob, id] : knobs)
+            if (control == compParamSpec (id).symbol && knob->isShowing())
+                area = getLocalArea (knob, knob->getLocalBounds().withTrimmedBottom (knob->getTextBoxHeight()));
+        return area;
+    }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 
     // The tape's editor, which is Tape Machine 2's own. TAPE toggles it; these
@@ -58,6 +76,19 @@ public:
         return compactMode ? &tapeButton : tapeHeaderBtn.get();
     }
     bool tapeEditorDrawnForScenario() const noexcept;
+
+    // The master compressor's editor, Multi-Comp 2's own over a dimmed window.
+    // Opening toggles, as the COMP label does.
+    void openCompEditorPopup();
+    void closeCompEditorPopup();
+    bool isCompEditorOpen() const noexcept;
+    SplitModuleButton* compButtonForScenario() noexcept
+    {
+        return compactMode ? &compCompactButton : compHeaderBtn.get();
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
+   #endif
     bool tapeEditForScenario (const std::string& paramSymbol, float value);
 
 private:
@@ -123,6 +154,11 @@ private:
     std::unique_ptr<imgui::DafEditorHost> tapeEditor;
     std::unique_ptr<class DimOverlay> tapeEditorDim;
     PluginEditorHider tapeEditorHider;
+    imgui::DafEditorHost::Geometry compEditorGeometry();
+    void finishCompEditorClose();
+    std::unique_ptr<imgui::CompEditorHost> compEditor;
+    std::unique_ptr<class DimOverlay> compEditorDim;
+    PluginEditorHider compEditorHider;
    #endif
 
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
@@ -157,9 +193,7 @@ private:
     SplitModuleButton eqCompactButton  { "EQ"   };
     SplitModuleButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
-    EmbeddedModal compEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     void openEqEditorPopup();
-    void openCompEditorPopup();
     // Unified section context menus (right-click on a header or compact pill):
     // whole-section reset (where a per-knob reset precedent exists) + open
     // editor. Master sections are fixed-topology, so no character items.
@@ -168,6 +202,7 @@ private:
     void showTapeSectionMenu();
     void resetEqSection();
     void resetCompSection();
+    void syncCompKnobs();
     juce::Label outputPeakLabel;
     // The output meter draws only what the timer sampled into these, so its
     // repaint gate keys on exactly what paint() shows.

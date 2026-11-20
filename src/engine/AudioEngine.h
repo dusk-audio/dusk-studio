@@ -9,12 +9,14 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include <utility>
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/BusStrip.h"
 #include "../dsp/ChannelStrip.h"
+#include "../dsp/CompStageAlign.h"
 #include "../dsp/MasterBus.h"
 #include "../dsp/MasteringChain.h"
 #include "../dsp/Metronome.h"
@@ -44,6 +46,7 @@
 #include "../session/MidiRecoveryWriter.h"
 #include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
+#include "CaptureSchedule.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
@@ -336,6 +339,17 @@ public:
     void setMasteringMonoMonitor (bool mono) noexcept { masteringMonoMonitor.store (mono, std::memory_order_relaxed); }
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
+
+    // What a value of one of the mixer's compressor parameters reads as, from
+    // a Multi-Comp 2 of that kind (MultiCompStage::valueText, valueFromText
+    // and stepsText): the first channel strip's stereo stage for a Strip
+    // parameter, the first bus's for a Bus one, the master's included. The
+    // plug-in's formatter is a pure function of the value, so every stage of a
+    // kind prints alike, and the one asked can be running. Message thread
+    // only; empty, or false, in a build without the donor DSP.
+    std::string compValueText (CompStage kind, CompParamId id, float value);
+    bool        compValueFromText (CompStage kind, CompParamId id, const std::string& text, float& value);
+    std::string compStepsText (CompStage kind, CompParamId id, const char* separator);
 
     // Message thread. Puts a loudness measurement taken before a re-prepare
     // back on the mastering chain, with the process gate held.
@@ -725,13 +739,28 @@ public:
 
     // How far behind the timeline each point a render can capture runs, in
     // samples; a bounce drops that many from the head of what it takes there.
-    // A track's output carries its plugin compensation and its oversampler; a
-    // bus adds its own oversampler; an aux return waits for the deepest lane
-    // and the bus alignment; the mix adds the master's oversampler and tape.
+    // A track's output carries its plugin compensation, its oversampler and the
+    // strips' compressor stage; a bus adds the buses' compressor stage; an aux
+    // return waits for the deepest lane and the buses' stage; the mix adds the
+    // master's oversampler, its compressor stage and the tape.
     int getTrackOutputLatencySamples() const noexcept;
     int getBusOutputLatencySamples() const noexcept;
     int getAuxReturnLatencySamples() const noexcept;
     int getMixLatencySamples() const noexcept;
+
+    // Each compressor stage's latency (see CompStageClock): the plug-in's
+    // while any compressor of the stage keeps it, 0 otherwise. Any thread; the
+    // audio thread decides it at the top of each block, and a prepare, an
+    // offline render's start and snapCompStages set it from the session.
+    int getStripCompLatencySamples() const noexcept  { return stripCompStage.reportedLatencySamples(); }
+    int getBusCompLatencySamples() const noexcept    { return busCompStage.reportedLatencySamples(); }
+    int getMasterCompLatencySamples() const noexcept { return masterCompStage.reportedLatencySamples(); }
+
+    // Sets every compressor stage to what the session calls for at the next
+    // block, with no fade: a stage whose compressors are all off drops its
+    // latency even with the transport rolling. For a session just loaded.
+    // Any thread, after the session's compressor switches are stored.
+    void snapCompStages() noexcept;
 
     // Offline-render only - call with the audio callback DETACHED. The
     // in-callback relatch of the master-stage PDC is gated on a stopped
@@ -1206,13 +1235,27 @@ private:
     int masterDryPdcApplied = 0;                                   // audio thread only
     std::array<int, Session::kNumAuxLanes> auxReturnPdcApplied {}; // audio thread only
 
-    // Every bus's oversampler delays its output, bypassed or not, so a
-    // bus-routed track would trail a direct one by that much. The direct
-    // tracks and every aux return wait the same amount before the buses join.
-    // Set at prepare; 0 at 1x, which skips the delay.
-    MasterPdcDelay busAlignL;
-    MasterPdcDelay busAlignR;
-    std::atomic<int> busAlignSamples { 0 };
+    // The compressor stages, one clock each, run on the audio thread before
+    // the strips fan out to the worker lanes, which read the strips' block
+    // through the pool's dispatch. While the buses' stage holds its latency,
+    // the paths that pass the buses by (the direct tracks, summed, and each
+    // aux return) carry it too, as every bus does.
+    CompStageClock stripCompStage;
+    CompStageClock busCompStage;
+    CompStageClock masterCompStage;
+    CompStageAlign directBusAlign;
+    std::array<CompStageAlign, Session::kNumAuxLanes> auxBusAlign;
+    // Samples an aux return's bus alignment may still sound after its input
+    // fell silent; the lane does not sleep before. Audio thread.
+    std::array<int, Session::kNumAuxLanes> auxBusAlignHeld {};
+    std::atomic<std::uint32_t> compStageSnapRequests { 0 };
+    std::uint32_t compStageSnapsSeen = 0;                          // audio thread only
+    // Bumped by every callback the mixer did not run (suspended, oversized):
+    // the stages' delays and compressors must not replay across that gap.
+    std::atomic<std::uint32_t> compStageGapRequests { 0 };
+    std::uint32_t compStageGapsSeen = 0;                           // audio thread only
+    void snapCompStagesFromSession() noexcept;
+    void advanceCompStages (bool transportStopped, int numSamples) noexcept;
 
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.
@@ -1765,5 +1808,31 @@ private:
     bool         wasRolling          = false;
     std::int64_t  lastBlockEndSample  = 0;
     bool         lastBlockWasLoopRecording = false;
+
+    // How each armed track records the take in progress, fixed at the first
+    // block it captures: its input, or its strip's output (PRINT) and that
+    // output's delay. A printed track writes each input sample once the strip
+    // has delayed it, on what captureSchedule says the take kept of the input,
+    // so it lands where its input would. Audio thread; record() resets them
+    // while processing is suspended.
+    struct PrintCapture
+    {
+        bool latched = false;
+        bool print = false;
+        // The strip's delay, taken after its first block of the take.
+        int delay = -1;
+        // The schedule's clock at that block: nothing before it is the track's.
+        std::int64_t from = 0;
+    };
+    std::array<PrintCapture, Session::kNumTracks> printCaptures {};
+    CaptureSchedule captureSchedule;
+    // Input samples of the take so far.
+    std::int64_t captureClock = 0;
+    bool anyPrintCapture = false;
+    // The longest delay a printed track of the take has taken: no track reads
+    // the schedule further back. One latched later reads only from its block on.
+    int longestPrintDelay = 0;
+    void capturePrinted (int track, const float* left, const float* right,
+                         const PrintCapture& print, int numSamples, bool loop) noexcept;
 };
 } // namespace duskstudio

@@ -2,6 +2,8 @@
 #include "../foundation/Decibels.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
+#include <cassert>
+#include <cmath>
 #include <cstring>
 
 namespace duskstudio
@@ -11,7 +13,7 @@ void MasteringChain::bind (const MasteringParams& params) noexcept
     paramsRef = &params;
 }
 
-void MasteringChain::prepare (double sampleRate, int blockSize, int oversamplingFactor)
+void MasteringChain::prepare (double sampleRate, int blockSize)
 {
     const int bs = std::max (1, blockSize);
     sampleRateForMeter = sampleRate > 0.0 ? sampleRate : 44100.0;
@@ -23,19 +25,14 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     digitalEq.reset();
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // Pin multiband before prepareToPlay, which is where the donor reports its
-    // latency. A bypassed donor delays its dry output by that report, and in its
-    // default mode the report includes a 2x oversampler multiband never runs.
-    bindCompParams();
-    busComp.setPlayConfigDetails (2, 2, sampleRate, bs);
-    busComp.prepareToPlay (sampleRate, bs);
-    // Honor the global Effect Oversampling setting. The donor defaults to
-    // internal-oversampling=ON; 1x -> off, 2x / 4x -> on. Multiband mode runs
-    // at the session rate either way, so the flag adds no latency while pinned.
-    busComp.setInternalOversamplingEnabled (oversamplingFactor > 1);
-    compLatencySamples.store (busComp.getLatencySamples(), std::memory_order_relaxed);
-    compStereoBuffer.setSize (2, bs, false, false, true);
-    compMidi.clear();
+    // The plug-in comes back at rest and the delay beside it empty, so the
+    // first block, an offline render's included, starts both from silence.
+    comp.prepare (sampleRate, bs, 2);
+    const int compLatency = comp.latencySamples();
+    compClock.prepare (sampleRate, compLatency);
+    compClock.snap (true);
+    compAlign.prepare (bs, compLatency);
+    compLatencySamples.store (compLatency, std::memory_order_relaxed);
 #endif
 
     const double initialLookaheadMs = (paramsRef != nullptr)
@@ -97,57 +94,6 @@ void MasteringChain::restoreLoudnessHistory (const LoudnessMeter::History& histo
     }
 }
 
-#if DUSKSTUDIO_HAS_DUSK_DSP
-void MasteringChain::bindCompParams()
-{
-    auto& apvts = busComp.getParameters();
-    compModeAtom       = apvts.getRawParameterValue ("mode");
-    compBypassAtom     = apvts.getRawParameterValue ("bypass");
-    compMixAtom        = apvts.getRawParameterValue ("mix");
-    compAutoMakeupAtom = apvts.getRawParameterValue ("auto_makeup");
-    compBusThreshAtom  = apvts.getRawParameterValue ("bus_threshold");
-    compBusRatioAtom   = apvts.getRawParameterValue ("bus_ratio");
-    compBusAttackAtom  = apvts.getRawParameterValue ("bus_attack");
-    compBusReleaseAtom = apvts.getRawParameterValue ("bus_release");
-    compBusMakeupAtom  = apvts.getRawParameterValue ("bus_makeup");
-    compBusMixAtom     = apvts.getRawParameterValue ("bus_mix");
-
-    // Multiband mode (CompressorMode::Multiband = 7) - 4 bands with
-    // Linkwitz-Riley LR4 crossovers at default 200 / 2000 / 8000 Hz.
-    // The bus_* params no longer drive anything in this mode; per-band
-    // controls live under the mb_<bandname>_* APVTS keys (built out by
-    // the mastering UI in a follow-up iteration).
-    storeAtom (compModeAtom, 7.0f);
-    storeAtom (compMixAtom,         100.0f);
-    storeAtom (compBusMixAtom,      100.0f);
-    storeAtom (compAutoMakeupAtom,    0.0f);
-}
-
-void MasteringChain::updateCompParameters() noexcept
-{
-    if (paramsRef == nullptr) return;
-    storeAtom (compBypassAtom,
-               paramsRef->compEnabled.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
-    storeAtom (compBusThreshAtom,  paramsRef->compThreshDb.load   (std::memory_order_relaxed));
-    storeAtom (compBusRatioAtom,   paramsRef->compRatio.load      (std::memory_order_relaxed));
-    storeAtom (compBusAttackAtom,  paramsRef->compAttackMs.load   (std::memory_order_relaxed));
-    // bus_release is a Choice {0.1s, 0.3s, 0.6s, 1.2s, Auto}; see
-    // MasterBus::updateCompParameters for the mapping rationale.
-    const bool autoRel = paramsRef->compReleaseAuto.load (std::memory_order_relaxed);
-    const float relMs  = paramsRef->compReleaseMs.load   (std::memory_order_relaxed);
-    const float relIdx = autoRel ? 4.0f
-                       : (relMs < 200.0f ? 0.0f
-                       : (relMs < 450.0f ? 1.0f
-                       : (relMs < 900.0f ? 2.0f : 3.0f)));
-    storeAtom (compBusReleaseAtom, relIdx);
-    storeAtom (compBusMakeupAtom,  paramsRef->compMakeupDb.load   (std::memory_order_relaxed));
-}
-#endif
-
-// MasteringDigitalEq is built unconditionally - its updater must be too,
-// otherwise the link fails when DUSKSTUDIO_HAS_DUSK_DSP is off (the call site
-// in processInPlace is unconditional and the prototype lives outside the
-// macro guard in the header).
 void MasteringChain::updateEqParameters() noexcept
 {
     if (paramsRef == nullptr) return;
@@ -182,7 +128,7 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples, bool ca
     // processed in part: the smoothers and meters below would desync from the
     // audio. Clear and skip, as AuxLaneStrip does on the identical contract -
     // leaving the buffer untouched would leak the unprocessed mix to the output.
-    jassert (numSamples <= preparedBlockSize);
+    assert (numSamples <= preparedBlockSize);
     if (numSamples > preparedBlockSize)
     {
         phaseFeed.markDiscontinuity();
@@ -202,22 +148,17 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples, bool ca
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     {
-        const int bufSize = compStereoBuffer.getNumSamples();
-        updateCompParameters();
-        for (int offset = 0; offset < numSamples; offset += bufSize)
-        {
-            const int n = std::min (bufSize, numSamples - offset);
-            compStereoBuffer.copyFrom (0, 0, L + offset, n);
-            compStereoBuffer.copyFrom (1, 0, R + offset, n);
-            compMidi.clear();
-            busComp.processBlock (compStereoBuffer, compMidi);
-            std::memcpy (L + offset, compStereoBuffer.getReadPointer (0),
-                         sizeof (float) * (size_t) n);
-            std::memcpy (R + offset, compStereoBuffer.getReadPointer (1),
-                         sizeof (float) * (size_t) n);
-        }
+        // Out, the plug-in costs nothing: only the delay beside it runs. The
+        // plug-in takes the session's values while it runs and while its
+        // editor, which reads values back from it, is open; its own bypass
+        // stays off, since being out is the delay's job.
+        const bool compOn = paramsRef != nullptr
+                         && paramsRef->compEnabled.load (std::memory_order_relaxed);
+        if (paramsRef != nullptr && (compOn || compAlign.compressorRunning() || comp.editorOpen()))
+            comp.pushParameters (paramsRef->comp, true, 0);
+        compAlign.process (L, R, numSamples, compClock.block(), compOn, &comp);
         if (paramsRef != nullptr)
-            paramsRef->meterCompGrDb.store (busComp.getGainReduction(),
+            paramsRef->meterCompGrDb.store (compAlign.compressorRunning() ? comp.gainReductionDb() : 0.0f,
                                              std::memory_order_relaxed);
     }
 #endif

@@ -9,11 +9,12 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include "CompMeterStrip.h"
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
 #include "EmbeddedModal.h"
-#include "imgui/DafEditorHost.h"
+#include "imgui/CompEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
 #include "LevelMeterDraw.h"
@@ -46,11 +47,11 @@ public:
     // toggles synchronously because the harness blocks normal timer delivery.
     void refreshMetersForCapture();
 
-    // Screenshot-harness only: open / close the native compressor panel, whose
-    // framework child createComponentSnapshot cannot reach. `capturePath` asks the
-    // panel to read its own steady frame back into that file. False when the panel did
-    // not open to take the request.
-    bool openCompEditorForCapture (const std::string& capturePath);
+    // Screenshot-harness only: the compressor editor is Multi-Comp 2's own window,
+    // which createComponentSnapshot cannot reach, so it is read back once drawn.
+    void openCompEditorForCapture();
+    bool compEditorDrawnForCapture() const noexcept;
+    void captureCompEditor (const std::string& capturePath);
     void closeCompEditorForCapture();
 
     // Screenshot-harness only: force the track into the given mode (0=mono,
@@ -118,12 +119,16 @@ public:
                                                               : std::string {};
     }
     bool moduleEditorOpenForScenario (int module) const;
+    std::string compLabelForScenario() const
+    {
+        return compModeButton != nullptr ? compModeButton->getLabelText().toStdString() : std::string {};
+    }
     // The strip name the open EQ editor is titled with, empty when it is not
-    // up. The comp editor is a framework panel with no JUCE text to read.
+    // up. The comp editor is Multi-Comp 2's own and carries no title of ours.
     std::string moduleEditorTitleForScenario (int module) const;
     void closeModuleEditorsForScenario();
-    // A key into the open compressor editor or built-in unit editor, as its child
-    // would take it with the keyboard.
+    // A key into the open built-in unit editor, as its child would take it with
+    // the keyboard.
     bool inputPanelForScenario (const std::string& input);
     bool meterClipForScenario();
     // The text the high- or low-pass knob shows.
@@ -181,6 +186,23 @@ public:
     {
         return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty()
             && compMeter->handleShownForScenario();
+    }
+    // Where a press reaches a compressor control on the face, in this strip's
+    // coordinates: "handle", the meter strip's threshold handle, or the
+    // parameter symbol of a knob or of LIMIT. Empty while it is not showing.
+    auto compControlAreaForScenario (const std::string& control) const
+    {
+        const std::pair<const Component*, CompParamId> controls[] {
+            { &optoGainKnob, CompParamId::OptoGain },     { &optoLimitButton, CompParamId::OptoLimit },
+            { &fetRatioKnob, CompParamId::FetRatio },     { &fetAttackKnob, CompParamId::FetAttack },
+            { &fetReleaseKnob, CompParamId::FetRelease }, { &fetOutputKnob, CompParamId::FetOutput },
+            { &vcaRatioKnob, CompParamId::VcaCompression }, { &vcaOutputKnob, CompParamId::VcaOutput },
+        };
+        const Component* found = control == "handle" ? compMeter.get() : nullptr;
+        for (const auto& [component, id] : controls)
+            if (control == compParamSpec (id).symbol) found = component;
+        return found != nullptr && found->isShowing() ? getLocalArea (found, found->getLocalBounds())
+                                                      : decltype (getLocalBounds()) {};
     }
 
     // Swaps the input/IN/ARM/PRINT row at the top for 4 AUX send knobs.
@@ -290,38 +312,31 @@ private:
         // populated only for mid (HM/LM) bell bands; nullptr for HF/LF shelves.
         std::unique_ptr<juce::Slider> q;
         juce::Label rowLabel;
-        float shownFreq = 0.0f;
-        PaintedValue freqText;
     };
     std::array<BandRow, 4> eqRows;
 
-    // Holds the union of all three modes' params; shows only the current mode.
-    // The label includes that mode and opens the editor; the status light
-    // controls compEnabled.
+    // Holds the union of all three modes' controls; shows only the current
+    // mode's. The label includes that mode and opens the editor; the status
+    // light controls compEnabled. Each mode's threshold (Opto's peak
+    // reduction, FET's input, VCA's threshold) is the meter strip's handle.
     std::unique_ptr<SplitModuleButton> compModeButton;
 
-    // Opto (LA-2A): peak-red + gain + LIMIT.
-    juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    // Opto: gain + LIMIT.
     juce::Slider     optoGainKnob    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Label      optoPeakRedLabel, optoGainLabel;
+    juce::Label      optoGainLabel;
     juce::TextButton optoLimitButton { "LIMIT" };
 
-    // FET (1176): input + output + attack + release + ratio (5-step).
-    juce::Slider     fetInputKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    // FET: output + attack + release + ratio (5-step).
     juce::Slider     fetOutputKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetReleaseKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetRatioKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Label      fetInputLabel, fetOutputLabel, fetAttackLabel, fetReleaseLabel, fetRatioLabel;
+    juce::Label      fetOutputLabel, fetAttackLabel, fetReleaseLabel, fetRatioLabel;
 
-    // VCA (classic): threshold via meter-strip drag handle (not a
-    // knob); ratio + attack + release + output as knobs.
+    // VCA: compression (its ratio) + output, in FET's ratio and output slots.
     juce::Slider     vcaRatioKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Slider     vcaAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Slider     vcaReleaseKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     vcaOutputKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-
-    juce::Label      vcaRatioLabel, vcaAttackLabel, vcaReleaseLabel, vcaOutputLabel;
+    juce::Label      vcaRatioLabel, vcaOutputLabel;
 
     std::unique_ptr<CompMeterStrip> compMeter;
 
@@ -462,12 +477,16 @@ private:
     void showEqSectionMenu();
     void showCompSectionMenu();
     void showAuxSectionMenu();
-    // Whole-section resets - replays each section knob's own double-click
-    // return value through its live onValueChange path (message thread).
+    // Whole-section resets (message thread). EQ and AUX replay each knob's
+    // own double-click return value through its live onValueChange path;
+    // COMP returns every compressor parameter to the plug-in's default.
     void resetEqSection();
     void resetCompSection();
     void resetAuxSection();
     void armCompOnUserEdit();
+    // Pulls the comp knobs and the LIMIT switch from the strip's CompParams,
+    // leaving a knob the mouse holds alone.
+    void syncCompControls();
     // Right-click context menu uses this since the button itself is
     // the mode picker.
     void setCompEnabled (bool enabled);
@@ -585,10 +604,14 @@ public:
     void dropPluginEditor (NativeEditorTeardown teardown);
 
     // Public for the same reason: the shell closes this before showing a modal,
-    // because the panel is an opaque native child and a modal opening behind it
-    // can be neither seen nor clicked.
+    // because the editor is an opaque native child and a modal opening behind it
+    // can be neither seen nor clicked. Opening toggles, as the COMP label does.
+    void openCompEditorPopup();
     void closeCompEditorPopup();
     bool isCompEditorOpen() const noexcept;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
+   #endif
 
     // Same reason again: the built-in unit editor is another native child, and
     // the shell has to be able to close it and to ask whether it is open.
@@ -629,14 +652,12 @@ private:
     // the others.
     EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     EmbeddedModal auxEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
-    // COMP is native: a framework child covering the host window, drawing its own
-    // dim and plate. Built on first open because the framework window is a real
-    // graphics resource and most strips never open one.
+    // COMP opens Multi-Comp 2's own editor for the stage this strip runs, built on
+    // first open because most strips never open one.
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    std::unique_ptr<imgui::DuskPanelWindow> compEditorWindow;
-    // The built-in unit editor, hosted exactly as the compressor editor is: one
-    // native child over a dim, dismissed by Escape, a click outside or the same
-    // slot control that opened it.
+    std::unique_ptr<imgui::CompEditorHost> compEditor;
+    // The built-in unit editor: one native child over a dim, dismissed by Escape,
+    // a click outside or the same slot control that opened it.
     std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
     std::unique_ptr<imgui::DuskPanelWindow> sfzLibraryWindow;
     // A unit that is one of Dusk's own DAF plug-ins brings its own editor; the
@@ -656,9 +677,10 @@ private:
     PluginEditorHider sfzLibraryHider;
    #endif
     void openEqEditorPopup();
-    void openCompEditorPopup();
     void openBuiltinEditorPopup();
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::DafEditorHost::Geometry compEditorGeometry();
+    void finishCompEditorClose();
     void openBuiltinPluginEditor (std::uintptr_t parentHandle);
     // Where the plug-in's editor belongs: its own size, centred, scaled down when
     // the window cannot hold it. Also follows the dim's click-through region.

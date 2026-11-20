@@ -641,7 +641,9 @@ void MainComponent::captureNativePanels (std::string outDir)
         self.resized();
     } });
 
-    steps->push_back ({ 600, [outDir, awaited] (MainComponent& self)
+    // The compressor editor is Multi-Comp 2's own, a window the panel capture cannot
+    // reach, so it is read back once painted, as the tape editor below is.
+    steps->push_back ({ 600, [] (MainComponent& self)
     {
         auto* const strip0 = self.consoleView != nullptr
                            ? self.consoleView->getStripComponent (0) : nullptr;
@@ -650,16 +652,21 @@ void MainComponent::captureNativePanels (std::string outDir)
         auto& strip = self.session.track (0).strip;
         strip.compEnabled.store (true, std::memory_order_relaxed);
         strip.compMode.store (2, std::memory_order_relaxed);   // VCA
-        // The bounce phase above leaves the input meter reading, and this figure is of
-        // the panel rather than of a signal. Park the meters at rest.
-        self.session.track (0).meterInputDb.store (-100.0f, std::memory_order_relaxed);
-        self.session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
-        requestFrame (*awaited, outDir, "fx-02-comp", "the compressor panel",
-                      [strip0] (const std::string& path) { return strip0->openCompEditorForCapture (path); });
+        strip0->openCompEditorForCapture();
     } });
-    // One panel at a time: each is a modal surface, and two open at once would put one
+    steps->push_back ({ 1200, [outDir] (MainComponent& self)
+    {
+        if (self.consoleView != nullptr)
+            if (auto* strip0 = self.consoleView->getStripComponent (0))
+                strip0->captureCompEditor (outDir + "/fx-02-comp.ppm");
+    }, [] (MainComponent& self)
+    {
+        auto* const strip0 = self.consoleView != nullptr ? self.consoleView->getStripComponent (0) : nullptr;
+        return strip0 == nullptr || ! strip0->isCompEditorOpen() || strip0->compEditorDrawnForCapture();
+    } });
+    // One editor at a time: each is a modal surface, and two open at once would put one
     // child over the other.
-    steps->push_back ({ 1500, [] (MainComponent& self)
+    steps->push_back ({ 300, [] (MainComponent& self)
     {
         if (self.consoleView != nullptr)
             if (auto* strip0 = self.consoleView->getStripComponent (0))

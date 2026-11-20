@@ -176,7 +176,7 @@ struct InsertPdcHarness : StripPdcHarness
     duskstudio::HardwareInsertParams hardwareParams;
     TransparentDelay* plugin = nullptr;
 
-    InsertPdcHarness (bool useStereo, int latency, bool hardware = false)
+    InsertPdcHarness (bool useStereo, int latency, bool hardware = false, int factor = 1)
         : StripPdcHarness (useStereo, 0)
     {
         strip.insertMode.store (hardware ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertPlugin);
@@ -185,7 +185,7 @@ struct InsertPdcHarness : StripPdcHarness
             hardwareParams.routing.mutate ([latency] (auto& routing) { routing.latencySamples = latency; });
             strip.bindHardwareInsert (hardwareParams);
         }
-        strip.prepare (48000.0, kBlock, 1);
+        strip.prepare (48000.0, kBlock, factor);
         if (hardware)
             strip.getHardwareInsertSlot().setOfflineRender (true);
         else
@@ -452,6 +452,87 @@ TEST_CASE ("Channel strip PDC retargets after an inactive gate", "[pdc][channel-
     actual.run (false);
     REQUIRE (actual.strip.getLastProcessedSamples() == 0);
     actual.expectImpulseAt (change[1]);
+}
+
+TEST_CASE ("Channel strip: the processed buffer trails its input by the latency the strip reports", "[pdc][channel-strip][print]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int factor = GENERATE (1, 2);
+    const int insertLatency = GENERATE (0, 96);
+    const bool stageOn = GENERATE (false, true);
+    static constexpr int kCompensation = 64;
+    CAPTURE (stereo, factor, insertLatency, stageOn);
+    InsertPdcHarness rig { stereo, insertLatency, false, factor };
+    const int stageLatency = rig.strip.getCompressor (false).latencySamples();
+    REQUIRE (stageLatency > 0);
+    duskstudio::CompStageClock clock;
+    clock.prepare (48000.0, stageLatency);
+    clock.snap (stageOn);
+    rig.strip.setCompStage (&clock.block());
+    rig.strip.setPdcCompensationSamples (kCompensation);
+    const auto runBlock = [&rig, &clock, stageOn]
+    {
+        clock.advance (stageOn, false, kBlock);
+        rig.run();
+    };
+    rig.silence();
+    for (int block = 0; block < 64; ++block) runBlock();
+
+    const int reported = rig.strip.getProcessedLatencySamples();
+    REQUIRE (reported == insertLatency + kCompensation + rig.strip.getOversamplingLatencySamples()
+                             + (stageOn ? stageLatency : 0));
+    std::array<float, 2> peaks {};
+    std::array<int, 2> positions { -1, -1 };
+    for (int block = 0; block < reported / kBlock + 4; ++block)
+    {
+        rig.silence();
+        // The same click on both sides: at 2x the EQ's console saturation
+        // moves the peak of a quiet negative click by a sample.
+        if (block == 0) { rig.left[0] = 0.5f; rig.right[0] = 0.5f; }
+        runBlock();
+        const std::array<const float*, 2> processed { rig.strip.getLastProcessedMono(),
+                                                      rig.strip.getLastProcessedR() };
+        REQUIRE (processed[0] != nullptr);
+        REQUIRE (rig.strip.getLastProcessedSamples() == kBlock);
+        for (std::size_t c = 0; c < (stereo ? 2u : 1u); ++c)
+        {
+            REQUIRE (processed[c] != nullptr);
+            for (int i = 0; i < kBlock; ++i)
+                if (std::abs (processed[c][i]) > peaks[c])
+                {
+                    peaks[c] = std::abs (processed[c][i]);
+                    positions[c] = block * kBlock + i;
+                }
+        }
+    }
+    for (std::size_t c = 0; c < (stereo ? 2u : 1u); ++c)
+    {
+        CAPTURE (c);
+        REQUIRE (peaks[c] > 0.1f);
+        CHECK (positions[c] == reported);
+    }
+}
+
+TEST_CASE ("Channel strip: the latency it reports is the compensation it applies, not one waiting for a silence", "[pdc][channel-strip][print]")
+{
+    const bool stereo = GENERATE (false, true);
+    static constexpr int kApplied = 64, kWaiting = 512;
+    CAPTURE (stereo);
+    StripPdcHarness rig { stereo, kApplied };
+    for (int block = 0; block < 40; ++block) { rig.signal (block); rig.run(); }
+    REQUIRE (rig.strip.getProcessedLatencySamples() == kApplied);
+
+    // An input that never falls silent keeps the delay it has.
+    rig.strip.setPdcCompensationSamples (kWaiting);
+    for (int block = 40; block < 52; ++block) { rig.signal (block); rig.run(); }
+    REQUIRE (rig.strip.getPdcCompensationSamples() == kWaiting);
+    CHECK (rig.strip.getProcessedLatencySamples() == kApplied);
+
+    rig.silence();
+    for (int block = 0; block < (kApplied + kBlock - 1) / kBlock + 1; ++block) rig.run();
+    rig.signal (0);
+    rig.run();
+    CHECK (rig.strip.getProcessedLatencySamples() == kWaiting);
 }
 
 TEST_CASE ("Channel insert LED preserves the wet path timing through both transitions", "[pdc][channel-strip][insert-led]")
@@ -766,18 +847,28 @@ TEST_CASE ("Channel silent-input skip preserves slow filter tails before a close
     CAPTURE (stereo, factor, highQ, compressed);
     StripPdcHarness actual { stereo, 96, factor }, reference { stereo, 96, factor, false },
                     frozen { stereo, 96, factor, false };
+    // The compressor runs inside the strips' stage, held on as an engaged one
+    // holds it.
+    duskstudio::CompStageClock stage;
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    stage.prepare (48000.0, actual.strip.getCompressor (stereo).latencySamples());
+#else
+    stage.prepare (48000.0, 0);
+#endif
+    stage.snap (compressed);
     for (auto* harness : { &actual, &reference, &frozen })
     {
+        harness->strip.setCompStage (&stage.block());
         auto& params = harness->params;
         params.liveFaderDb.store (-100.0f);
         params.eqEnabled.store (true);
         params.compEnabled.store (compressed);
         params.compMode.store (2);
-        params.compVcaThreshDb.store (-38.0f);
-        params.compVcaRatio.store (8.0f);
+        params.comp.set (duskstudio::CompParamId::VcaThreshold, -55.0f);
+        params.comp.set (duskstudio::CompParamId::VcaCompression, 80.0f);
         if (highQ)
         {
-            params.lmFreq.store (100.0f);
+            params.lmFreq.store (duskstudio::ChannelStripParams::kLmFreqMin);
             params.lmGainDb.store (15.0f);
             params.lmQ.store (3.5f);
         }

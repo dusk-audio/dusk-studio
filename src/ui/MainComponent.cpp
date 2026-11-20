@@ -54,6 +54,7 @@
 #include "TrackMoveUndo.h"
 #include "MiniTimelineStrip.h"
 #include "TransportBar.h"
+#include "../session/ChannelEqMarking.h"
 #include "../session/MarkerEditActions.h"
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
@@ -1524,6 +1525,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             closeAudioEditor();
             return true;
         }
+        if (masteringView != nullptr && masteringView->isCompEditorOpen())
+        {
+            masteringView->closeCompEditorPopup();
+            return true;
+        }
         if (consoleView != nullptr)
         {
             if (auto* const master = consoleView->getMasterStripComponent();
@@ -1532,6 +1538,18 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 master->closeTapeEditor();
                 return true;
             }
+            if (auto* const master = consoleView->getMasterStripComponent();
+                master != nullptr && master->isCompEditorOpen())
+            {
+                master->closeCompEditorPopup();
+                return true;
+            }
+            for (int b = 0; b < Session::kNumBuses; ++b)
+                if (auto* const bus = consoleView->getBusComponent (b); bus != nullptr && bus->isCompEditorOpen())
+                {
+                    bus->closeCompEditorPopup();
+                    return true;
+                }
             for (int t = 0; t < Session::kNumTracks; ++t)
             {
                 auto* const strip = consoleView->getStripComponent (t);
@@ -5187,6 +5205,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Bypass instruments on tracks the session restored as frozen (frozenRegion
     // was rebuilt during deserialize; this is the engine-side half).
     engine.reapplyFreezeState();
+    // The compressor stages hold the latency the loaded session's compressors
+    // call for from its first block, without fading into it.
+    engine.snapCompStages();
 
     // Resolve saved identifiers against the existing banks without reopening
     // every MIDI device during session load.
@@ -5968,34 +5989,37 @@ void MainComponent::finishDpImport()
             s.mute   .store (it.mixer.mute,    std::memory_order_relaxed);
 
             // Map the DP 3-band EQ onto Dusk's 4-band: Low->LF, High->HF, and
-            // Mid->LM or HM by frequency (the unused band stays flat).
+            // Mid->LM or HM by frequency (the unused band stays flat). The DP
+            // gives each band in Hz; it takes the marking that plays there.
+            using EqFreq = ChannelStripParams::EqFreq;
             const auto& m = it.mixer;
+            const bool black = s.eqBlackMode.load (std::memory_order_relaxed);
             s.eqEnabled.store (m.eqOn, std::memory_order_relaxed);
             s.lfGainDb.store (jlimit (-15.0f, 15.0f, m.lowGainDb), std::memory_order_relaxed);
-            s.setEqFreq (ChannelStripParams::EqFreq::Lf, jlimit (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax, m.lowFreqHz));
+            s.setEqFreq (EqFreq::Lf, channelEqMarkingForHz (EqFreq::Lf, m.lowFreqHz, black));
             // DP has one mid band -> Dusk has two (LM/HM). Drive the band that
             // matches the frequency and reset the other to flat defaults, so an
             // import into a non-empty session doesn't leave stale EQ behind.
             if (m.midFreqHz < 1500.0f)
             {
                 s.lmGainDb.store (jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
-                s.setEqFreq (ChannelStripParams::EqFreq::Lm, jlimit (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, m.midFreqHz));
+                s.setEqFreq (EqFreq::Lm, channelEqMarkingForHz (EqFreq::Lm, m.midFreqHz, black));
                 s.lmQ     .store (jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
                 s.hmGainDb.store (0.0f, std::memory_order_relaxed);
-                s.setEqFreq (ChannelStripParams::EqFreq::Hm, 2000.0f);
+                s.setEqFreq (EqFreq::Hm, ChannelStripParams::kHmFreqDefault);
                 s.hmQ     .store (0.7f, std::memory_order_relaxed);
             }
             else
             {
                 s.hmGainDb.store (jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
-                s.setEqFreq (ChannelStripParams::EqFreq::Hm, jlimit (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax, m.midFreqHz));
+                s.setEqFreq (EqFreq::Hm, channelEqMarkingForHz (EqFreq::Hm, m.midFreqHz, black));
                 s.hmQ     .store (jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
                 s.lmGainDb.store (0.0f, std::memory_order_relaxed);
-                s.setEqFreq (ChannelStripParams::EqFreq::Lm, 600.0f);
+                s.setEqFreq (EqFreq::Lm, ChannelStripParams::kLmFreqDefault);
                 s.lmQ     .store (0.7f, std::memory_order_relaxed);
             }
             s.hfGainDb.store (jlimit (-15.0f, 15.0f, m.highGainDb), std::memory_order_relaxed);
-            s.setEqFreq (ChannelStripParams::EqFreq::Hf, jlimit (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax, m.highFreqHz));
+            s.setEqFreq (EqFreq::Hf, channelEqMarkingForHz (EqFreq::Hf, m.highFreqHz, black));
         }
         ++imported;
     }
@@ -6802,6 +6826,7 @@ void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
     closeAudioSettings();
     closeAudioEditor();
     if (! keepPianoRoll) closePianoRoll();
+    if (masteringView != nullptr) masteringView->closeCompEditorPopup();
     if (consoleView != nullptr)
     {
         for (int t = 0; t < Session::kNumTracks; ++t)
@@ -6810,7 +6835,13 @@ void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
                 strip->closeCompEditorPopup();
                 strip->closeBuiltinEditorPopup();
             }
-        if (auto* master = consoleView->getMasterStripComponent()) master->closeTapeEditor();
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            if (auto* bus = consoleView->getBusComponent (b)) bus->closeCompEditorPopup();
+        if (auto* master = consoleView->getMasterStripComponent())
+        {
+            master->closeTapeEditor();
+            master->closeCompEditorPopup();
+        }
     }
 }
 #endif

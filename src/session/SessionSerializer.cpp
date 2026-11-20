@@ -1,4 +1,6 @@
 #include "SessionSerializer.h"
+#include "ChannelEqMarking.h"
+#include "CompMigration.h"
 #include "../foundation/AtomicFile.h"
 #include "../foundation/Fs.h"
 #include "../foundation/Json.h"
@@ -83,7 +85,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 11;
+constexpr int kFormatVersion = 12;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -240,6 +242,32 @@ inline void storeFiniteClampedFloat (std::atomic<float>& dst,
                std::memory_order_relaxed);
 }
 
+// Every parameter the stage stores, under the plug-in's symbol and in its host
+// domain.
+void putCompParams (JObj& obj, const CompParams& comp, CompStage stage)
+{
+    for (const auto id : compStageParams (stage))
+    {
+        const auto& spec = compParamSpec (id);
+        const float v = clampCompParam (id, comp.get (id));
+        if (spec.integer) obj[spec.symbol] = (int) v;
+        else              obj[spec.symbol] = v;
+    }
+}
+
+// An absent value, or one that is not a finite number, takes the parameter's
+// default, in every section: the object holds Multi-Comp 2's parameters, whose
+// set grows with the plug-in, so a key a session lacks is one it never set.
+void loadCompParams (CompParams& comp, CompStage stage, const nlohmann::json& obj)
+{
+    for (const auto id : compStageParams (stage))
+    {
+        const auto& spec = compParamSpec (id);
+        comp.set (id, json::has (obj, spec.symbol) ? json::finiteFloat (obj[spec.symbol], spec.hostDefault)
+                                                   : spec.hostDefault);
+    }
+}
+
 // Parse one automation point from JSON, hardening every field against a
 // hand-edited or truncated file: timeSamples >= 0 and recordedAtBPM finite.
 // The lane evaluator's binary search assumes non-negative, sorted times, and
@@ -343,10 +371,12 @@ bool keptV7DialMatches (ChannelStripParams::EqFreq f, float dial, bool black, fl
 // Up to format 7 a channel EQ band's "freq", and the HPF's and LPF's, was a
 // dial position of the 4K EQ core, clamped on load to kV7DialRanges; the
 // core's measured dial law put the band or filter somewhere else. Rewrites each
-// one as the exact Hz that position played, past today's knob range if that is
-// where it played (the loader holds it, ChannelStripParams::k*Held*), and keeps
-// the position as "freq_dial" so the strip plays it through the core's dial API
-// exactly as before until the frequency moves (LegacyEqDial).
+// one as the exact Hz that position played, past the knob's range if that is
+// where it played, and keeps the position as "freq_dial", which formats 8 to
+// 11 played through the core's dial API until the frequency moved. A filter
+// still does (LegacyEqDial; the loader holds an HPF past its knob,
+// ChannelStripParams::kHpfHeldMaxHz); a band's dial becomes its marking again
+// in the 11 -> 12 step (migrateStripEqBandsToMarkings).
 bool migrateStripEqDialsToHz (nlohmann::json& root)
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -403,6 +433,65 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
     std::fprintf (stderr,
                   "[Dusk Studio/SessionSerializer] this build has no 4K EQ core to convert "
                   "a v7 session's EQ dial positions - refusing to load it\n");
+    return false;
+#endif
+}
+
+// Formats 8 to 11 stored a channel EQ band's "freq" as the Hz it played
+// through the core's Hz API, with the format-7 dial a converted band still
+// played beside it as "freq_dial". Format 12 stores the band's frequency
+// marking, which the strip plays through the core's dial law as 4K EQ 2 does.
+// A band still carrying the dial the v7 -> v8 step kept for its Hz in the
+// track's voicing takes that dial; any other band, one whose dial a voicing
+// switch suspended included, takes the marking that plays its Hz in the
+// track's voicing. Both are held at the ends of the core's anchor table. The
+// filters keep their Hz and their dials.
+bool migrateStripEqBandsToMarkings (nlohmann::json& root)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    using EQ = duskaudio::FourKEQDSP;
+    using EqFreq = ChannelStripParams::EqFreq;
+    struct Band { const char* key; EqFreq freq; EQ::Band band; };
+    static constexpr Band kBands[] {
+        { "lf", EqFreq::Lf, EQ::Band::LF },
+        { "lm", EqFreq::Lm, EQ::Band::LM },
+        { "hm", EqFreq::Hm, EQ::Band::HM },
+        { "hf", EqFreq::Hf, EQ::Band::HF },
+    };
+    static constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+
+    const auto tracks = root.find ("tracks");
+    if (tracks == root.end() || ! tracks->is_array()) return true;
+    for (auto& track : *tracks)
+    {
+        if (! track.is_object()) continue;
+        const auto eq = track.find ("eq");
+        if (eq == track.end() || ! eq->is_object()) continue;
+        const bool trackBlack = json::getString (*eq, "type") == "black";
+        for (const auto& b : kBands)
+        {
+            const auto band = eq->find (b.key);
+            if (band == eq->end() || ! band->is_object()) continue;
+            const float dial = json::getFiniteFloat (*band, kFreqDialKey, kNaN);
+            const auto type = json::getString (*band, kFreqDialTypeKey, trackBlack ? "black" : "brown");
+            band->erase (kFreqDialKey);
+            band->erase (kFreqDialTypeKey);
+            const float hz = json::getFiniteFloat (*band, "freq", kNaN);
+            if (std::isnan (hz)) continue;
+            const bool dialBlack = type == "black";
+            const bool kept = dialBlack == trackBlack && (dialBlack || type == "brown")
+                           && keptV7DialMatches (b.freq, dial, dialBlack, hz);
+            const float* anchors = EQ::frequencyControlAnchors (b.band);
+            (*band)["freq"] = std::clamp (kept ? dial : channelEqMarkingForHz (b.freq, hz, trackBlack),
+                                          anchors[0], anchors[EQ::kControlAnchorCount - 1]);
+        }
+    }
+    return true;
+#else
+    (void) root;
+    std::fprintf (stderr,
+                  "[Dusk Studio/SessionSerializer] this build has no 4K EQ core to convert "
+                  "a v11 session's EQ band frequencies - refusing to load it\n");
     return false;
 #endif
 }
@@ -722,6 +811,26 @@ bool migrateSession (nlohmann::json& root, int from)
                 ++v;
                 break;
 
+            case 11:
+                // v11 -> v12: every compressor holds Multi-Comp 2's parameters
+                // under its symbols, in its host domain, in one comp object per
+                // stage; the old cores' values are converted to the settings
+                // that play closest to them. A channel EQ band's freq is now
+                // its frequency marking, played through the core's dial law as
+                // 4K EQ 2 plays it, where v11 stored the Hz it played. The bump
+                // exists because a v11 build would read none of the compressor
+                // settings and save its defaults over them, and would play
+                // every band's marking as Hz.
+                if (root.is_object())
+                {
+                    if (! migrateStripEqBandsToMarkings (root))
+                        return false;
+                    migrateCompressorsToFormat12 (root);
+                    root["version"] = 12;
+                }
+                ++v;
+                break;
+
             default:
                 std::fprintf (stderr,
                               "[Dusk Studio/SessionSerializer] no migrator from v%d to v%d\n",
@@ -1009,72 +1118,55 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
     obj["aux_send_db"]        = std::move (auxLevels);
     obj["aux_send_pre_fader"] = std::move (auxPrePost);
 
-    using EqFreq = ChannelStripParams::EqFreq;
     const bool eqBlack = t.strip.eqBlackMode.load();
-    // A format-7 dial goes out while its frequency has not moved, with the
-    // voicing it plays in: one a voicing switch suspended plays again when the
-    // reopened session switches back (LegacyEqDial).
-    auto writeFreq = [&t] (JObj& o, EqFreq f)
+    // A filter's format-7 dial goes out while its frequency has not moved,
+    // with the voicing it plays in: one a voicing switch suspended plays again
+    // when the reopened session switches back (LegacyEqDial).
+    auto writeFilterFreq = [] (JObj& o, const LegacyEqDial& dial, const std::atomic<float>& freq)
     {
         float hz = 0.0f;
         bool dialBlack = false;
-        const float dial = t.strip.legacyDial (f).kept (t.strip.eqFreq (f), hz, dialBlack);
+        const float kept = dial.kept (freq, hz, dialBlack);
         o["freq"] = hz;
-        if (dial > 0.0f)
+        if (kept > 0.0f)
         {
-            o[kFreqDialKey] = dial;
+            o[kFreqDialKey] = kept;
             o[kFreqDialTypeKey] = dialBlack ? "black" : "brown";
         }
     };
 
     JObj hpf;
     hpf["enabled"] = t.strip.hpfEnabled.load();
-    writeFreq (hpf, EqFreq::Hpf);
+    writeFilterFreq (hpf, t.strip.hpfDial, t.strip.hpfFreq);
     obj["hpf"] = std::move (hpf);
 
     JObj lpf;
     lpf["enabled"] = t.strip.lpfEnabled.load();
-    writeFreq (lpf, EqFreq::Lpf);
+    writeFilterFreq (lpf, t.strip.lpfDial, t.strip.lpfFreq);
     obj["lpf"] = std::move (lpf);
 
     JObj eq;
     eq["enabled"] = t.strip.eqEnabled.load();
     eq["type"]    = eqBlack ? "black" : "brown";
-    auto bandObj = [&writeFreq] (float gain, EqFreq freq, float q = -1.0f)
+    auto bandObj = [] (float gain, float freq, float q = -1.0f)
     {
         JObj b;
         b["gain"] = gain;
-        writeFreq (b, freq);
+        b["freq"] = freq;
         if (q >= 0.0f) b["q"] = q;
         return b;
     };
-    eq["lf"] = bandObj (t.strip.lfGainDb.load(), EqFreq::Lf);
-    eq["lm"] = bandObj (t.strip.lmGainDb.load(), EqFreq::Lm, t.strip.lmQ.load());
-    eq["hm"] = bandObj (t.strip.hmGainDb.load(), EqFreq::Hm, t.strip.hmQ.load());
-    eq["hf"] = bandObj (t.strip.hfGainDb.load(), EqFreq::Hf);
+    eq["lf"] = bandObj (t.strip.lfGainDb.load(), t.strip.lfFreq.load());
+    eq["lm"] = bandObj (t.strip.lmGainDb.load(), t.strip.lmFreq.load(), t.strip.lmQ.load());
+    eq["hm"] = bandObj (t.strip.hmGainDb.load(), t.strip.hmFreq.load(), t.strip.hmQ.load());
+    eq["hf"] = bandObj (t.strip.hfGainDb.load(), t.strip.hfFreq.load());
     obj["eq"] = std::move (eq);
 
     JObj comp;
-    comp["enabled"]      = t.strip.compEnabled.load();
-    comp["mode_picked"]  = t.strip.compModePicked.load();
-    comp["mode"]         = t.strip.compMode.load();
-    // Per-mode parameters - UniversalCompressor's native shape.
-    comp["opto_peak_red"] = t.strip.compOptoPeakRed.load();
-    comp["opto_gain"]     = t.strip.compOptoGain.load();
-    comp["opto_limit"]    = t.strip.compOptoLimit.load();
-    comp["fet_input"]        = t.strip.compFetInput.load();
-    comp["fet_output"]       = t.strip.compFetOutput.load();
-    comp["fet_attack"]       = t.strip.compFetAttack.load();
-    comp["fet_release"]      = t.strip.compFetRelease.load();
-    comp["fet_ratio"]        = t.strip.compFetRatio.load();
-    comp["fet_threshold_db"] = t.strip.compFetThresholdDb.load();
-    comp["vca_thresh_db"] = t.strip.compVcaThreshDb.load();
-    comp["vca_ratio"]     = t.strip.compVcaRatio.load();
-    comp["vca_attack"]    = t.strip.compVcaAttack.load();
-    comp["vca_release"]   = t.strip.compVcaRelease.load();
-    comp["vca_output"]    = t.strip.compVcaOutput.load();
-    comp["vca_overeasy"]  = t.strip.compVcaOverEasy.load();
-    comp["vca_detector_classic"] = t.strip.compVcaDetectorClassic.load();
+    comp["enabled"]     = t.strip.compEnabled.load();
+    comp["mode_picked"] = t.strip.compModePicked.load();
+    comp["mode"]        = t.strip.compMode.load();
+    putCompParams (comp, t.strip.comp, CompStage::Strip);
     obj["comp"] = std::move (comp);
 
     // External hardware-insert state. The routing snapshot is read via
@@ -1329,13 +1421,10 @@ JObj busToObject (const Bus& a)
     obj["hpf_enabled"] = a.strip.hpfEnabled.load();
     obj["hpf_freq"]    = a.strip.hpfFreq.load();
 
-    obj["comp_enabled"]      = a.strip.compEnabled.load();
-    obj["comp_thresh_db"]    = a.strip.compThreshDb.load();
-    obj["comp_ratio"]        = a.strip.compRatio.load();
-    obj["comp_attack_ms"]    = a.strip.compAttackMs.load();
-    obj["comp_release_ms"]   = a.strip.compReleaseMs.load();
-    obj["comp_release_auto"] = a.strip.compReleaseAuto.load();
-    obj["comp_makeup_db"]    = a.strip.compMakeupDb.load();
+    JObj comp;
+    comp["enabled"] = a.strip.compEnabled.load();
+    putCompParams (comp, a.strip.comp, CompStage::Bus);
+    obj["comp"] = std::move (comp);
 
     // Automation: same shape as tracks - mode + one array per non-empty lane.
     // Only FaderDb / Pan / Mute are populated for a bus, but we iterate all
@@ -1710,14 +1799,14 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                                          ChannelStripParams::kBandQMin,
                                          ChannelStripParams::kBandQMax);
         };
-        restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr, 100.0f,
-                     ChannelStripParams::kLfFreqHeldMin, ChannelStripParams::kLfFreqHeldMax);
-        restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ, 600.0f,
-                     ChannelStripParams::kLmFreqHeldMin, ChannelStripParams::kLmFreqHeldMax);
-        restoreBand ("hm", &t.strip.hmGainDb, &t.strip.hmFreq, &t.strip.hmQ, 2000.0f,
-                     ChannelStripParams::kHmFreqHeldMin, ChannelStripParams::kHmFreqHeldMax);
-        restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr, 8000.0f,
-                     ChannelStripParams::kHfFreqHeldMin, ChannelStripParams::kHfFreqHeldMax);
+        restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr, ChannelStripParams::kLfFreqDefault,
+                     ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax);
+        restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ, ChannelStripParams::kLmFreqDefault,
+                     ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax);
+        restoreBand ("hm", &t.strip.hmGainDb, &t.strip.hmFreq, &t.strip.hmQ, ChannelStripParams::kHmFreqDefault,
+                     ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax);
+        restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr, ChannelStripParams::kHfFreqDefault,
+                     ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax);
     }
 
     {
@@ -1725,41 +1814,31 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         // dial plays in the voicing its "freq_dial_type" names, the track's
         // own when it names none. Only a dial the migrator kept for the
         // frequency just loaded plays; any other, and an absent one, leaves
-        // the band on its Hz, as does every band the previous session held a
-        // dial for.
+        // the filter on its Hz, as does every filter the previous session held
+        // a dial for.
         using EqFreq = ChannelStripParams::EqFreq;
-        const auto& eq = json::child (v, "eq");
-        const std::pair<EqFreq, const nlohmann::json*> dials[] {
-            { EqFreq::Hpf, &json::child (v, "hpf") },
-            { EqFreq::Lpf, &json::child (v, "lpf") },
-            { EqFreq::Lf,  &json::child (eq, "lf") },
-            { EqFreq::Lm,  &json::child (eq, "lm") },
-            { EqFreq::Hm,  &json::child (eq, "hm") },
-            { EqFreq::Hf,  &json::child (eq, "hf") },
+        struct Filter { EqFreq freq; LegacyEqDial& dial; const nlohmann::json& saved; };
+        const Filter filters[] {
+            { EqFreq::Hpf, t.strip.hpfDial, json::child (v, "hpf") },
+            { EqFreq::Lpf, t.strip.lpfDial, json::child (v, "lpf") },
         };
         const std::string trackType = t.strip.eqBlackMode.load() ? "black" : "brown";
-        for (const auto& [f, parent] : dials)
+        for (const auto& f : filters)
         {
-            const float dial = json::getFiniteFloat (*parent, kFreqDialKey,
+            const float dial = json::getFiniteFloat (f.saved, kFreqDialKey,
                                                      std::numeric_limits<float>::quiet_NaN());
-            const auto type = json::getString (*parent, kFreqDialTypeKey, trackType);
+            const auto type = json::getString (f.saved, kFreqDialTypeKey, trackType);
             const bool black = type == "black";
-            const float hz = t.strip.eqFreq (f).load();
-            if ((black || type == "brown") && keptV7DialMatches (f, dial, black, hz))
-                t.strip.legacyDial (f).set (dial, hz, black);
+            const float hz = t.strip.eqFreq (f.freq).load();
+            if ((black || type == "brown") && keptV7DialMatches (f.freq, dial, black, hz))
+                f.dial.set (dial, hz, black);
             else
-                t.strip.legacyDial (f).clear();
+                f.dial.clear();
         }
     }
 
     {
         const auto& comp = json::child (v, "comp");
-        auto loadF = [&] (const char* key, std::atomic<float>& dst,
-                          float fallback, float minimum, float maximum)
-        {
-            if (json::has (comp, key))
-                storeFiniteClampedFloat (dst, comp[key], fallback, minimum, maximum);
-        };
         auto loadI = [&] (const char* key, std::atomic<int>& dst,
                           int fallback, int minimum, int maximum)
         {
@@ -1773,22 +1852,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         loadB ("enabled",     t.strip.compEnabled);
         loadB ("mode_picked", t.strip.compModePicked);
         loadI ("mode", t.strip.compMode, 0, 0, 2);
-        loadF ("opto_peak_red", t.strip.compOptoPeakRed, 0.0f, 0.0f, 100.0f);
-        loadF ("opto_gain", t.strip.compOptoGain, 50.0f, 0.0f, 100.0f);
-        loadB ("opto_limit",    t.strip.compOptoLimit);
-        loadF ("fet_input", t.strip.compFetInput, 0.0f, -20.0f, 40.0f);
-        loadF ("fet_output", t.strip.compFetOutput, 0.0f, -20.0f, 20.0f);
-        loadF ("fet_attack", t.strip.compFetAttack, 0.2f, 0.02f, 80.0f);
-        loadF ("fet_release", t.strip.compFetRelease, 400.0f, 50.0f, 1100.0f);
-        loadI ("fet_ratio", t.strip.compFetRatio, 0, 0, 4);
-        loadF ("fet_threshold_db", t.strip.compFetThresholdDb, -10.0f, -60.0f, 0.0f);
-        loadF ("vca_thresh_db", t.strip.compVcaThreshDb, 12.0f, -38.0f, 12.0f);
-        loadF ("vca_ratio", t.strip.compVcaRatio, 4.0f, 1.0f, 120.0f);
-        loadF ("vca_attack", t.strip.compVcaAttack, 1.0f, 0.1f, 50.0f);
-        loadF ("vca_release", t.strip.compVcaRelease, 100.0f, 10.0f, 5000.0f);
-        loadF ("vca_output", t.strip.compVcaOutput, 0.0f, -20.0f, 20.0f);
-        loadB ("vca_overeasy",  t.strip.compVcaOverEasy);
-        loadB ("vca_detector_classic", t.strip.compVcaDetectorClassic);
+        loadCompParams (t.strip.comp, CompStage::Strip, comp);
     }
 
     // Enabled is stored unconditionally: load() reuses the live Session,
@@ -2097,18 +2161,11 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
         storeFiniteClampedFloat (a.strip.hpfFreq, v["hpf_freq"], BusParams::kHpfOffHz,
                                  BusParams::kHpfMinHz, BusParams::kHpfMaxHz);
 
-    if (json::has (v, "comp_enabled"))     a.strip.compEnabled  .store (json::getBool (v, "comp_enabled", false));
-    if (json::has (v, "comp_thresh_db"))
-        storeFiniteClampedFloat (a.strip.compThreshDb, v["comp_thresh_db"], 0.0f, -60.0f, 0.0f);
-    if (json::has (v, "comp_ratio"))
-        storeFiniteClampedFloat (a.strip.compRatio, v["comp_ratio"], 4.0f, 1.0f, 10.0f);
-    if (json::has (v, "comp_attack_ms"))
-        storeFiniteClampedFloat (a.strip.compAttackMs, v["comp_attack_ms"], 10.0f, 0.1f, 50.0f);
-    if (json::has (v, "comp_release_ms"))
-        storeFiniteClampedFloat (a.strip.compReleaseMs, v["comp_release_ms"], 100.0f, 50.0f, 1000.0f);
-    if (json::has (v, "comp_release_auto")) a.strip.compReleaseAuto.store (json::getBool (v, "comp_release_auto", false));
-    if (json::has (v, "comp_makeup_db"))
-        storeFiniteClampedFloat (a.strip.compMakeupDb, v["comp_makeup_db"], 0.0f, -10.0f, 20.0f);
+    {
+        const auto& comp = json::child (v, "comp");
+        if (json::has (comp, "enabled")) a.strip.compEnabled.store (json::getBool (comp, "enabled", false));
+        loadCompParams (a.strip.comp, CompStage::Bus, comp);
+    }
 
     // Automation - mirror restoreTrack: exactly one publish per lane (empty
     // when absent), then release-store the mode. Only FaderDb / Pan / Mute
@@ -2327,14 +2384,12 @@ juce::String SessionSerializer::serialize (const Session& s)
     master["eq_hf_atten_freq"]      = s.master().eqHfAttenFreq.load();
     master["eq_output_gain_db"]     = s.master().eqOutputGainDb.load();
 
-    // Bus comp (SSL-style).
-    master["comp_enabled"]      = s.master().compEnabled.load();
-    master["comp_thresh_db"]    = s.master().compThreshDb.load();
-    master["comp_ratio"]        = s.master().compRatio.load();
-    master["comp_attack_ms"]    = s.master().compAttackMs.load();
-    master["comp_release_ms"]   = s.master().compReleaseMs.load();
-    master["comp_release_auto"] = s.master().compReleaseAuto.load();
-    master["comp_makeup_db"]    = s.master().compMakeupDb.load();
+    {
+        JObj comp;
+        comp["enabled"] = s.master().compEnabled.load();
+        putCompParams (comp, s.master().comp, CompStage::Bus);
+        master["comp"] = std::move (comp);
+    }
 
     // Master automation: only FaderDb is automatable per spec. Reuses
     // the same shape as track / aux serialization for symmetry.
@@ -2381,13 +2436,12 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["eq_hf_atten"]       = s.mastering().eqHfAtten.load();
     mast["eq_tube_drive"]     = s.mastering().eqTubeDrive.load();
     mast["eq_output_gain_db"] = s.mastering().eqOutputGainDb.load();
-    mast["comp_enabled"]      = s.mastering().compEnabled.load();
-    mast["comp_thresh_db"]    = s.mastering().compThreshDb.load();
-    mast["comp_ratio"]        = s.mastering().compRatio.load();
-    mast["comp_attack_ms"]    = s.mastering().compAttackMs.load();
-    mast["comp_release_ms"]   = s.mastering().compReleaseMs.load();
-    mast["comp_release_auto"] = s.mastering().compReleaseAuto.load();
-    mast["comp_makeup_db"]    = s.mastering().compMakeupDb.load();
+    {
+        JObj comp;
+        comp["enabled"] = s.mastering().compEnabled.load();
+        putCompParams (comp, s.mastering().comp, CompStage::Multiband);
+        mast["comp"] = std::move (comp);
+    }
     mast["limiter_enabled"]      = s.mastering().limiterEnabled.load();
     mast["limiter_drive_db"]     = s.mastering().limiterDriveDb.load();
     mast["limiter_ceiling_db"]   = s.mastering().limiterCeilingDb.load();
@@ -2907,7 +2961,8 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         // value instead of resetting to the model default - the clamp tests
         // pin that retention. Only a wholly absent section resets every field,
         // so nothing inherits the previously loaded session's master chain.
-        // Present-but-invalid values fall to the default too.
+        // Present-but-invalid values fall to the default too. The compressor
+        // is the exception: its comp object resets whatever it omits.
         // Mirror json::child's resolution above: it yields the shared empty
         // object unless "master" is an object, so a non-object must count as
         // absent here or every field silently inherits.
@@ -2944,14 +2999,11 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         loadMasterFloat (s.master().eqHfAttenFreq,       kMasterDefaults.eqHfAttenFreq,       "eq_hf_atten_freq",   5000.0f, 20000.0f);
         loadMasterFloat (s.master().eqOutputGainDb,      kMasterDefaults.eqOutputGainDb,      "eq_output_gain_db",   -12.0f, 12.0f);
 
-        // Bus comp.
-        loadMasterBool  (s.master().compEnabled,      kMasterDefaults.compEnabled,      "comp_enabled");
-        loadMasterFloat (s.master().compThreshDb,     kMasterDefaults.compThreshDb,     "comp_thresh_db",  -60.0f, 0.0f);
-        loadMasterFloat (s.master().compRatio,        kMasterDefaults.compRatio,        "comp_ratio",        1.0f, 10.0f);
-        loadMasterFloat (s.master().compAttackMs,     kMasterDefaults.compAttackMs,     "comp_attack_ms",    0.1f, 50.0f);
-        loadMasterFloat (s.master().compReleaseMs,    kMasterDefaults.compReleaseMs,    "comp_release_ms",  50.0f, 1000.0f);
-        loadMasterBool  (s.master().compReleaseAuto,  kMasterDefaults.compReleaseAuto,  "comp_release_auto");
-        loadMasterFloat (s.master().compMakeupDb,     kMasterDefaults.compMakeupDb,     "comp_makeup_db",  -10.0f, 20.0f);
+        {
+            const auto& comp = json::child (master, "comp");
+            s.master().compEnabled.store (json::getBool (comp, "enabled", kMasterDefaults.compEnabled.load()));
+            loadCompParams (s.master().comp, CompStage::Bus, comp);
+        }
         // Mode publish happens AFTER the lane publishes below - same
         // ordering rationale as the track-load + aux-load blocks, and
         // exactly one publish per lane (empty when absent).
@@ -2992,7 +3044,8 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         // nothing inherits the previously loaded session's chain. A non-object
         // counts as absent - json::child resolves it to the shared empty
         // object, which would otherwise read as present-but-empty and retain
-        // everything.
+        // everything. The compressor's comp object resets whatever it omits,
+        // as on the master.
         static const MasteringParams kMasteringDefaults;
         const bool haveMastering = json::has (root, "mastering") && root["mastering"].is_object();
         const auto& mast = json::child (root, "mastering");
@@ -3005,8 +3058,7 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
             s.masteringSourceMissingAfterLoad = ! missingSource.empty();
         }
         // Ranges match what the mastering editors enforce. The legacy tube-EQ
-        // atoms and the comp floats have no editor of their own, so they take
-        // the master strip's - the comp floats reach the same donor params.
+        // atoms have no editor of their own, so they take the master strip's.
         auto loadF = [&mast, haveMastering] (const char* k, std::atomic<float>& dst,
                                              const std::atomic<float>& def,
                                              float minimum, float maximum)
@@ -3038,13 +3090,11 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         loadF ("eq_hf_atten",       m.eqHfAtten,       kMasteringDefaults.eqHfAtten,       0.0f, 10.0f);
         loadF ("eq_tube_drive",     m.eqTubeDrive,     kMasteringDefaults.eqTubeDrive,     0.0f, 1.0f);
         loadF ("eq_output_gain_db", m.eqOutputGainDb,  kMasteringDefaults.eqOutputGainDb, -12.0f, 12.0f);
-        loadB ("comp_enabled",      m.compEnabled,     kMasteringDefaults.compEnabled);
-        loadF ("comp_thresh_db",    m.compThreshDb,    kMasteringDefaults.compThreshDb,  -60.0f, 0.0f);
-        loadF ("comp_ratio",        m.compRatio,       kMasteringDefaults.compRatio,       1.0f, 10.0f);
-        loadF ("comp_attack_ms",    m.compAttackMs,    kMasteringDefaults.compAttackMs,    0.1f, 50.0f);
-        loadF ("comp_release_ms",   m.compReleaseMs,   kMasteringDefaults.compReleaseMs,  50.0f, 1000.0f);
-        loadB ("comp_release_auto", m.compReleaseAuto, kMasteringDefaults.compReleaseAuto);
-        loadF ("comp_makeup_db",    m.compMakeupDb,    kMasteringDefaults.compMakeupDb,  -10.0f, 20.0f);
+        {
+            const auto& comp = json::child (mast, "comp");
+            m.compEnabled.store (json::getBool (comp, "enabled", kMasteringDefaults.compEnabled.load()));
+            loadCompParams (m.comp, CompStage::Multiband, comp);
+        }
         // The limiter is newer than the section around it, so a session saved
         // before it exists still carries "mastering" - these reset on an absent
         // key whether the section is there or not, rather than retaining.

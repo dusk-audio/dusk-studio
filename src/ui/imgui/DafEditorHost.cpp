@@ -211,9 +211,16 @@ struct DafEditorHost::Impl final : private dusk::Timer
         embeddedParent = nativeParent;
         appliedScaleFactor = geometry.scaleFactor;
         lastGeometry = geometry;
-        pushAllValues = true;
         probe.arm ("this display");
         armedMarker = true;
+        // Every value before the editor's first frame, which its first pump
+        // can draw ahead of the push that pump ends with, and every value
+        // again once that pump is over: an editor that seeds its controls
+        // from the unit as it draws its first frame (Multi-Comp 2's) has by
+        // then written over what it was handed here.
+        pushAllValues = true;
+        pushChangedValues();
+        pushAgainAfterPump = true;
         if (pumpIntervalMs > 0)
             startTimer (pumpIntervalMs);
         return true;
@@ -333,6 +340,8 @@ struct DafEditorHost::Impl final : private dusk::Timer
         }
         if (editor == nullptr || closeRequested) return;
 
+        if (std::exchange (pushAgainAfterPump, false))
+            pushAllValues = true;
         pushChangedValues();
         followGeometry();
     }
@@ -475,6 +484,7 @@ struct DafEditorHost::Impl final : private dusk::Timer
     std::uintptr_t embeddedParent = 0;
     double appliedScaleFactor = 1.0;
     bool pushAllValues = true;
+    bool pushAgainAfterPump = false;
     bool firstFrameConfirmed = false;
     bool armedMarker = false;
     bool graphicsFailed = false;
@@ -537,5 +547,14 @@ bool DafEditorHost::editForScenario (int index, float value)
     handed.parameterEdited ((std::uint32_t) index, value);
     handed.gesture ((std::uint32_t) index, false);
     return true;
+}
+
+std::optional<float> DafEditorHost::shownValueForScenario (int index) const
+{
+    const auto& pushed = impl->pushedValues;
+    if (impl->editor == nullptr || impl->closeRequested || impl->pushAllValues
+        || index < 0 || index >= (int) pushed.size())
+        return std::nullopt;
+    return pushed[(std::size_t) index];
 }
 } // namespace duskstudio::imgui

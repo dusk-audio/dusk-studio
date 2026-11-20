@@ -3,16 +3,23 @@
 
 #include "dsp/MasteringChain.h"
 #include "dsp/BrickwallLimiter.h"
+#include "engine/builtin/DafPlugin.h"
 #include "session/Session.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <array>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <iterator>
+#include <string>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
+using duskstudio::CompBandField;
+using duskstudio::CompParamId;
+using duskstudio::compBandParam;
 
 TEST_CASE ("MasteringChain: latest scope window wraps and resets on prepare", "[MasteringChain][scope]")
 {
@@ -72,57 +79,83 @@ TEST_CASE ("MasteringChain: latest scope window wraps and resets on prepare", "[
         REQUIRE_THAT (window[(std::size_t) n], WithinAbs (0.0f, 1.0e-7f));
 }
 
+#if DUSKSTUDIO_HAS_DUSK_DSP
+namespace
+{
+int paramIndex (duskstudio::MultiCompStage& stage, const std::string& symbol)
+{
+    const auto& descs = stage.plugin().params();
+    for (std::size_t i = 0; i < descs.size(); ++i)
+        if (descs[i].symbol == symbol)
+            return (int) i;
+    return -1;
+}
+
+// The plain number Multi-Comp 2 prints for a host value: "2 kHz" reads 2000.
+double printed (const duskstudio::MultiCompStage& stage, CompParamId id, float host)
+{
+    const auto text = stage.valueText (id, host);
+    CAPTURE (text);
+    char* end = nullptr;
+    const double number = std::strtod (text.c_str(), &end);
+    REQUIRE (end != text.c_str());
+    return text.find ("kHz") != std::string::npos ? number * 1000.0 : number;
+}
+} // namespace
+#endif
+
 TEST_CASE ("Appendix A: active multiband compressor defaults and control ranges",
            "[MasteringChain][appendix]")
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
+    // The session's defaults are what the compressor plays, read in the
+    // plug-in's own units; its ranges are the host ranges the session clamps to.
+    duskstudio::MasteringParams params;
     duskstudio::MasteringChain chain;
-    chain.prepare (48000.0, 512, 1);
-    auto* processor = chain.getCompProcessor();
-    REQUIRE (processor != nullptr);
-    auto& parameters = processor->getParameters();
-    const auto* mode = parameters.getRawParameterValue ("mode");
-    const auto* autoMakeup = parameters.getRawParameterValue ("auto_makeup");
-    REQUIRE (mode != nullptr);
-    REQUIRE (autoMakeup != nullptr);
-    REQUIRE_THAT (mode->load(), WithinAbs (7, 1e-6));
-    REQUIRE_THAT (autoMakeup->load(), WithinAbs (0, 1e-6));
+    chain.bind (params);
+    chain.prepare (48000.0, 512);
+    auto& stage = chain.getCompressor();
+    REQUIRE (stage.kind() == duskstudio::CompStage::Multiband);
+    const int mode = paramIndex (stage, "mode");
+    REQUIRE (mode >= 0);
+    REQUIRE_THAT (stage.plugin().getParameterValue ((std::uint32_t) mode), WithinAbs (7, 0));
+    REQUIRE_THAT (params.comp.get (CompParamId::AutoMakeup), WithinAbs (0, 0));
 
-    auto check = [&] (const juce::String& id, float low, float high, float initial)
+    auto check = [&] (CompParamId id, double low, double high, double initial)
     {
-        CAPTURE (id.toStdString());
-        auto* parameter = parameters.getParameter (id);
-        auto* value = parameters.getRawParameterValue (id);
-        REQUIRE (parameter != nullptr);
-        REQUIRE (value != nullptr);
-        // Snapping a 0.1 dB interval can leave a sub-micro dB residue with fused arithmetic.
-        CHECK_THAT (value->load(), WithinAbs (initial, 1e-6)
-                                  || Catch::Matchers::WithinRel (initial, 1e-6f));
-        const auto& range = parameter->getNormalisableRange();
-        CHECK_THAT (range.start, WithinAbs (low, 1e-5));
-        CHECK_THAT (range.end, WithinAbs (high, 1e-5));
-        parameter->setValueNotifyingHost (0.0f);
-        CHECK_THAT (value->load(), WithinAbs (low, 1e-5));
-        parameter->setValueNotifyingHost (1.0f);
-        CHECK_THAT (value->load(), WithinAbs (high, 1e-5));
-        parameter->setValueNotifyingHost (parameter->convertTo0to1 (initial));
+        const auto& spec = duskstudio::compParamSpec (id);
+        CAPTURE (spec.symbol);
+        const auto about = [] (double want) { return WithinAbs (want, std::max (0.05, std::abs (want) * 0.005)); };
+        CHECK_THAT (printed (stage, id, spec.hostMin), about (low));
+        CHECK_THAT (printed (stage, id, spec.hostMax), about (high));
+        CHECK_THAT (printed (stage, id, params.comp.get (id)), about (initial));
+    };
+    auto checkSwitch = [&] (CompParamId id, float initial)
+    {
+        const auto& spec = duskstudio::compParamSpec (id);
+        CAPTURE (spec.symbol);
+        CHECK (spec.integer);
+        CHECK_THAT (spec.hostMin, WithinAbs (0, 0));
+        CHECK_THAT (spec.hostMax, WithinAbs (1, 0));
+        CHECK_THAT (params.comp.get (id), WithinAbs (initial, 0));
     };
 
-    check ("mb_crossover_1", 20, 500, 200);
-    check ("mb_crossover_2", 200, 5000, 2000);
-    check ("mb_crossover_3", 2000, 16000, 8000);
-    check ("mb_output", -24, 24, 0);
-    check ("mix", 0, 100, 100);
-    for (const auto* band : { "low", "lowmid", "highmid", "high" })
+    check (CompParamId::MbCrossover1, 20, 500, 200);
+    check (CompParamId::MbCrossover2, 200, 5000, 2000);
+    check (CompParamId::MbCrossover3, 2000, 16000, 8000);
+    check (CompParamId::MbOutput, -24, 24, 0);
+    check (CompParamId::MbMix, 0, 100, 100);
+    for (int band = 0; band < duskstudio::kCompBandCount; ++band)
     {
-        const auto prefix = juce::String ("mb_") + band;
-        check (prefix + "_threshold", -60, 0, -20);
-        check (prefix + "_ratio", 1, 20, 4);
-        check (prefix + "_attack", 0.1f, 100, 10);
-        check (prefix + "_release", 10, 1000, 100);
-        check (prefix + "_makeup", -12, 12, 0);
-        check (prefix + "_enabled", 0, 1, 1);
-        check (prefix + "_solo", 0, 1, 0);
+        CAPTURE (band);
+        check (compBandParam (band, CompBandField::Threshold), -60, 0, -20);
+        check (compBandParam (band, CompBandField::Ratio), 1, 20, 4);
+        check (compBandParam (band, CompBandField::Attack), 0.1, 100, 10);
+        check (compBandParam (band, CompBandField::Release), 10, 1000, 100);
+        check (compBandParam (band, CompBandField::Makeup), -12, 12, 0);
+        checkSwitch (compBandParam (band, CompBandField::Enabled), 1.0f);
+        checkSwitch (compBandParam (band, CompBandField::Solo), 0.0f);
+        checkSwitch (compBandParam (band, CompBandField::Bypass), 0.0f);
     }
 #else
     SKIP ("requires the mastering compressor donor");
@@ -173,7 +206,7 @@ TEST_CASE ("MasteringChain: silence in -> silence out", "[MasteringChain]")
 {
     duskstudio::MasteringParams params;   // limiter ON by default; EQ/comp off
     duskstudio::MasteringChain chain;
-    chain.prepare (kSr, kBlock, 1);
+    chain.prepare (kSr, kBlock);
     chain.bind (params);
 
     std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
@@ -196,7 +229,7 @@ TEST_CASE ("MasteringChain: silence in -> silence out", "[MasteringChain]")
 TEST_CASE ("MasteringChain: latency is the EQ oversampler, the comp and the limiter", "[MasteringChain]")
 {
     duskstudio::MasteringChain chain;
-    chain.prepare (kSr, kBlock, 1);
+    chain.prepare (kSr, kBlock);
 
     duskstudio::BrickwallLimiter limRef;
     limRef.prepare (kSr, kBlock);
@@ -205,8 +238,8 @@ TEST_CASE ("MasteringChain: latency is the EQ oversampler, the comp and the limi
 
     int compLatency = 0;
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    REQUIRE (chain.getCompProcessor() != nullptr);
-    compLatency = chain.getCompProcessor()->getLatencySamples();
+    compLatency = chain.getCompressor().latencySamples();
+    REQUIRE (compLatency > 0);
 #endif
 
     // EQ, comp and limiter are in series; the chain reports the sum.
@@ -226,7 +259,7 @@ TEST_CASE ("MasteringChain: comp over silent input adds no noise floor",
     params.limiterEnabled.store (false, std::memory_order_relaxed);   // isolate the comp
 
     duskstudio::MasteringChain chain;
-    chain.prepare (kSr, kBlock, 1);
+    chain.prepare (kSr, kBlock);
     chain.bind (params);
 
     std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
@@ -253,7 +286,7 @@ TEST_CASE ("MasteringChain: hot input stays finite and at/below the ceiling",
     params.limiterDriveDb.store (6.0f, std::memory_order_relaxed);
 
     duskstudio::MasteringChain chain;
-    chain.prepare (kSr, kBlock, 1);
+    chain.prepare (kSr, kBlock);
     chain.bind (params);
 
     const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
@@ -356,19 +389,14 @@ namespace
 constexpr int kImpulseAt = 100;
 constexpr bool kCompStates[] = { false, true, false };
 
-// A fresh chain on its first prepare: the case where the donor still held its
-// default mode when it reported its latency.
-void prepareTransparent (duskstudio::MasteringChain& chain, duskstudio::MasteringParams& params,
-                         int factor)
+// Thresholds at the top of their range, so the comp passes a quiet signal
+// unreduced.
+void prepareTransparent (duskstudio::MasteringChain& chain, duskstudio::MasteringParams& params)
 {
+    for (int band = 0; band < duskstudio::kCompBandCount; ++band)
+        params.comp.set (compBandParam (band, CompBandField::Threshold), 0.0f);
     chain.bind (params);
-    chain.prepare (kSr, kBlock, factor);
-    auto* comp = chain.getCompProcessor();
-    REQUIRE (comp != nullptr);
-    // Thresholds at the top of their range, so the comp passes the impulse unreduced.
-    for (const auto* band : { "low", "lowmid", "highmid", "high" })
-        if (auto* threshold = comp->getParameters().getParameter (juce::String ("mb_") + band + "_threshold"))
-            threshold->setValueNotifyingHost (1.0f);
+    chain.prepare (kSr, kBlock);
 }
 
 std::vector<float> impulseResponse (duskstudio::MasteringChain& chain,
@@ -376,7 +404,7 @@ std::vector<float> impulseResponse (duskstudio::MasteringChain& chain,
 {
     params.compEnabled.store (compOn, std::memory_order_relaxed);
     std::vector<float> L (kBlock), R (kBlock), out;
-    // Settle the comp's bypass crossfade and smoothers before the impulse.
+    // Settle the switch's crossfade before the impulse.
     for (int b = 0; b < 8; ++b)
     {
         std::fill (L.begin(), L.end(), 0.0f);
@@ -402,10 +430,18 @@ int landedAt (const std::vector<float>& response)
     REQUIRE (std::abs (response[at]) > 0.1f);
     return (int) at - kImpulseAt;
 }
+
+float maxStep (const std::vector<float>& v)
+{
+    float worst = 0.0f;
+    for (std::size_t i = 1; i < v.size(); ++i)
+        worst = std::max (worst, std::abs (v[i] - v[i - 1]));
+    return worst;
+}
 } // namespace
 #endif
 
-TEST_CASE ("MasteringChain: the output lands at the reported latency with the comp in or out, at 1x, 2x and 4x",
+TEST_CASE ("MasteringChain: the output lands at the reported latency with the comp in or out",
            "[MasteringChain][latency]")
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -413,57 +449,278 @@ TEST_CASE ("MasteringChain: the output lands at the reported latency with the co
     // integer report rounds, so an impulse's peak can land a sample either side per stage.
     constexpr int kSlack = 2;
 
-    for (const int factor : { 1, 2, 4 })
-    {
-        CAPTURE (factor);
-        duskstudio::MasteringParams params;
-        duskstudio::MasteringChain chain;
-        prepareTransparent (chain, params, factor);
-        const int reported = chain.getLatencySamples();
+    duskstudio::MasteringParams params;
+    duskstudio::MasteringChain chain;
+    prepareTransparent (chain, params);
+    const int reported = chain.getLatencySamples();
 
-        for (const bool compOn : kCompStates)
-        {
-            CAPTURE (compOn);
-            const int landed = landedAt (impulseResponse (chain, params, compOn));
-            CAPTURE (reported, landed);
-            CHECK (chain.getLatencySamples() == reported);
-            CHECK (std::abs (landed - reported) <= kSlack);
-        }
+    int landedOut = 0;
+    for (const bool compOn : kCompStates)
+    {
+        CAPTURE (compOn);
+        const int landed = landedAt (impulseResponse (chain, params, compOn));
+        CAPTURE (reported, landed);
+        CHECK (chain.getLatencySamples() == reported);
+        CHECK (std::abs (landed - reported) <= kSlack);
+        // In, the band crossovers sum to an allpass whose phase can move the
+        // peak a sample or two off the plain delay's.
+        if (! compOn) landedOut = landed;
+        else          CHECK (std::abs (landed - landedOut) <= kSlack);
     }
 #else
     SKIP ("requires the mastering compressor donor");
 #endif
 }
 
-TEST_CASE ("MasteringChain: the Effect Oversampling choice leaves the mastering output unchanged",
+TEST_CASE ("MasteringChain: switching the compressor while a tone plays crossfades without a click",
            "[MasteringChain][latency]")
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // The EQ and the limiter run fixed 4x oversamplers and the multiband comp runs
-    // at the session rate, so no stage takes the engine-wide factor.
-    std::vector<std::vector<float>> at1x;
-    for (const int factor : { 1, 2, 4 })
+    duskstudio::MasteringParams params;
+    params.limiterEnabled.store (false, std::memory_order_relaxed);
+    duskstudio::MasteringChain chain;
+    prepareTransparent (chain, params);
+
+    static constexpr double kHz = 440.0;
+    static constexpr float kAmp = 0.25f;
+    std::vector<float> L (kBlock), R (kBlock), out;
+    double phase = 0.0;
+    for (int b = 0; b < 72; ++b)
     {
-        CAPTURE (factor);
-        duskstudio::MasteringParams params;
-        duskstudio::MasteringChain chain;
-        prepareTransparent (chain, params, factor);
-        for (std::size_t state = 0; state < std::size (kCompStates); ++state)
+        // In at block 12, out at block 40: each switch while the tone plays.
+        params.compEnabled.store (b >= 12 && b < 40, std::memory_order_relaxed);
+        for (int i = 0; i < kBlock; ++i)
         {
-            CAPTURE (kCompStates[state]);
-            const auto response = impulseResponse (chain, params, kCompStates[state]);
-            if (factor == 1)
+            L[(size_t) i] = R[(size_t) i] = kAmp * (float) std::sin (phase);
+            phase += 2.0 * 3.14159265358979323846 * kHz / kSr;
+        }
+        chain.processInPlace (L.data(), R.data(), kBlock);
+        out.insert (out.end(), L.begin(), L.end());
+    }
+    // Every sample-to-sample move stays within the tone's own steepest one,
+    // with room for the crossover's phase and the fade's slope.
+    const float toneStep = kAmp * (float) (2.0 * 3.14159265358979323846 * kHz / kSr);
+    CHECK (maxStep (out) < 1.25f * toneStep);
+    CHECK_THAT (params.meterCompGrDb.load(), WithinAbs (0.0f, 0.0f));
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
+TEST_CASE ("MasteringChain: with the compressor out the plug-in does not run", "[MasteringChain]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // A hot signal over the default thresholds: any block the plug-in runs
+    // moves its gain-reduction outputs.
+    duskstudio::MasteringParams params;
+    params.limiterEnabled.store (false, std::memory_order_relaxed);
+    duskstudio::MasteringChain chain;
+    chain.bind (params);
+    chain.prepare (kSr, kBlock);
+    auto& stage = chain.getCompressor();
+
+    std::vector<int> meters;
+    for (const auto* symbol : { "gr_meter", "gr_low", "gr_lowmid", "gr_highmid", "gr_high" })
+    {
+        meters.push_back (paramIndex (stage, symbol));
+        REQUIRE (meters.back() >= 0);
+    }
+    const auto readings = [&]
+    {
+        std::vector<float> v;
+        for (const int index : meters)
+            v.push_back (stage.plugin().getParameterValue ((std::uint32_t) index));
+        return v;
+    };
+    double phase = 0.0;
+    const auto drive = [&] (float amp, int blocks)
+    {
+        std::vector<float> L (kBlock), R (kBlock);
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < kBlock; ++i)
             {
-                at1x.push_back (response);
-                continue;
+                const float s = amp * (0.25f * (float) std::sin (phase * 0.01) + 0.25f * (float) std::sin (phase * 0.13)
+                                       + 0.25f * (float) std::sin (phase * 0.6) + 0.25f * (float) std::sin (phase * 1.6));
+                phase += 1.0;
+                L[(size_t) i] = R[(size_t) i] = s;
             }
-            REQUIRE (response.size() == at1x[state].size());
-            float maxDiff = 0.0f;
-            for (std::size_t i = 0; i < response.size(); ++i)
-                maxDiff = std::max (maxDiff, std::abs (response[i] - at1x[state][i]));
-            CHECK_THAT (maxDiff, WithinAbs (0.0, 1.0e-6));
+            chain.processInPlace (L.data(), R.data(), kBlock);
+        }
+    };
+
+    params.compEnabled.store (false, std::memory_order_relaxed);
+    drive (1.5f, 40);
+    for (const float reading : readings())
+        CHECK_THAT (reading, WithinAbs (0.0f, 0.0f));
+    CHECK_THAT (params.meterCompGrDb.load(), WithinAbs (0.0f, 0.0f));
+
+    params.compEnabled.store (true, std::memory_order_relaxed);
+    drive (1.5f, 40);
+    CHECK (stage.gainReductionDb() < -1.0f);
+    CHECK (params.meterCompGrDb.load() < -1.0f);
+
+    // Out again: once the fade is over the readings hold, whatever plays.
+    params.compEnabled.store (false, std::memory_order_relaxed);
+    drive (1.5f, 40);
+    const auto held = readings();
+    drive (0.3f, 40);
+    const auto later = readings();
+    for (std::size_t i = 0; i < held.size(); ++i)
+        CHECK_THAT (later[i], WithinAbs (held[i], 0.0f));
+    CHECK_THAT (params.meterCompGrDb.load(), WithinAbs (0.0f, 0.0f));
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+namespace
+{
+// Drives a chain with a signal loud enough for every band to compress.
+struct LoudDrive
+{
+    explicit LoudDrive (duskstudio::MasteringChain& driven) : chain (driven) {}
+
+    duskstudio::MasteringChain& chain;
+    std::vector<float> out;
+    double phase = 0.0;
+
+    void blocks (int count)
+    {
+        std::vector<float> L (kBlock), R (kBlock);
+        for (int b = 0; b < count; ++b)
+        {
+            for (int i = 0; i < kBlock; ++i)
+            {
+                const double x = phase;
+                phase += 1.0;
+                L[(size_t) i] = 1.5f * (0.25f * (float) std::sin (x * 0.01) + 0.25f * (float) std::sin (x * 0.13)
+                                        + 0.25f * (float) std::sin (x * 0.6) + 0.25f * (float) std::sin (x * 1.6));
+                R[(size_t) i] = 0.8f * L[(size_t) i];
+            }
+            chain.processInPlace (L.data(), R.data(), kBlock);
+            out.insert (out.end(), L.begin(), L.end());
+            out.insert (out.end(), R.begin(), R.end());
         }
     }
+};
+} // namespace
+#endif
+
+// The Multiband face reads the three crossovers back from the plug-in every
+// frame, and every control when it opens. With the compressor out the plug-in
+// does not run, yet while the face is open it holds the session's values.
+TEST_CASE ("MasteringChain: with the compressor out, an open editor reads the session's values from the plug-in",
+           "[MasteringChain][editor]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    duskstudio::MasteringParams params;
+    params.compEnabled.store (false, std::memory_order_relaxed);
+    params.limiterEnabled.store (false, std::memory_order_relaxed);
+    duskstudio::MasteringChain chain;
+    chain.bind (params);
+    chain.prepare (kSr, kBlock);
+    auto& stage = chain.getCompressor();
+    LoudDrive drive { chain };
+    drive.blocks (2);
+
+    struct Edit { CompParamId id; const char* symbol; float value; };
+    // Host values whose crossover frequencies are already in order, so the
+    // plug-in reads back what it was given, to its 1 Hz step.
+    const Edit edits[] { { CompParamId::MbCrossover1, "mb_crossover_1", 0.6f },
+                         { CompParamId::MbCrossover3, "mb_crossover_3", 0.8f },
+                         { compBandParam (1, CompBandField::Threshold), "mb_threshold_1", -33.0f },
+                         { CompParamId::MbMix, "mb_mix", 60.0f } };
+    stage.setEditorOpen (true);
+    for (const auto& edit : edits)
+        params.comp.set (edit.id, edit.value);
+    drive.blocks (1);
+    for (const auto& edit : edits)
+    {
+        CAPTURE (edit.symbol);
+        const int index = paramIndex (stage, edit.symbol);
+        REQUIRE (index >= 0);
+        CHECK_THAT (stage.editorReading (index), WithinAbs (edit.value, 2.0e-3f));
+    }
+    CHECK_THAT (params.meterCompGrDb.load(), WithinAbs (0.0f, 0.0f));
+
+    // Closed, a compressor that is out takes nothing.
+    stage.setEditorOpen (false);
+    params.comp.set (CompParamId::MbCrossover1, 0.3f);
+    drive.blocks (2);
+    CHECK_THAT (stage.editorReading (paramIndex (stage, "mb_crossover_1")), WithinAbs (0.6f, 2.0e-3f));
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
+// What an open editor had the plug-in take while it was out leaves its rest
+// state alone: switched in again it plays exactly what it plays when the
+// values reach it as it starts, as they do with no editor open.
+TEST_CASE ("MasteringChain: values an open editor gave a compressor that is out play as they did without it",
+           "[MasteringChain][editor]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    duskstudio::MasteringParams watchedParams, plainParams;
+    duskstudio::MasteringChain watched, plain;
+    for (auto* params : { &watchedParams, &plainParams })
+        params->limiterEnabled.store (false, std::memory_order_relaxed);
+    watched.bind (watchedParams);
+    plain.bind (plainParams);
+    watched.prepare (kSr, kBlock);
+    plain.prepare (kSr, kBlock);
+    LoudDrive watchedDrive { watched }, plainDrive { plain };
+
+    const auto both = [&] (auto&& change, int blocks)
+    {
+        change (watchedParams);
+        change (plainParams);
+        watchedDrive.blocks (blocks);
+        plainDrive.blocks (blocks);
+    };
+    using Params = duskstudio::MasteringParams;
+    both ([] (Params& p) { p.compEnabled.store (true, std::memory_order_relaxed); }, 30);
+    // Out long enough for the fade to end and the plug-in to go back to rest.
+    both ([] (Params& p) { p.compEnabled.store (false, std::memory_order_relaxed); }, 30);
+    watched.getCompressor().setEditorOpen (true);
+    // A first set of values, then the one the compressor comes back with, so
+    // the open editor's plug-in takes both and the other only the second.
+    both ([] (Params& p)
+    {
+        p.comp.set (CompParamId::AutoMakeup, 1.0f);
+        p.comp.set (CompParamId::MbMix, 30.0f);
+        p.comp.set (CompParamId::MbCrossover2, 0.5f);
+        p.comp.set (compBandParam (0, CompBandField::Threshold), -40.0f);
+    }, 5);
+    both ([] (Params& p)
+    {
+        p.comp.set (CompParamId::MbMix, 70.0f);
+        p.comp.set (CompParamId::MbOutput, 3.0f);
+        p.comp.set (CompParamId::MbCrossover1, 0.6f);
+        p.comp.set (compBandParam (0, CompBandField::Threshold), -45.0f);
+        p.comp.set (compBandParam (2, CompBandField::Ratio), 0.8f);
+        p.comp.set (compBandParam (3, CompBandField::Enabled), 0.0f);
+    }, 5);
+    const int mix = paramIndex (watched.getCompressor(), "mb_mix");
+    REQUIRE (mix >= 0);
+    CHECK_THAT (watched.getCompressor().editorReading (mix), WithinAbs (70.0f, 1.0e-4f));
+    CHECK_THAT (plain.getCompressor().editorReading (mix), WithinAbs (100.0f, 1.0e-4f));
+    both ([] (Params& p) { p.compEnabled.store (true, std::memory_order_relaxed); }, 30);
+
+    const auto& a = watchedDrive.out;
+    const auto& b = plainDrive.out;
+    REQUIRE (a.size() == b.size());
+    std::size_t firstDifference = a.size();
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (std::memcmp (&a[i], &b[i], sizeof (float)) != 0)
+        {
+            firstDifference = i;
+            break;
+        }
+    CAPTURE (firstDifference, a.size());
+    CHECK (firstDifference == a.size());
+    CHECK (watchedParams.meterCompGrDb.load() < -1.0f);
 #else
     SKIP ("requires the mastering compressor donor");
 #endif

@@ -56,29 +56,15 @@ void eachTrackField (Track& dst, Src& src, Fields& f)
     f.atomic (d.hfGainDb, s.hfGainDb);
     f.atomic (d.hfFreq, s.hfFreq);
     f.atomic (d.eqBlackMode, s.eqBlackMode);
-    for (size_t i = 0; i < d.eqFreqDial.size(); ++i)
-        f.dial (d.eqFreqDial[i], s.eqFreqDial[i]);
+    f.dial (d.hpfDial, s.hpfDial);
+    f.dial (d.lpfDial, s.lpfDial);
     f.atomic (d.eqEnabled, s.eqEnabled, std::memory_order_release);
 
     f.atomic (d.compEnabled, s.compEnabled);
     f.atomic (d.compMode, s.compMode);
     f.atomic (d.compModePicked, s.compModePicked);
-    f.atomic (d.compOptoPeakRed, s.compOptoPeakRed);
-    f.atomic (d.compOptoGain, s.compOptoGain);
-    f.atomic (d.compOptoLimit, s.compOptoLimit);
-    f.atomic (d.compFetInput, s.compFetInput);
-    f.atomic (d.compFetOutput, s.compFetOutput);
-    f.atomic (d.compFetAttack, s.compFetAttack);
-    f.atomic (d.compFetRelease, s.compFetRelease);
-    f.atomic (d.compFetRatio, s.compFetRatio);
-    f.atomic (d.compFetThresholdDb, s.compFetThresholdDb);
-    f.atomic (d.compVcaThreshDb, s.compVcaThreshDb);
-    f.atomic (d.compVcaRatio, s.compVcaRatio);
-    f.atomic (d.compVcaAttack, s.compVcaAttack);
-    f.atomic (d.compVcaRelease, s.compVcaRelease);
-    f.atomic (d.compVcaOutput, s.compVcaOutput);
-    f.atomic (d.compVcaOverEasy, s.compVcaOverEasy);
-    f.atomic (d.compVcaDetectorClassic, s.compVcaDetectorClassic);
+    for (std::size_t i = 0; i < kCompParamCount; ++i)
+        f.atomic (d.comp.atom ((CompParamId) i), s.comp.atom ((CompParamId) i));
 
     f.atomic (d.liveFaderDb, s.liveFaderDb);
     f.atomic (d.livePan, s.livePan);

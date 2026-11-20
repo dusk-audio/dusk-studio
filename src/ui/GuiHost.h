@@ -15,6 +15,11 @@
 // reach through the component tree, expressed in std types so the cases stay
 // free of the GUI framework; MainComponent implements it in GuiScenarios.cpp,
 // which is the only place that knows how any of this is realised.
+namespace duskstudio
+{
+class MultiCompStage;
+}
+
 namespace duskstudio::scenario
 {
 struct MiniMarkerPaint
@@ -358,7 +363,8 @@ public:
     // A named control on a strip: "name" on a channel strip or an aux lane,
     // "print" (PRINT / FREEZE, shown outside MIXING) on a channel strip,
     // "mute", "fader" (its return fader) or "insert" (the slot's header
-    // button) on an aux lane, "eq" (the EQ header's label) on a bus strip.
+    // button) on an aux lane, "eq" (the EQ header's label) on a bus strip,
+    // "comp" (the COMP header's label) on a bus strip or the master.
     virtual bool clickStripControl (StripKind kind, int index, const std::string& control,
                                     int clicks, bool right) = 0;
     virtual std::vector<double> auxReturnRange (int lane) const = 0;
@@ -427,8 +433,9 @@ public:
     // The names the same panel drew in its last frame, as drawn, one per line. Empty
     // while it is not open.
     virtual std::string panelNameText (const std::string& panel) const = 0;
-    // Reads the same panel's window back into a PPM at `path`, now. False while it is
-    // not open or where the platform cannot read a window back.
+    // Reads the same panel's window back into a PPM at `path`, now; "main" reads the
+    // main window, embedded modals included. False while it is not open or where the
+    // platform cannot read a window back.
     virtual bool capturePanel (const std::string& panel, const std::filesystem::path& path) = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
@@ -473,6 +480,35 @@ public:
     // through the callbacks a drag in the editor calls.
     virtual bool masterTapeEdit (const std::string& paramSymbol, float value) = 0;
     virtual void closeMasterTape() = 0;
+    // A compressor's editor, Multi-Comp 2's own over a dimmed window, on a channel
+    // strip, a bus or the master (whose index is ignored). openCompEditor goes
+    // through the strip's own open, which toggles as its COMP label does.
+    virtual bool openCompEditor (StripKind kind, int index) = 0;
+    virtual bool compEditorOpen (StripKind kind, int index) const = 0;
+    virtual bool compEditorDrawn (StripKind kind, int index) const = 0;
+    // Works one control of the open editor, by its parameter symbol, through the
+    // callbacks a drag in the editor calls.
+    virtual bool compEditorEdit (StripKind kind, int index, const std::string& paramSymbol, float value) = 0;
+    // What the open editor was last given for that parameter; empty while none is open.
+    virtual std::optional<float> compEditorShows (StripKind kind, int index,
+                                                  const std::string& paramSymbol) const = 0;
+    // The compressor stage the open editor draws; null while none is open.
+    virtual const MultiCompStage* compEditorStage (StripKind kind, int index) const = 0;
+    virtual void closeCompEditor (StripKind kind, int index) = 0;
+    // A press on the dim behind whichever compressor editor is up, the mastering
+    // page's included, in the window's corner, which the centred editor never
+    // covers. False when none is up.
+    virtual bool clickCompEditorDim() = 0;
+    // The COMP header's label on a channel strip, as the strip shows it.
+    virtual std::string stripCompLabel (int track) const = 0;
+    // A compressor control on the face of a channel strip, a bus or the master,
+    // worked through the window as the mouse works it: "handle", the threshold
+    // handle on the gain-reduction meter, or the parameter symbol of a knob or of
+    // LIMIT ("fet_attack", "opto_limit", "bus_makeup"). A drag presses at the
+    // control's centre and lets go `pixels` higher; a click presses and lets go
+    // there `clicks` times in a row. False while the control is not on screen.
+    virtual bool dragStripComp (StripKind kind, int index, const std::string& control, int pixels) = 0;
+    virtual bool clickStripComp (StripKind kind, int index, const std::string& control, int clicks) = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;
@@ -501,9 +537,47 @@ public:
     // How many of the mastering stage's three native panels are open, or -1 when
     // this build has none. Zero while the stage is not up.
     virtual int masteringPanelsOpen() const = 0;
-    // Pixels around the multiband comp's editor that nothing painted, or -1
-    // while the stage is not up.
+    // Pixels of the multiband comp's slot that nothing painted, or -1 while the
+    // stage is not up.
     virtual int masteringCompPanelUnpaintedPixels() = 0;
+    // The multiband comp's header: its status light (the engage switch) or
+    // its label, which opens Multi-Comp 2's Multiband face over a dimmed
+    // window. False while the stage is not up.
+    virtual bool clickMasteringCompHeader (bool label) = 0;
+    virtual bool masteringCompEditorOpen() const = 0;
+    virtual bool masteringCompEditorDrawn() const = 0;
+    // Works one control of the open face, by its parameter symbol, through the
+    // callbacks a drag in it calls.
+    virtual bool masteringCompEditorEdit (const std::string& paramSymbol, float value) = 0;
+    // What the open face was last given for that parameter; empty while none is open.
+    virtual std::optional<float> masteringCompEditorShows (const std::string& paramSymbol) const = 0;
+    // The compressor stage the open face draws; null while none is open.
+    virtual const MultiCompStage* masteringCompEditorStage() const = 0;
+    // Where the open face sits, in the window's logical pixels: x, y, width,
+    // height; empty while none is open.
+    virtual std::vector<int> masteringCompEditorBounds() const = 0;
+    virtual void closeMasteringCompEditor() = 0;
+    // An open compressor editor's own window as the display server holds it:
+    // on a channel strip, a bus or the master (whose index is ignored), or the
+    // mastering page's Multiband face. RGB, row by row, width * height * 3
+    // bytes; `ppm` is a file it may write. Only noCapture means the platform
+    // cannot read the editor back (anything but an X11 window on Linux).
+    struct FacePixels
+    {
+        enum class Status { noCapture, notShown, captureFailed, read };
+        Status status = Status::noCapture;
+        int width = 0, height = 0;
+        std::vector<unsigned char> rgb;
+    };
+    virtual FacePixels compEditorPixels (StripKind kind, int index, const std::filesystem::path& ppm) = 0;
+    virtual FacePixels masteringCompEditorPixels (const std::filesystem::path& ppm) = 0;
+    // The left button in the same editor, through the display server as the
+    // user's pointer reaches it: the pointer moves to x, y in the editor
+    // window's own pixels, then the button goes down (button 1), comes up (-1)
+    // or stays as it is (0), so a move between a press and a release drags.
+    // False where the editor cannot be read back, or none is open.
+    virtual bool compEditorPointer (StripKind kind, int index, float x, float y, int button) = 0;
+    virtual bool masteringCompEditorPointer (float x, float y, int button) = 0;
     virtual std::string masteringTargetText() const = 0;
     // The Mastering page's source line, and the file its waveform was last
     // pointed at (empty once cleared). Both empty before the page is built.
@@ -587,6 +661,11 @@ public:
     // The text a titled slider's value box shows, as drawn: "<missing>" when no
     // control carries the title, "<no value box>" when it has none.
     virtual std::string valueBoxText (const std::string& title) = 0;
+    // A titled knob's place on its travel, 0 to 1: read, or turned to through
+    // the slider's own travel and set as its accessible value. nullopt and
+    // false when no slider carries the title.
+    virtual std::optional<double> knobTravelPosition (const std::string& title) = 0;
+    virtual bool turnKnobTo (const std::string& title, double position) = 0;
     virtual bool clickTitledControl (const std::string& title, bool right) = 0;
     // One pointer edge on a titled control, so a scenario can hold it down.
     virtual bool pressTitledControl (const std::string& title, bool down) = 0;
@@ -669,6 +748,9 @@ public:
     virtual int tapeMoveLineY() const = 0;
     // The strip carrying the console's focus ring, -1 when none does.
     virtual int consoleFocusedStrip() const = 0;
+    // Puts back the selected track and the focused strip a click on a strip
+    // moved, as tapeSelectedTrack and consoleFocusedStrip read them before it.
+    virtual void restoreTrackFocus (int tapeTrack, int consoleStrip) = 0;
     // What a channel strip's input selector shows; empty when it is not built.
     virtual std::string stripInputText (int track) const = 0;
     // The console strips whose insert is not the one the engine runs in their

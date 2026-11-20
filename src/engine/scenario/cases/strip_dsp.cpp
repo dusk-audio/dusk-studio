@@ -90,8 +90,7 @@ void liveInput (ScenarioContext& ctx, Track::Mode mode)
     auto& bus = session.bus (0).strip;
     auto& master = session.master();
 
-    for (auto* value : { &track.mode, &track.inputSource, &track.inputSourceR, &strip.compMode,
-                         &strip.compFetRatio })
+    for (auto* value : { &track.mode, &track.inputSource, &track.inputSourceR, &strip.compMode })
         ctx.keep (*value);
     for (auto* value : { &track.inputMonitor, &strip.busAssign[0], &strip.auxSendsBypassed,
                          &strip.auxSendPreFader[0], &strip.eqEnabled, &strip.hpfEnabled,
@@ -100,9 +99,10 @@ void liveInput (ScenarioContext& ctx, Track::Mode mode)
                          &master.tapeEnabled })
         ctx.keep (*value);
     for (auto* value : { &strip.faderDb, &strip.pan, &strip.auxSendDb[0], &strip.hpfFreq, &strip.lpfFreq,
-                         &strip.compFetThresholdDb, &strip.compVcaThreshDb, &strip.compVcaRatio,
                          &bus.eqLfGainDb, &bus.eqMidGainDb, &bus.eqHfGainDb, &bus.hpfFreq })
         ctx.keep (*value);
+    for (const auto id : compStageParams (CompStage::Strip))
+        ctx.keep (strip.comp.atom (id));
 
     track.mode.store ((int) mode);
     track.inputSource.store (-2);
@@ -305,6 +305,11 @@ ScenarioResult busHpfCornerAndSlope (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// What a bus delays outlives its input. While bus 3's compressor holds the
+// buses' stage on, buses 1 and 2 carry its latency as a plain delay. The
+// track feeds both; bus 2 is played on through a reference bus that never
+// sleeps, and bus 1, which does, has to keep running until its delay is out
+// to sound the same.
 ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
 {
     liveInput (ctx, Track::Mode::Stereo);
@@ -329,26 +334,36 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         params.pan.store (0.0f);
         strip.busAssign[(std::size_t) bus].store (true);
     }
-    ctx.cleanup ([&engine]
+    auto& stageHolder = session.bus (2).strip;
+    ctx.keep (stageHolder.compEnabled);
+    stageHolder.compEnabled.store (true);
+    auto& trackStrip = engine.getChannelStrip (kTrack);
+    ctx.cleanup ([&engine, &trackStrip]
     {
         for (int bus = 0; bus < 2; ++bus) engine.setBusStemCapture (bus, nullptr, nullptr);
+        trackStrip.setStemCapture (nullptr, nullptr);
         engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
     });
     engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
-    engine.getChannelStrip (kTrack).prepare (ScenarioContext::kSampleRate, kFrames, 1);
-    engine.getBusStrip (0).prepare (ScenarioContext::kSampleRate, kFrames, 4);
-    engine.getBusStrip (1).prepare (ScenarioContext::kSampleRate, kFrames, 1);
+    trackStrip.prepare (ScenarioContext::kSampleRate, kFrames, 1);
+    engine.getBusStrip (0).prepare (ScenarioContext::kSampleRate, kFrames);
+    engine.getBusStrip (1).prepare (ScenarioContext::kSampleRate, kFrames);
+    ctx.note ("bus stage latency " + std::to_string (engine.getBusCompLatencySamples()));
+    if (! ctx.expect (engine.getBusCompLatencySamples() > 0,
+                      "an engaged bus compressor did not hold the buses' latency on"))
+        return ctx.verdict();
 
     BusParams referenceParams;
     BusStrip reference;
     reference.bind (referenceParams);
-    reference.prepare (ScenarioContext::kSampleRate, kFrames, 4);
-    std::array<float, kFrames> input {}, outL {}, outR {};
+    reference.prepare (ScenarioContext::kSampleRate, kFrames);
+    std::array<float, kFrames> input {}, outL {}, outR {}, trackL {}, trackR {};
     std::array<std::array<float, kFrames>, 2> busL {}, busR {};
     const float* inputs[] { input.data(), input.data() };
     float* outputs[] { outL.data(), outR.data() };
     for (int bus = 0; bus < 2; ++bus)
         engine.setBusStemCapture (bus, busL[(std::size_t) bus].data(), busR[(std::size_t) bus].data());
+    trackStrip.setStemCapture (trackL.data(), trackR.data());
     float error = 0.0f, expectedTail = 0.0f, actualTail = 0.0f, mutedInputPeak = 0.0f;
     for (int block = 0; block < 100; ++block)
     {
@@ -357,7 +372,7 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         if (block == 81)
         {
             session.bus (0).strip.mute.store (true);
-            reference.prepare (ScenarioContext::kSampleRate, kFrames, 4);
+            reference.prepare (ScenarioContext::kSampleRate, kFrames);
         }
         if (block == 82) session.bus (0).strip.mute.store (false);
         input.fill (0.0f);
@@ -365,14 +380,17 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         if (block == 60 || block == 80) input.back() = 0.5f;
         for (auto& channel : busL) channel.fill (0.0f);
         for (auto& channel : busR) channel.fill (0.0f);
+        trackL.fill (0.0f);
+        trackR.fill (0.0f);
         engine.audioDeviceIOCallback (inputs, 2, outputs, 2, kFrames, {});
         if (strip.mute.load())
             for (int sample = 0; sample < kFrames; ++sample)
             {
                 const auto i = (std::size_t) sample;
-                mutedInputPeak = std::max (mutedInputPeak, std::abs (busL[1][i]));
-                mutedInputPeak = std::max (mutedInputPeak, std::abs (busR[1][i]));
+                mutedInputPeak = std::max ({ mutedInputPeak, std::abs (trackL[i]), std::abs (trackR[i]) });
             }
+        // Muted, bus 1 drops what its delay held; the reference is re-prepared
+        // for the same.
         if (block == 81)
         {
             busL[1].fill (0.0f);
@@ -384,8 +402,7 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         for (int sample = 0; sample < kFrames; ++sample)
         {
             const auto i = (std::size_t) sample;
-            error = std::max (error, std::abs (busL[0][i] - busL[1][i]));
-            error = std::max (error, std::abs (busR[0][i] - busR[1][i]));
+            error = std::max ({ error, std::abs (busL[0][i] - busL[1][i]), std::abs (busR[0][i] - busR[1][i]) });
             if (block > 60 && block < 80)
             {
                 expectedTail = std::max (expectedTail, std::abs (busL[1][i]));
@@ -486,13 +503,13 @@ ScenarioResult compModesKeepTheirSettings (ScenarioContext& ctx)
 
     strip.compEnabled.store (true);
     strip.compMode.store (1);
-    strip.compFetThresholdDb.store (-30.0f);
-    strip.compFetRatio.store (3);
+    strip.comp.set (CompParamId::FetInput, 20.0f);
+    strip.comp.set (CompParamId::FetRatio, 3.0f);
     const double fet = playTone (ctx, 440.0, 0.5f, 0.0f).left;
 
     strip.compMode.store (2);
-    strip.compVcaThreshDb.store (0.0f);
-    strip.compVcaRatio.store (2.0f);
+    strip.comp.set (CompParamId::VcaThreshold, 0.0f);
+    strip.comp.set (CompParamId::VcaCompression, 20.0f);
     const double vca = playTone (ctx, 440.0, 0.5f, 0.0f).left;
 
     strip.compMode.store (1);
@@ -505,8 +522,8 @@ ScenarioResult compModesKeepTheirSettings (ScenarioContext& ctx)
     ctx.expect (std::abs (db (fet, vca)) > 3.0, "the two settings did not sound different, so nothing was proven");
     ctx.expect (std::abs (db (fetAgain, fet)) < 0.2, "FET did not sound the same after a turn in VCA");
     ctx.expect (std::abs (db (vcaAgain, vca)) < 0.2, "VCA did not sound the same after a turn in FET");
-    ctx.expect (std::abs (strip.compFetThresholdDb.load() + 30.0f) < 1.0e-6f
-                    && std::abs (strip.compVcaThreshDb.load()) < 1.0e-6f,
+    ctx.expect (std::abs (strip.comp.get (CompParamId::FetInput) - 20.0f) < 1.0e-6f
+                    && std::abs (strip.comp.get (CompParamId::VcaThreshold)) < 1.0e-6f,
                 "switching modes changed another mode's threshold");
     return ctx.verdict();
 }
@@ -524,26 +541,29 @@ double reduction (ScenarioContext& ctx, int mode, double hz)
     return db (wet, dry);
 }
 
-// VCA mode's sidechain has a 60 Hz high-pass, so bass below it barely drives
-// the compressor; FET's has none.
-ScenarioResult vcaSidechainIgnoresBass (ScenarioContext& ctx)
+// VCA mode's PULL/SC switch (sidechain_hp) tilts the sidechain up with
+// frequency. Out, the detector hears 100 Hz and 1 kHz alike; in, 1 kHz drives
+// it harder and is pulled down further.
+ScenarioResult vcaPullScCompressesMidsHarder (ScenarioContext& ctx)
 {
     liveInput (ctx, Track::Mode::Mono);
     auto& strip = ctx.session().track (kTrack).strip;
-    strip.compFetThresholdDb.store (-30.0f);
-    strip.compVcaThreshDb.store (-30.0f);
-    strip.compVcaRatio.store (10.0f);
+    strip.comp.set (CompParamId::VcaThreshold, -30.0f);
 
-    const double vcaBass = reduction (ctx, 2, 25.0);
-    const double vcaMid = reduction (ctx, 2, 1000.0);
-    const double fetBass = reduction (ctx, 1, 25.0);
-    const double fetMid = reduction (ctx, 1, 1000.0);
-    ctx.note ("gain change at 25 Hz / 1 kHz: VCA " + std::to_string (vcaBass) + " / "
-              + std::to_string (vcaMid) + " dB, FET " + std::to_string (fetBass) + " / "
-              + std::to_string (fetMid) + " dB");
-    ctx.expect (vcaMid < -6.0, "VCA did not compress a 1 kHz tone above its threshold");
-    ctx.expect (vcaBass - vcaMid > 6.0, "VCA compressed 25 Hz about as hard as 1 kHz, so its sidechain passes bass");
-    ctx.expect (std::abs (fetBass - fetMid) < 6.0, "FET treated 25 Hz differently, as if its sidechain were filtered");
+    strip.comp.set (CompParamId::SidechainHp, 0.0f);
+    const double lowOut = reduction (ctx, 2, 100.0);
+    const double midOut = reduction (ctx, 2, 1000.0);
+    // 20 Hz under the control's square-root taper over 0..500 Hz, the setting
+    // the face's switch first goes in at.
+    strip.comp.set (CompParamId::SidechainHp, std::sqrt (20.0f / 500.0f));
+    const double midIn = reduction (ctx, 2, 1000.0);
+    ctx.note ("gain change, PULL/SC out: 100 Hz " + std::to_string (lowOut) + " dB, 1 kHz "
+              + std::to_string (midOut) + " dB; in: 1 kHz " + std::to_string (midIn) + " dB");
+    ctx.expect (midOut < -6.0, "VCA did not compress a 1 kHz tone above its threshold");
+    // Out, the two sit about 0.1 dB apart; in, they sit 7 to 8 dB apart.
+    ctx.expect (std::abs (lowOut - midOut) < 0.5,
+                "with PULL/SC out, VCA compressed 100 Hz and 1 kHz differently");
+    ctx.expect (midIn < midOut - 2.0, "PULL/SC in did not compress 1 kHz harder than with it out");
     return ctx.verdict();
 }
 
@@ -912,7 +932,7 @@ const ScenarioRegistrar auxCueTailRegistrar { Scenario {
     "aux.cue_tail_outlives_return_gate", { "aux", "cue", "insert", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (auxCueTailOutlivesReturnGate, ctx); } } };
 const ScenarioRegistrar vcaRegistrar { Scenario {
-    "strip.vca_sidechain_ignores_bass", { "strip", "comp", "dsp" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (vcaSidechainIgnoresBass, ctx); } } };
+    "strip.vca_pull_sc_compresses_mids_harder", { "strip", "comp", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (vcaPullScCompressesMidsHarder, ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario

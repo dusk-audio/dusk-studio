@@ -24,6 +24,10 @@ std::optional<ScenarioResult> runIdleWindowPaintsNothing (GuiHost& host, Scenari
     if (! host.hoverForTooltip (false))
         return ScenarioResult::skip ("no point in the window is free of tooltips");
 
+    // A change in the displayed CPU load legitimately repaints the status bar.
+    if (host.pinDspReadings (DspReadings {}))
+        ctx.cleanup ([&host] { host.pinDspReadings (std::nullopt); });
+
     auto window = std::make_shared<std::function<void (int, std::string)>>();
     std::weak_ptr<std::function<void (int, std::string)>> weakWindow = window;
     *window = [&host, &ctx, weakWindow] (int attempt, std::string counts)

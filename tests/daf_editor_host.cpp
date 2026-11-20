@@ -203,13 +203,18 @@ TEST_CASE ("a plug-in editor host pushes every value in when it opens", "[builti
     REQUIRE (rig.host.isOpen());
     REQUIRE (rig.unit.live->offsetCalls == 1);
     REQUIRE (rig.unit.live->offsetX == 10);
+    // Before the editor's first pump, which can draw its first frame, and
+    // again after it, over whatever the editor seeded itself with there.
+    REQUIRE (rig.unit.live->idles == 0);
+    REQUIRE (rig.unit.live->pushed.size() == rig.unit.values.size());
+    REQUIRE (rig.host.shownValueForScenario (2).has_value());
 
     rig.host.tick();
     REQUIRE (rig.unit.live->idles == 1);
-    REQUIRE (rig.unit.live->pushed.size() == rig.unit.values.size());
-    for (std::size_t i = 0; i < rig.unit.values.size(); ++i)
+    REQUIRE (rig.unit.live->pushed.size() == 2 * rig.unit.values.size());
+    for (std::size_t i = 0; i < rig.unit.live->pushed.size(); ++i)
         REQUIRE_THAT (rig.unit.live->pushed[i].value,
-                      WithinAbs (rig.unit.values[i], 1e-9));
+                      WithinAbs (rig.unit.values[i % rig.unit.values.size()], 1e-9));
 
     // Only what changed afterwards, meters included: the unit writes control 3.
     rig.unit.live->pushed.clear();

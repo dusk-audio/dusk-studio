@@ -17,8 +17,8 @@
 //
 // Bigger-scope tests (Pultec EQ, Tape Saturation curves, Bus Comp
 // transfer function) live in the donor — they'd require linking
-// ../plugins-main/plugins/* into this test binary the way
-// comp_static_curve.cpp does. Tracked as a follow-up because the
+// ../plugins-main/plugins/* into this test binary the way the
+// donor-gated tests do. Tracked as a follow-up because the
 // link set is non-trivial and out of this phase's 4-file scope.
 
 #include <catch2/catch_test_macros.hpp>

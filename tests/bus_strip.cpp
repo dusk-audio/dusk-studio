@@ -3,6 +3,7 @@
 
 #include "dsp/BusStrip.h"
 #include "dsp/BusToneEq.h"
+#include "dsp/CompStageAlign.h"
 #include "session/Session.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -11,7 +12,6 @@
 #include <array>
 #include <atomic>
 #include <cmath>
-#include <utility>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -66,6 +66,21 @@ float peak (const std::vector<float>& v)
     for (float x : v) p = std::max (p, std::abs (x));
     return p;
 }
+
+// The buses' compressor stage held on, as the engine holds it while a bus
+// compressor is engaged, and left as it is: a fixed stage. A compressor runs
+// only inside one.
+struct HeldStage
+{
+    duskstudio::CompStageClock clock;
+
+    void bind (duskstudio::BusStrip& strip)
+    {
+        clock.prepare (kSr, strip.getCompressor().latencySamples());
+        clock.snap (true);
+        strip.setCompStage (&clock.block());
+    }
+};
 } // namespace
 
 TEST_CASE ("BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrough",
@@ -73,7 +88,7 @@ TEST_CASE ("BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrou
 {
     duskstudio::BusParams params;   // all defaults: fader 0 dB, pan 0, EQ/comp off
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 1);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
 
     const float amp = juce::Decibels::decibelsToGain (-12.0f);
@@ -96,7 +111,7 @@ TEST_CASE ("BusStrip: -6 dB fader halves the signal", "[BusStrip]")
     params.liveFaderDb.store (-6.0206f, std::memory_order_relaxed);
 
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 1);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
 
     const float amp = juce::Decibels::decibelsToGain (-12.0f);
@@ -112,7 +127,7 @@ TEST_CASE ("BusStrip: center pan is unity on both channels (equal-power law)",
 {
     duskstudio::BusParams params;   // pan 0 = center
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 1);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
 
     const float amp = juce::Decibels::decibelsToGain (-12.0f);
@@ -132,8 +147,10 @@ TEST_CASE ("BusStrip: silent input -> silent output", "[BusStrip]")
     params.compEnabled.store (true, std::memory_order_relaxed);
 
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 1);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
+    HeldStage stage;
+    stage.bind (strip);
 
     std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
     float outPeak = 0.0f;
@@ -147,61 +164,8 @@ TEST_CASE ("BusStrip: silent input -> silent output", "[BusStrip]")
     }
 
     // No analog noise floor on a silent bus even with EQ + comp engaged
-    // (the framework-free comp core carries no analog-hiss stage).
+    // (Multi-Comp 2's Analog Noise is off, and no stage stores it).
     REQUIRE (outPeak < 1.0e-4f);
-}
-
-// --- OS-skip optimisation guards -------------------------------------------
-
-namespace
-{
-// Best integer lag in [0, maxLag] that aligns `delayed` to `ref` (minimising
-// summed-squared error of ref[n] vs delayed[n + lag]). Returns {lag, error}.
-std::pair<int, double> bestLag (const std::vector<float>& ref,
-                                const std::vector<float>& delayed, int maxLag)
-{
-    int bestL = 0; double bestErr = 1e30;
-    for (int lag = 0; lag <= maxLag; ++lag)
-    {
-        double err = 0.0; int count = 0;
-        for (size_t n = 0; n + (size_t) lag < ref.size(); ++n)
-        {
-            const double d = (double) ref[n] - (double) delayed[n + (size_t) lag];
-            err += d * d; ++count;
-        }
-        err /= std::max (1, count);
-        if (err < bestErr) { bestErr = err; bestL = lag; }
-    }
-    return { bestL, bestErr };
-}
-} // namespace
-
-TEST_CASE ("BusStrip: comp-off EQ response is independent of OS factor", "[BusStrip]")
-{
-    // Guards the rate-mismatch trap: the bus EQ is prepared at native rate and
-    // must run identically whether or not an OS factor is selected (the OS now
-    // wraps only the comp). A +9 dB LF shelf at 300 Hz would boost wrongly if
-    // the EQ saw oversampled-rate coefficients.
-    const float amp = juce::Decibels::decibelsToGain (-12.0f);
-
-    auto runAt = [&] (int factor)
-    {
-        duskstudio::BusParams params;
-        params.eqEnabled.store (true, std::memory_order_relaxed);
-        params.eqLfGainDb.store (9.0f, std::memory_order_relaxed);  // strong LF boost
-        // comp left OFF by default → oversampler is skipped at factor > 1.
-        duskstudio::BusStrip strip;
-        strip.prepare (kSr, kBlock, factor);
-        strip.bind (params);
-        std::vector<float> outL, outR;
-        driveSine (strip, 0.0, 300.0, amp, 24, &outL, &outR, 14);
-        return peak (outL);
-    };
-
-    const float p1 = runAt (1);
-    const float p4 = runAt (4);
-    REQUIRE (p1 > amp);                         // LF shelf actually boosted
-    REQUIRE_THAT (p4, WithinRel (p1, 0.01f));   // same boost at 4× (native EQ)
 }
 
 namespace
@@ -211,7 +175,7 @@ namespace
 double stripGainDb (duskstudio::BusParams& params, double hz)
 {
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 1);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
     const float amp = 0.1f;
     std::vector<float> outL, outR;
@@ -299,47 +263,18 @@ TEST_CASE ("BusStrip: a band move or the highpass leaving OFF engages the bus EQ
     CHECK (hpf.eqEnabled.load());
 }
 
-TEST_CASE ("BusStrip: comp-off bus is OS-latency compensated at 4x", "[BusStrip]")
+TEST_CASE ("BusStrip: turning the comp off leaves no silent gap", "[BusStrip]")
 {
-    // With comp off, factor 4 skips the comp oversampler but delays the signal
-    // by the oversampler's latency so the bus stays aligned with comp-on buses.
-    // The EQ is identical (native) in both runs, so the factor-4 stream should
-    // equal the factor-1 stream shifted by the skip delay: the donor halfband
-    // FIR round trip is 26.5 base samples at 4x, applied as a 27-sample
-    // (lround) integer delay.
-    const float amp = juce::Decibels::decibelsToGain (-12.0f);
-
-    auto capture = [&] (int factor)
-    {
-        duskstudio::BusParams params;   // flat EQ, comp off
-        duskstudio::BusStrip strip;
-        strip.prepare (kSr, kBlock, factor);
-        strip.bind (params);
-        std::vector<float> outL, outR;
-        driveSine (strip, 0.0, 1000.0, amp, 16, &outL, &outR, 8);
-        return outL;
-    };
-
-    const auto f1 = capture (1);
-    const auto f4 = capture (4);
-
-    const auto [lag, err] = bestLag (f1, f4, 40);   // does f4 == f1 delayed?
-    REQUIRE (lag == 27);                 // lround(26.5) — the applied skip delay
-    REQUIRE (err < 1.0e-7);              // and at that lag the streams match
-}
-
-TEST_CASE ("BusStrip: comp-off toggle at 4x leaves no silent gap", "[BusStrip]")
-{
-    // Disabling the comp switches from the oversampled path to the skip-delay
-    // path. The skip ring is fed on comp-on blocks too, so the first comp-off
-    // block emits continuous (delayed) signal — not the zero fill a cold ring
-    // would produce.
+    // The first comp-off block fades the compressor out into the stage's
+    // delayed dry, not a gap while anything refills.
     duskstudio::BusParams params;
     params.compEnabled.store (true, std::memory_order_relaxed);
 
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 4);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
+    HeldStage stage;
+    stage.bind (strip);
 
     const float amp = juce::Decibels::decibelsToGain (-12.0f);
     double phase = driveSine (strip, 0.0, 1000.0, amp, 16);   // settle comp-on
@@ -349,8 +284,7 @@ TEST_CASE ("BusStrip: comp-off toggle at 4x leaves no silent gap", "[BusStrip]")
     driveSine (strip, phase, 1000.0, amp, 1, &outL, &outR, 0);
 
     // Longest run of near-silent samples in the first comp-off block. A 1 kHz
-    // sine at 48 k crosses zero one sample at a time; a cold ring would emit
-    // ~27 consecutive zeros.
+    // sine at 48 k crosses zero one sample at a time.
     int run = 0, maxRun = 0;
     for (float x : outL)
     {
@@ -367,12 +301,14 @@ TEST_CASE ("BusStrip: hot input stays finite", "[BusStrip]")
     params.eqLfGainDb.store (9.0f, std::memory_order_relaxed);
     params.eqHfGainDb.store (9.0f, std::memory_order_relaxed);
     params.compEnabled.store (true, std::memory_order_relaxed);
-    params.compThreshDb.store (-30.0f, std::memory_order_relaxed);
-    params.compMakeupDb.store (12.0f, std::memory_order_relaxed);
+    params.comp.set (duskstudio::CompParamId::BusThreshold, -30.0f);
+    params.comp.set (duskstudio::CompParamId::BusMakeup, 12.0f);
 
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, 1);
+    strip.prepare (kSr, kBlock);
     strip.bind (params);
+    HeldStage stage;
+    stage.bind (strip);
 
     const float amp = juce::Decibels::decibelsToGain (6.0f);   // +6 dBFS, hot
     std::vector<float> outL, outR;
@@ -392,7 +328,7 @@ TEST_CASE ("BusStrip: meters read the post-fader peak and a 300 ms VU per side",
     constexpr int kMeterBlock = 480;
     duskstudio::BusParams params;
     duskstudio::BusStrip strip;
-    strip.prepare (kSr, kMeterBlock, 1);
+    strip.prepare (kSr, kMeterBlock);
     strip.bind (params);
 
     const float ampL = 0.5f, ampR = 0.25f;
@@ -443,56 +379,59 @@ TEST_CASE ("BusStrip: meters read the post-fader peak and a 300 ms VU per side",
 
 TEST_CASE ("BusStrip: silent-input skipping preserves delayed and filtered output", "[BusStrip][drain]")
 {
-    for (int factor : { 1, 2, 4 })
-        for (int blockSize : { 1, 16, 64, 512 })
-            for (int effect : { 0, 1, 2 })
+    for (int blockSize : { 1, 16, 64, 512 })
+        for (int effect : { 0, 1, 2 })
+        {
+            CAPTURE (blockSize, effect);
+            duskstudio::BusParams params;
+            params.eqEnabled.store (effect == 1);
+            params.hpfEnabled.store (effect == 1);
+            params.hpfFreq.store (20.0f);
+            params.compEnabled.store (effect == 2);
+            duskstudio::BusStrip gated, reference;
+            HeldStage stage;
+            for (auto* strip : { &gated, &reference })
             {
-                CAPTURE (factor, blockSize, effect);
-                duskstudio::BusParams params;
-                params.eqEnabled.store (effect == 1);
-                params.hpfEnabled.store (effect == 1);
-                params.hpfFreq.store (20.0f);
-                params.compEnabled.store (effect == 2);
-                duskstudio::BusStrip gated, reference;
-                for (auto* strip : { &gated, &reference })
-                {
-                    strip->bind (params);
-                    strip->prepare (kSr, blockSize, factor);
-                }
-                REQUIRE_FALSE (gated.hasPendingDrain());
-                std::vector<float> left ((std::size_t) blockSize), right (left),
-                                   expectedLeft (left), expectedRight (left);
-                float worst = 0.0f, referenceTail = 0.0f;
-                bool slept = false;
-                for (int block = 0; block < 48000 / blockSize + 2; ++block)
-                {
-                    std::fill (left.begin(), left.end(), 0.0f);
-                    std::fill (right.begin(), right.end(), 0.0f);
-                    if (block == 0)
-                    {
-                        left.back() = 0.5f;
-                        right.back() = -0.25f;
-                    }
-                    expectedLeft = left;
-                    expectedRight = right;
-                    reference.processInPlace (expectedLeft.data(), expectedRight.data(), blockSize);
-                    if (block == 0 || gated.hasPendingDrain())
-                        gated.processInPlace (left.data(), right.data(), blockSize);
-                    else
-                        slept = true;
-                    for (int sample = 0; sample < blockSize; ++sample)
-                    {
-                        const auto i = (std::size_t) sample;
-                        worst = std::max (worst, std::abs (left[i] - expectedLeft[i]));
-                        worst = std::max (worst, std::abs (right[i] - expectedRight[i]));
-                        if (block > 0) referenceTail = std::max (referenceTail, std::abs (expectedLeft[i]));
-                    }
-                }
-                CHECK (worst < 2.0e-6f);
-                CHECK (slept);
-                CHECK_FALSE (gated.hasPendingDrain());
-                if (factor > 1 || effect == 1) CHECK (referenceTail > 1.0e-6f);
+                strip->bind (params);
+                strip->prepare (kSr, blockSize);
+                if (effect == 2) stage.bind (*strip);
             }
+            REQUIRE_FALSE (gated.hasPendingDrain());
+            std::vector<float> left ((std::size_t) blockSize), right (left),
+                               expectedLeft (left), expectedRight (left);
+            float worst = 0.0f, referenceTail = 0.0f;
+            bool slept = false;
+            for (int block = 0; block < 48000 / blockSize + 2; ++block)
+            {
+                std::fill (left.begin(), left.end(), 0.0f);
+                std::fill (right.begin(), right.end(), 0.0f);
+                if (block == 0)
+                {
+                    left.back() = 0.5f;
+                    right.back() = -0.25f;
+                }
+                expectedLeft = left;
+                expectedRight = right;
+                reference.processInPlace (expectedLeft.data(), expectedRight.data(), blockSize);
+                if (block == 0 || gated.hasPendingDrain())
+                    gated.processInPlace (left.data(), right.data(), blockSize);
+                else
+                    slept = true;
+                for (int sample = 0; sample < blockSize; ++sample)
+                {
+                    const auto i = (std::size_t) sample;
+                    worst = std::max (worst, std::abs (left[i] - expectedLeft[i]));
+                    worst = std::max (worst, std::abs (right[i] - expectedRight[i]));
+                    if (block > 0) referenceTail = std::max (referenceTail, std::abs (expectedLeft[i]));
+                }
+            }
+            CHECK (worst < 2.0e-6f);
+            CHECK (slept);
+            CHECK_FALSE (gated.hasPendingDrain());
+            // The filter rings past the impulse, and the compressor stage
+            // delays it.
+            if (effect != 0) CHECK (referenceTail > 1.0e-6f);
+        }
 }
 
 TEST_CASE ("BusStrip: a closed fader cannot hide a pending filter tail", "[BusStrip][drain]")
@@ -507,7 +446,7 @@ TEST_CASE ("BusStrip: a closed fader cannot hide a pending filter tail", "[BusSt
     for (auto* strip : { &gated, &reference })
     {
         strip->bind (params);
-        strip->prepare (kSr, blockSize, 4);
+        strip->prepare (kSr, blockSize);
     }
     std::array<float, blockSize> left {}, right {}, expectedLeft {}, expectedRight {};
     float worst = 0.0f, reopenedTail = 0.0f;
@@ -537,40 +476,60 @@ TEST_CASE ("BusStrip: a closed fader cannot hide a pending filter tail", "[BusSt
     right = left;
     gated.processInPlace (left.data(), right.data(), blockSize);
     REQUIRE (gated.hasPendingDrain());
-    gated.prepare (kSr, blockSize, 4);
+    gated.prepare (kSr, blockSize);
     CHECK_FALSE (gated.hasPendingDrain());
 }
 
 TEST_CASE ("BusStrip: an explicit output gate discards held audio before resuming", "[BusStrip][drain]")
 {
-    for (int factor : { 1, 4 })
-        for (bool compressor : { false, true })
+    for (bool compressor : { false, true })
+    {
+        CAPTURE (compressor);
+        duskstudio::BusParams params;
+        params.eqEnabled.store (true);
+        params.hpfEnabled.store (true);
+        params.hpfFreq.store (20.0f);
+        params.compEnabled.store (compressor);
+        duskstudio::BusStrip strip, kept;
+        HeldStage stage;
+        for (auto* bus : { &strip, &kept })
         {
-            CAPTURE (factor, compressor);
-            duskstudio::BusParams params;
-            params.eqEnabled.store (true);
-            params.hpfEnabled.store (true);
-            params.hpfFreq.store (20.0f);
-            params.compEnabled.store (compressor);
-            duskstudio::BusStrip strip;
-            strip.bind (params);
-            strip.prepare (kSr, 16, factor);
+            bus->bind (params);
+            bus->prepare (kSr, 16);
+            if (compressor) stage.bind (*bus);
             std::array<float, 16> left {}, right {};
             left.back() = right.back() = 0.5f;
-            strip.processInPlace (left.data(), right.data(), 16);
-            REQUIRE (strip.hasPendingDrain());
-            strip.discardPendingDrain();
-            REQUIRE_FALSE (strip.hasPendingDrain());
-            float worst = 0.0f;
-            for (int block = 0; block < 300; ++block)
-            {
-                left.fill (0.0f);
-                right.fill (0.0f);
-                strip.processInPlace (left.data(), right.data(), 16);
-                for (float sample : left) worst = std::max (worst, std::abs (sample));
-                for (float sample : right) worst = std::max (worst, std::abs (sample));
-            }
-            CHECK (worst < 1.0e-7f);
-            CHECK_FALSE (strip.hasPendingDrain());
+            bus->processInPlace (left.data(), right.data(), 16);
+            REQUIRE (bus->hasPendingDrain());
         }
+        strip.discardPendingDrain();
+        REQUIRE_FALSE (strip.hasPendingDrain());
+
+        // Silence through both, until the discarded bus has drained or 2 s
+        // have gone by.
+        float worst = 0.0f, keptWorst = 0.0f;
+        for (int block = 0; block < 6000 && (block < 300 || strip.hasPendingDrain()); ++block)
+        {
+            std::array<float, 16> left {}, right {}, keptLeft {}, keptRight {};
+            strip.processInPlace (left.data(), right.data(), 16);
+            kept.processInPlace (keptLeft.data(), keptRight.data(), 16);
+            for (std::size_t i = 0; i < left.size(); ++i)
+            {
+                worst = std::max ({ worst, std::abs (left[i]), std::abs (right[i]) });
+                keptWorst = std::max ({ keptWorst, std::abs (keptLeft[i]), std::abs (keptRight[i]) });
+            }
+        }
+        CAPTURE (worst, keptWorst);
+        CHECK_FALSE (strip.hasPendingDrain());
+        if (! compressor)
+        {
+            CHECK (worst < 1.0e-7f);
+            continue;
+        }
+        // The compressor's delay holds the impulse past its block, so the
+        // kept bus plays it. The discarded one resets its compressor, which
+        // is then as a fresh one: silence in, exactly silence out.
+        CHECK (keptWorst > 0.1f);
+        CHECK (worst <= 0.0f);
+    }
 }

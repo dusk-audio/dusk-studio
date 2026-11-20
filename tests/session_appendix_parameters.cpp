@@ -2,7 +2,6 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "TestTempDirectory.h"
-#include "engine/CompModeMap.h"
 #include "foundation/Json.h"
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
@@ -10,6 +9,7 @@
 #include <algorithm>
 #include <fstream>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -21,17 +21,28 @@ namespace
 {
 struct Number
 {
-    const char* path;
+    std::string path;
     std::atomic<float>* value;
     float initial, low, high;
 };
 
 struct Toggle
 {
-    const char* path;
+    std::string path;
     std::atomic<bool>* value;
     bool initial = false;
 };
+
+// Every parameter a stage's comp object stores, at its spec default and range.
+void addComp (std::vector<Number>& numbers, CompParams& comp, CompStage stage, const std::string& at)
+{
+    for (const auto id : compStageParams (stage))
+    {
+        const auto& spec = compParamSpec (id);
+        numbers.push_back ({ at + "/comp/" + spec.symbol, &comp.atom (id),
+                             spec.hostDefault, spec.hostMin, spec.hostMax });
+    }
+}
 
 void load (Session& session, const Json& document)
 {
@@ -91,51 +102,42 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
     auto& p = session.track (0).strip;
     CHECK_FALSE (p.eqBlackMode.load());
     CHECK (p.compMode.load() == 0);
-    CHECK (p.compFetRatio.load() == 0);
+    CHECK_THAT (p.comp.get (CompParamId::FetRatio), WithinAbs (0.0f, 1e-6));
     for (size_t i = 0; i < 4; ++i)
     {
         CHECK_FALSE (p.busAssign[i].load());
         CHECK_FALSE (p.auxSendPreFader[i].load());
         CHECK_THAT (p.auxSendDb[i].load(), WithinAbs (-100, 1e-6));
     }
-    checkParameters (session, {
+    std::vector<Number> numbers {
         { "/tracks/0/fader_db", &p.faderDb, 0, -100, 12 },
         { "/tracks/0/pan", &p.pan, 0, -1, 1 },
         { "/tracks/0/hpf/freq", &p.hpfFreq, 20, 20, 320 },
         { "/tracks/0/lpf/freq", &p.lpfFreq, 20000, 3000, 20000 },
-        { "/tracks/0/eq/lf/freq", &p.lfFreq, 100, 30, 670 },
+        { "/tracks/0/eq/lf/freq", &p.lfFreq, 200, 30, 450 },
         { "/tracks/0/eq/lf/gain", &p.lfGainDb, 0, -15, 15 },
-        { "/tracks/0/eq/lm/freq", &p.lmFreq, 600, 135, 2500 },
+        { "/tracks/0/eq/lm/freq", &p.lmFreq, 1000, 200, 2500 },
         { "/tracks/0/eq/lm/gain", &p.lmGainDb, 0, -15, 15 },
         { "/tracks/0/eq/lm/q", &p.lmQ, 0.7f, 0.4f, 4 },
-        { "/tracks/0/eq/hm/freq", &p.hmFreq, 2000, 600, 8800 },
+        { "/tracks/0/eq/hm/freq", &p.hmFreq, 3000, 600, 7000 },
         { "/tracks/0/eq/hm/gain", &p.hmGainDb, 0, -15, 15 },
         { "/tracks/0/eq/hm/q", &p.hmQ, 0.7f, 0.4f, 4 },
-        { "/tracks/0/eq/hf/freq", &p.hfFreq, 8000, 630, 16000 },
+        { "/tracks/0/eq/hf/freq", &p.hfFreq, 8000, 1500, 16000 },
         { "/tracks/0/eq/hf/gain", &p.hfGainDb, 0, -15, 15 },
-        { "/tracks/0/comp/opto_gain", &p.compOptoGain, 50, 0, 100 },
-        { "/tracks/0/comp/fet_threshold_db", &p.compFetThresholdDb, -10, -60, 0 },
-        { "/tracks/0/comp/fet_attack", &p.compFetAttack, 0.2f, 0.02f, 80 },
-        { "/tracks/0/comp/fet_release", &p.compFetRelease, 400, 50, 1100 },
-        { "/tracks/0/comp/fet_output", &p.compFetOutput, 0, -20, 20 },
-        { "/tracks/0/comp/vca_thresh_db", &p.compVcaThreshDb, 12, -38, 12 },
-        { "/tracks/0/comp/vca_ratio", &p.compVcaRatio, 4, 1, 120 },
-        { "/tracks/0/comp/vca_attack", &p.compVcaAttack, 1, 0.1f, 50 },
-        { "/tracks/0/comp/vca_release", &p.compVcaRelease, 100, 10, 5000 },
-        { "/tracks/0/comp/vca_output", &p.compVcaOutput, 0, -20, 20 },
-    }, {
+    };
+    addComp (numbers, p.comp, CompStage::Strip, "/tracks/0");
+    checkParameters (session, numbers, {
         { "/tracks/0/mute", &p.mute }, { "/tracks/0/solo", &p.solo },
         { "/tracks/0/phase_invert", &p.phaseInvert },
         { "/tracks/0/hpf/enabled", &p.hpfEnabled },
         { "/tracks/0/lpf/enabled", &p.lpfEnabled },
         { "/tracks/0/eq/enabled", &p.eqEnabled },
         { "/tracks/0/comp/enabled", &p.compEnabled },
-        { "/tracks/0/comp/vca_overeasy", &p.compVcaOverEasy },
-        { "/tracks/0/comp/vca_detector_classic", &p.compVcaDetectorClassic },
+        { "/tracks/0/comp/mode_picked", &p.compModePicked },
     });
     // Appendix A's knob ranges load as written. Ten hertz past a knob's end
-    // loads as written where a converted older session can play there, and
-    // stops at the knob's end where none can.
+    // loads as written where a converted older session can play there, the
+    // HPF's top, and stops at the knob's end where none can.
     struct KnobRange
     {
         const char* path;
@@ -145,10 +147,10 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
     const KnobRange knobs[] {
         { "/tracks/0/hpf/freq",   &p.hpfFreq,   20,   300,   20,   310 },
         { "/tracks/0/lpf/freq",   &p.lpfFreq, 3000, 20000, 3000, 20000 },
-        { "/tracks/0/eq/lf/freq", &p.lfFreq,    30,   450,   30,   460 },
-        { "/tracks/0/eq/lm/freq", &p.lmFreq,   200,  2500,  190,  2500 },
-        { "/tracks/0/eq/hm/freq", &p.hmFreq,   600,  7000,  600,  7010 },
-        { "/tracks/0/eq/hf/freq", &p.hfFreq,  1500, 16000, 1490, 16000 },
+        { "/tracks/0/eq/lf/freq", &p.lfFreq,    30,   450,   30,   450 },
+        { "/tracks/0/eq/lm/freq", &p.lmFreq,   200,  2500,  200,  2500 },
+        { "/tracks/0/eq/hm/freq", &p.hmFreq,   600,  7000,  600,  7000 },
+        { "/tracks/0/eq/hf/freq", &p.hfFreq,  1500, 16000, 1500, 16000 },
     };
     for (const float past : { 0.0f, 10.0f })
     {
@@ -167,9 +169,6 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
             }
         }
     }
-    CHECK_THAT (comp::optoGainPctToMakeupDb (0), WithinAbs (-40, 1e-6));
-    CHECK_THAT (comp::optoGainPctToMakeupDb (50), WithinAbs (0, 1e-6));
-    CHECK_THAT (comp::optoGainPctToMakeupDb (100), WithinAbs (40, 1e-6));
 
     for (int choice = 0; choice < 5; ++choice)
     {
@@ -180,7 +179,7 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
         load (session, document);
         CHECK (p.eqBlackMode.load() == (choice % 2 != 0));
         CHECK (p.compMode.load() == choice % 3);
-        CHECK (p.compFetRatio.load() == choice);
+        CHECK_THAT (p.comp.get (CompParamId::FetRatio), WithinAbs ((float) choice, 1e-6));
     }
     for (float send : { -100.0f, -60.0f, -59.9f, 6.0f, 100.0f })
     {
@@ -207,24 +206,20 @@ TEST_CASE ("Appendix A: bus defaults and load ranges", "[session][appendix]")
 {
     Session session;
     auto& p = session.bus (0).strip;
-    checkParameters (session, {
+    std::vector<Number> numbers {
         { "/buses/0/fader_db", &p.faderDb, 0, -100, 12 },
         { "/buses/0/pan", &p.pan, 0, -1, 1 },
         { "/buses/0/eq_lf_db", &p.eqLfGainDb, 0, -9, 9 },
         { "/buses/0/eq_mid_db", &p.eqMidGainDb, 0, -9, 9 },
         { "/buses/0/eq_hf_db", &p.eqHfGainDb, 0, -9, 9 },
         { "/buses/0/hpf_freq", &p.hpfFreq, 20, 20, 3000 },
-        { "/buses/0/comp_thresh_db", &p.compThreshDb, 0, -60, 0 },
-        { "/buses/0/comp_ratio", &p.compRatio, 4, 1, 10 },
-        { "/buses/0/comp_attack_ms", &p.compAttackMs, 10, 0.1f, 50 },
-        { "/buses/0/comp_release_ms", &p.compReleaseMs, 100, 50, 1000 },
-        { "/buses/0/comp_makeup_db", &p.compMakeupDb, 0, -10, 20 },
-    }, {
+    };
+    addComp (numbers, p.comp, CompStage::Bus, "/buses/0");
+    checkParameters (session, numbers, {
         { "/buses/0/mute", &p.mute }, { "/buses/0/solo", &p.solo },
         { "/buses/0/eq_enabled", &p.eqEnabled },
         { "/buses/0/hpf_enabled", &p.hpfEnabled },
-        { "/buses/0/comp_enabled", &p.compEnabled },
-        { "/buses/0/comp_release_auto", &p.compReleaseAuto, true },
+        { "/buses/0/comp/enabled", &p.compEnabled },
     });
 }
 
@@ -241,7 +236,7 @@ TEST_CASE ("Appendix A: master defaults and load ranges", "[session][appendix]")
 {
     Session session;
     auto& p = session.master();
-    checkParameters (session, {
+    std::vector<Number> numbers {
         { "/master/fader_db", &p.faderDb, 0, -100, 12 },
         { "/master/eq_lf_boost", &p.eqLfBoost, 0, 0, 10 },
         { "/master/eq_lf_atten", &p.eqLfAtten, 0, 0, 10 },
@@ -251,16 +246,12 @@ TEST_CASE ("Appendix A: master defaults and load ranges", "[session][appendix]")
         { "/master/eq_hf_boost_bandwidth", &p.eqHfBoostBandwidth, 0.5f, 0, 10 },
         { "/master/eq_hf_atten", &p.eqHfAtten, 0, 0, 10 },
         { "/master/eq_hf_atten_freq", &p.eqHfAttenFreq, 10000, 5000, 20000 },
-        { "/master/comp_thresh_db", &p.compThreshDb, 0, -60, 0 },
-        { "/master/comp_ratio", &p.compRatio, 4, 1, 10 },
-        { "/master/comp_attack_ms", &p.compAttackMs, 10, 0.1f, 50 },
-        { "/master/comp_release_ms", &p.compReleaseMs, 100, 50, 1000 },
-        { "/master/comp_makeup_db", &p.compMakeupDb, 0, -10, 20 },
-    }, {
+    };
+    addComp (numbers, p.comp, CompStage::Bus, "/master");
+    checkParameters (session, numbers, {
         { "/master/tape_enabled", &p.tapeEnabled },
         { "/master/eq_enabled", &p.eqEnabled },
-        { "/master/comp_enabled", &p.compEnabled },
-        { "/master/comp_release_auto", &p.compReleaseAuto, true },
+        { "/master/comp/enabled", &p.compEnabled },
         { "/master/mono_sum", &p.monoSum },
     });
     for (const auto& choice : std::vector<std::pair<const char*, std::vector<float>>> {
@@ -283,7 +274,7 @@ TEST_CASE ("Appendix A: mastering defaults and load ranges", "[session][appendix
     Session session;
     auto& p = session.mastering();
     CHECK (p.phase.bands.load() == 16);
-    checkParameters (session, {
+    std::vector<Number> numbers {
         { "/mastering/eq_band_0_freq", &p.eqBandFreq[0], 50, 20, 400 },
         { "/mastering/eq_band_1_freq", &p.eqBandFreq[1], 250, 60, 1500 },
         { "/mastering/eq_band_2_freq", &p.eqBandFreq[2], 1000, 200, 6000 },
@@ -302,9 +293,11 @@ TEST_CASE ("Appendix A: mastering defaults and load ranges", "[session][appendix
         { "/mastering/limiter_release_ms", &p.limiterReleaseMs, 100, 10, 1000 },
         { "/mastering/phase_q", &p.phase.q, 2, 0.25f, 8 },
         { "/mastering/phase_averaging_ms", &p.phase.averagingMs, 500, 50, 5000 },
-    }, {
+    };
+    addComp (numbers, p.comp, CompStage::Multiband, "/mastering");
+    checkParameters (session, numbers, {
         { "/mastering/eq_enabled", &p.eqEnabled },
-        { "/mastering/comp_enabled", &p.compEnabled },
+        { "/mastering/comp/enabled", &p.compEnabled },
         { "/mastering/limiter_enabled", &p.limiterEnabled, true },
     });
 

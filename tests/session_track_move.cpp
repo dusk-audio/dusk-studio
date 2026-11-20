@@ -149,32 +149,19 @@ void fillTrack (Track& t, int k)
     s.hmQ = step (k, 0.6f, 0.1f);
     s.hfGainDb = step (k, -7.0f, 0.5f);
     s.hfFreq = step (k, 5000.0f, 50.0f);
-    for (int f = 0; f < ChannelStripParams::kNumEqFreqs; ++f)
-    {
-        const auto which = (ChannelStripParams::EqFreq) f;
-        s.legacyDial (which).set (step (k, 1.0f + 0.01f * (float) f, 0.1f),
-                                  s.eqFreq (which).load(), odd (k + f));
-    }
+    s.hpfDial.set (step (k, 1.0f, 0.1f), s.hpfFreq.load(), odd (k));
+    s.lpfDial.set (step (k, 1.01f, 0.1f), s.lpfFreq.load(), odd (k + 1));
 
     s.compEnabled = odd (k);
     s.compModePicked = ! odd (k);
     s.compMode = k % 3;
-    s.compOptoPeakRed = step (k, 10.0f, 1.0f);
-    s.compOptoGain = step (k, 20.0f, 1.0f);
-    s.compOptoLimit = odd (k);
-    s.compFetInput = step (k, 1.0f, 0.5f);
-    s.compFetOutput = step (k, -5.0f, 0.25f);
-    s.compFetAttack = step (k, 0.1f, 0.01f);
-    s.compFetRelease = step (k, 100.0f, 1.0f);
-    s.compFetRatio = k % 5;
-    s.compFetThresholdDb = step (k, -30.0f, 0.5f);
-    s.compVcaThreshDb = step (k, -20.0f, 0.5f);
-    s.compVcaRatio = step (k, 2.0f, 0.1f);
-    s.compVcaAttack = step (k, 1.0f, 0.1f);
-    s.compVcaRelease = step (k, 50.0f, 1.0f);
-    s.compVcaOutput = step (k, -3.0f, 0.2f);
-    s.compVcaOverEasy = odd (k);
-    s.compVcaDetectorClassic = ! odd (k);
+    for (const auto id : compStageParams (CompStage::Strip))
+    {
+        const auto& spec = compParamSpec (id);
+        const float span = spec.hostMax - spec.hostMin;
+        s.comp.set (id, spec.integer ? spec.hostMin + (float) (k % ((int) span + 1))
+                                     : spec.hostMin + span * (0.05f + 0.035f * (float) k));
+    }
 
     auto& hw = t.hardwareInsert;
     hw.enabled = odd (k);

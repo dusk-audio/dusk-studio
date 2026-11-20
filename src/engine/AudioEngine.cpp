@@ -172,10 +172,9 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         case MidiBindingTarget::TrackCompMakeup:
         {
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
-            const auto& s = session.track (b.targetIndex).strip;
-            return b.target == MidiBindingTarget::TrackCompMakeup
-                       ? comp::makeupBindingFrac (s)
-                       : comp::thresholdBindingFrac (s);
+            return comp::trackRoleFrac (session.track (b.targetIndex).strip,
+                                        b.target == MidiBindingTarget::TrackCompMakeup
+                                            ? comp::Role::Makeup : comp::Role::Threshold);
         }
         case MidiBindingTarget::BusFader:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
@@ -220,11 +219,11 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         case MidiBindingTarget::MasterEqHfBoost:
             return inv (session.master().eqHfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
         case MidiBindingTarget::MasterCompThresh:
-            return inv (session.master().compThreshDb.load (std::memory_order_relaxed), -38.0f, 12.0f);
+            return comp::roleFrac (session.master().comp, comp::kBusMode, comp::Role::Threshold);
         case MidiBindingTarget::MasterCompMakeup:
-            return inv (session.master().compMakeupDb.load (std::memory_order_relaxed), -20.0f, 20.0f);
+            return comp::roleFrac (session.master().comp, comp::kBusMode, comp::Role::Makeup);
         case MidiBindingTarget::MasterCompRatio:
-            return inv (session.master().compRatio.load (std::memory_order_relaxed), 1.0f, 20.0f);
+            return comp::roleFrac (session.master().comp, comp::kBusMode, comp::Role::Ratio);
         default:
             return -1.0f;
     }
@@ -866,8 +865,14 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         strips[(size_t) i]->bindPluginManager (pluginManager);
         strips[(size_t) i]->bindHardwareInsert (session.track (i).hardwareInsert);
     }
+    // One block per stage, which every strip shares wherever a move puts it.
+    for (auto& s : stripStorage)
+        s.setCompStage (&stripCompStage.block());
     for (int i = 0; i < Session::kNumBuses; ++i)
+    {
         busStrips[(size_t) i].bind (session.bus (i).strip);
+        busStrips[(size_t) i].setCompStage (&busCompStage.block());
+    }
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         auxLaneStrips[(size_t) i].bind (session.auxLane (i).params);
@@ -877,6 +882,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                 s, session.auxLane (i).hardwareInserts[(size_t) s]);
     }
     master.bind (session.master());
+    master.setCompStage (&masterCompStage.block());
     masteringChain.bind (session.mastering());
 
     // The device manager registers the platform backends (native PipeWire/ALSA
@@ -1386,36 +1392,153 @@ void AudioEngine::recomputePdc() noexcept
         deepestAux = std::max (deepestAux, auxLat[a]);
     }
     masterDryPdcTarget.store (deepestAux, std::memory_order_relaxed);
-    // Sends leave the strips with the direct tracks, so the returns also wait
-    // for the bus alignment the direct tracks get.
-    const int busAlign = busAlignSamples.load (std::memory_order_relaxed);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
-        auxReturnPdcTarget[(size_t) a].store (
-            deepestAux - auxLat[a] + busAlign,
-            std::memory_order_relaxed);
+        auxReturnPdcTarget[(size_t) a].store (deepestAux - auxLat[a], std::memory_order_relaxed);
 }
 
 int AudioEngine::getTrackOutputLatencySamples() const noexcept
 {
-    return getAggregatePdcLatencySamples() + strips[0]->getOversamplingLatencySamples();
+    return getAggregatePdcLatencySamples() + strips[0]->getOversamplingLatencySamples()
+         + getStripCompLatencySamples();
 }
 
 int AudioEngine::getBusOutputLatencySamples() const noexcept
 {
-    return getTrackOutputLatencySamples() + busStrips[0].getOversamplingLatencySamples();
+    return getTrackOutputLatencySamples() + getBusCompLatencySamples();
 }
 
 int AudioEngine::getAuxReturnLatencySamples() const noexcept
 {
     return getTrackOutputLatencySamples() + getMasterDryPdcTargetSamples()
-         + busAlignSamples.load (std::memory_order_relaxed);
+         + getBusCompLatencySamples();
 }
 
 int AudioEngine::getMixLatencySamples() const noexcept
 {
-    return getTrackOutputLatencySamples() + busAlignSamples.load (std::memory_order_relaxed)
+    return getTrackOutputLatencySamples() + getBusCompLatencySamples()
          + getMasterDryPdcTargetSamples() + master.getOversamplingLatencySamples()
-         + getMasterTapeLatencySamples();
+         + getMasterCompLatencySamples() + getMasterTapeLatencySamples();
+}
+
+std::string AudioEngine::compValueText (CompStage kind, CompParamId id, float value)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const auto& textStage = kind == CompStage::Strip ? stripStorage[0].getCompressor (true)
+                                                     : busStrips[0].getCompressor();
+    return textStage.valueText (id, value);
+#else
+    (void) kind; (void) id; (void) value;
+    return {};
+#endif
+}
+
+bool AudioEngine::compValueFromText (CompStage kind, CompParamId id, const std::string& text, float& value)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const auto& textStage = kind == CompStage::Strip ? stripStorage[0].getCompressor (true)
+                                                     : busStrips[0].getCompressor();
+    return textStage.valueFromText (id, text, value);
+#else
+    (void) kind; (void) id; (void) text; (void) value;
+    return false;
+#endif
+}
+
+std::string AudioEngine::compStepsText (CompStage kind, CompParamId id, const char* separator)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const auto& textStage = kind == CompStage::Strip ? stripStorage[0].getCompressor (true)
+                                                     : busStrips[0].getCompressor();
+    return textStage.stepsText (id, separator);
+#else
+    (void) kind; (void) id; (void) separator;
+    return {};
+#endif
+}
+
+void AudioEngine::snapCompStagesFromSession() noexcept
+{
+    bool strip = false, bus = false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& track = session.track (t);
+        strip = strip || (track.strip.compEnabled.load (std::memory_order_relaxed)
+                          && ! track.frozen.load (std::memory_order_relaxed));
+    }
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        bus = bus || session.bus (b).strip.compEnabled.load (std::memory_order_relaxed);
+    stripCompStage.snap (strip);
+    busCompStage.snap (bus);
+    masterCompStage.snap (session.master().compEnabled.load (std::memory_order_relaxed));
+}
+
+void AudioEngine::snapCompStages() noexcept
+{
+    // Release: the block that takes the request reads the switches stored
+    // before it.
+    compStageSnapRequests.fetch_add (1, std::memory_order_release);
+}
+
+void AudioEngine::advanceCompStages (bool transportStopped, int numSamples) noexcept
+{
+    if (const auto gaps = compStageGapRequests.load (std::memory_order_relaxed);
+        gaps != compStageGapsSeen)
+    {
+        compStageGapsSeen = gaps;
+        stripCompStage.markGap();
+        busCompStage.markGap();
+        masterCompStage.markGap();
+    }
+    if (const auto snaps = compStageSnapRequests.load (std::memory_order_acquire);
+        snaps != compStageSnapsSeen)
+    {
+        compStageSnapsSeen = snaps;
+        snapCompStagesFromSession();
+    }
+
+    // A frozen track's compressor is in its file, so it does not hold the
+    // strips' latency on.
+    bool strip = false, bus = false;
+    for (int t = 0; t < Session::kNumTracks && ! strip; ++t)
+    {
+        const auto& track = session.track (t);
+        strip = track.strip.compEnabled.load (std::memory_order_relaxed)
+             && ! track.frozen.load (std::memory_order_relaxed);
+    }
+    for (int b = 0; b < Session::kNumBuses && ! bus; ++b)
+        bus = session.bus (b).strip.compEnabled.load (std::memory_order_relaxed);
+    stripCompStage.advance (strip, transportStopped, numSamples);
+    busCompStage.advance (bus, transportStopped, numSamples);
+    masterCompStage.advance (session.master().compEnabled.load (std::memory_order_relaxed),
+                             transportStopped, numSamples);
+}
+
+void AudioEngine::capturePrinted (int track, const float* left, const float* right,
+                                  const PrintCapture& print, int numSamples, bool loop) noexcept
+{
+    // This block's strip output is its input from print.delay samples ago.
+    const auto outputFrom = captureClock - print.delay;
+    captureSchedule.forEachIn (std::max (outputFrom, print.from), outputFrom + numSamples,
+        [&] (const CaptureSchedule::Span& kept) noexcept
+        {
+            const int offset = (int) (kept.inputStart - outputFrom);
+            const float* writeL = left + offset;
+            const float* writeR = right != nullptr ? right + offset : nullptr;
+            if (! loop)
+            {
+                recordManager.writeInputBlock (track, writeL, writeR, kept.length);
+                return;
+            }
+            RecordManager::LoopCaptureSpan span;
+            span.passOrdinal = kept.passOrdinal;
+            span.timelineStart = kept.timelineStart;
+            span.callbackBaseOffset = offset;
+            span.inputOffset = offset;
+            span.numSamples = kept.length;
+            span.startsPass = kept.startsPass;
+            span.endsPass = kept.endsPass;
+            recordManager.writeInputBlock (track, writeL, writeR, kept.length, &span);
+        });
 }
 
 void AudioEngine::applyMasterPdcTargetsNow() noexcept
@@ -2989,6 +3112,11 @@ void AudioEngine::record()
     }
 
     lastBlockWasLoopRecording = false;
+    printCaptures = {};
+    captureSchedule.reset();
+    captureClock = 0;
+    anyPrintCapture = false;
+    longestPrintDelay = 0;
 
     std::optional<std::int64_t> linearMidiEndSample;
     if (! loopPlan.enabled && transport.isPunchEnabled())
@@ -5122,11 +5250,12 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     }
 
     // Read the global oversampling factor once per prepare and propagate it to
-    // every strip/bus/master that wraps EQ+Comp in a Dusk Studio-side
-    // oversampler (each rebuilds its JUCE dsp::Oversampling at this factor in
-    // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
-    // don't take the factor. The cost only materialises when a strip is
-    // actually processing audio - silent / skipped strips dodge the chain.
+    // every strip and the master, which wrap their EQ in a Dusk Studio-side
+    // oversampler (each rebuilds it at this factor in prepare). The buses' EQ
+    // is linear and every compressor runs Multi-Comp 2's own 2x, and aux lanes
+    // host plugin chains only, so none of those take the factor. The cost only
+    // materialises when a strip is actually processing audio - silent /
+    // skipped strips dodge the chain.
     // An offline bounce overrides the factor (e.g. 4×) so the printed mix is
     // alias-free even though realtime monitoring runs at the user's lighter
     // setting; the override is cleared before the engine re-prepares for live.
@@ -5186,8 +5315,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         }
 #endif
     }
-    for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
-    busAlignSamples.store (busStrips[0].getOversamplingLatencySamples(), std::memory_order_relaxed);
+    for (auto& a : busStrips)     a.prepare (sr, bs);
     for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
     {
         auto& strip = auxLaneStrips[(size_t) lane];
@@ -5251,6 +5379,27 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     collectDeferredNativeRestoreFailures();
     master.prepare (sr, bs, oxFactor);
 
+    // Each stage carries its plug-in's latency, which is the same in every
+    // mode and layout and fixed until the next prepare. Prepared, a stage
+    // starts as the session calls for, so a render is aligned from its first
+    // sample.
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const int stripCompLatency  = stripStorage[0].getCompressor (true).latencySamples();
+    const int busCompLatency    = busStrips[0].getCompressor().latencySamples();
+    const int masterCompLatency = master.getCompressor().latencySamples();
+#else
+    const int stripCompLatency = 0, busCompLatency = 0, masterCompLatency = 0;
+#endif
+    stripCompStage.prepare (sr, stripCompLatency);
+    busCompStage.prepare (sr, busCompLatency);
+    masterCompStage.prepare (sr, masterCompLatency);
+    snapCompStagesFromSession();
+    compStageSnapsSeen = compStageSnapRequests.load (std::memory_order_relaxed);
+    compStageGapsSeen = compStageGapRequests.load (std::memory_order_relaxed);
+    directBusAlign.prepare (bs, busCompLatency);
+    for (auto& lane : auxBusAlign) lane.prepare (bs, busCompLatency);
+    auxBusAlignHeld.fill (0);
+
     auxSilentRunSamples.fill (0);
 
     // Strips just re-prepared their plugins (re-caching latency) and rebuilt
@@ -5281,7 +5430,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
         a.setTransport (&blockTransport);
     }
-    masteringChain.prepare (sr, bs, oxFactor);
+    masteringChain.prepare (sr, bs);
     masteringPlayer.prepare (bs, sr);
     masteringMonoMix.reset (sr, 0.02);
     masteringMonoMix.setCurrentAndTargetValue (getMasteringMonoMonitor() ? 1.0f : 0.0f);
@@ -5295,17 +5444,10 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         };
         prepPdc (masterDryPdcL);
         prepPdc (masterDryPdcR);
-        prepPdc (busAlignL);
-        prepPdc (busAlignR);
-        busAlignL.setDelay (busAlignSamples.load (std::memory_order_relaxed));
-        busAlignR.setDelay (busAlignSamples.load (std::memory_order_relaxed));
-        // Bus alignment is fixed until the next prepare, when these buffers resize too.
-        const int auxCapacity = ChannelStrip::kMaxPdcSamples
-                              + busAlignSamples.load (std::memory_order_relaxed);
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
-            prepPdc (auxReturnPdcL[(size_t) a], auxCapacity);
-            prepPdc (auxReturnPdcR[(size_t) a], auxCapacity);
+            prepPdc (auxReturnPdcL[(size_t) a]);
+            prepPdc (auxReturnPdcR[(size_t) a]);
         }
         masterDryPdcApplied = 0;
         auxReturnPdcApplied.fill (0);
@@ -5825,6 +5967,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if (processingSuspended.load (std::memory_order_seq_cst))
     {
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
+        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -5833,6 +5976,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     {
         callbacksInFlight.fetch_sub (1, std::memory_order_acq_rel);
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);
+        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -5847,6 +5991,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if ((int) mixL.size() < numSamples)
     {
         phaseContinuityValid = false;
+        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
         silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
                           | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);
@@ -6681,21 +6826,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         case MidiBindingTarget::TrackCompThresh:
                         case MidiBindingTarget::TrackCompMakeup:
                         {
-                            // Mode-aware: the strip exposes Opto / FET / VCA
-                            // each with its own "threshold-ish" and "makeup-
-                            // ish" knob, on different ranges. The comp map
-                            // remaps CC 0..127 onto the CURRENT mode's
-                            // domain, so a single binding tracks whatever
-                            // mode the user has selected.
+                            // The comp map sweeps the CC across the host range
+                            // of whichever parameter the strip's CURRENT mode
+                            // plays for the role, so one binding follows the
+                            // user's mode switches.
                             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks)
                                 break;
                             auto& strip = session.track (b.targetIndex).strip;
-                            if (b.target == MidiBindingTarget::TrackCompMakeup)
-                                comp::applyTrackCompMakeupDb (
-                                    strip, comp::makeupBindingFracToDb (strip, frac));
-                            else
-                                comp::applyTrackCompThresholdDb (
-                                    strip, comp::thresholdBindingFracToDb (strip, frac));
+                            comp::applyTrackRoleFrac (strip,
+                                                      b.target == MidiBindingTarget::TrackCompMakeup
+                                                          ? comp::Role::Makeup : comp::Role::Threshold,
+                                                      frac);
                             strip.armComp();
                             break;
                         }
@@ -6969,24 +7110,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             session.master().eqHfBoost.store (
                                 frac * 10.0f, std::memory_order_relaxed);
                             break;
+                        // The master's Bus-mode threshold, makeup and ratio
+                        // steps, across their host ranges. The master
+                        // compressor's engage switch is its own: a bound
+                        // control leaves it as it is.
                         case MidiBindingTarget::MasterCompThresh:
-                            // -38..+12 dB matches the channel-strip
-                            // VCA threshold range so a learned CC feels
-                            // identical when re-bound to the master.
-                            session.master().compThreshDb.store (
-                                -38.0f + frac * 50.0f, std::memory_order_relaxed);
+                            comp::applyRoleFrac (session.master().comp, comp::kBusMode,
+                                                 comp::Role::Threshold, frac);
                             break;
                         case MidiBindingTarget::MasterCompMakeup:
-                            // -20..+20 dB matches the per-track comp
-                            // makeup range.
-                            session.master().compMakeupDb.store (
-                                -20.0f + frac * 40.0f, std::memory_order_relaxed);
+                            comp::applyRoleFrac (session.master().comp, comp::kBusMode,
+                                                 comp::Role::Makeup, frac);
                             break;
                         case MidiBindingTarget::MasterCompRatio:
-                            // 1..20:1 covers gentle bus glue through
-                            // brick-wall summing.
-                            session.master().compRatio.store (
-                                1.0f + frac * 19.0f, std::memory_order_relaxed);
+                            comp::applyRoleFrac (session.master().comp, comp::kBusMode,
+                                                 comp::Role::Ratio, frac);
                             break;
 
                         case MidiBindingTarget::None:
@@ -7003,6 +7141,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // the audio thread.
     if (stage.load (std::memory_order_acquire) == Stage::Mastering)
     {
+        // The mixer's blocks stop here, and what its compressor stages held
+        // must not play when they start again.
+        stripCompStage.markGap();
+        busCompStage.markGap();
+        masterCompStage.markGap();
         auto stopped = captureHostedTransport (Transport::State::Stopped, transportBlockStart,
             transportLoopEnabled, transportLoopStart, transportLoopEnd);
         const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
@@ -7079,6 +7222,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // Refresh PDC compensation before the strip loop reads it. Cheap atomic
     // sweep; auto-tracks any latency change without a separate trigger.
     recomputePdc();
+    // Each compressor stage's state for this block, before any strip, bus or
+    // worker lane reads it.
+    advanceCompStages (transportBlockState == Transport::State::Stopped, numSamples);
 
     // Solo automation routes into per-track liveSolo (in the strip loop below)
     // and bypasses the manual-solo RT counter anyTrackSoloed() reads - so an
@@ -8220,9 +8366,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // Tell the strip whether the recorder is going to ask for the
         // post-effects buffer this block - if so, the strip MUST run its
         // DSP even when it's not passing to master. Otherwise we let it
-        // skip the heavy pass to save CPU on silent tracks.
-        const bool needPrintBuffer = isRecording && armed && deviceInput != nullptr
-                                  && session.track (t).printEffects.load (std::memory_order_relaxed);
+        // skip the heavy pass to save CPU on silent tracks. PRINT is read
+        // once, at the track's first block of the take, so the take never
+        // switches between its input and the strip's delayed output.
+        auto& print = printCaptures[(size_t) t];
+        if (isRecording && armed && deviceInput != nullptr && ! print.latched)
+        {
+            print.latched = true;
+            print.print = session.track (t).printEffects.load (std::memory_order_relaxed);
+            print.from = captureClock;
+            anyPrintCapture = anyPrintCapture || print.print;
+        }
+        const bool needPrintBuffer = isRecording && armed && deviceInput != nullptr && print.print;
         strips[(size_t) t]->setNeedsProcessedMono (needPrintBuffer);
 
         // Stereo input source for stereo tracks. Two paths:
@@ -8320,6 +8475,58 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     perfLap (PerfSections::kStrips);
 
+    // The part of this block a linear take keeps - from activeRecordStart
+    // (past count-in and pre-roll) and inside the punch window - shared by
+    // every armed track. Outside samples are discarded, NOT written as zeros,
+    // so the WAV's frame count equals the punch window length. Loop capture
+    // uses the immutable per-pass spans instead.
+    int linearCaptureOffset = 0;
+    int linearCaptureLength = 0;
+    if (recordManagerActive && ! loopRecordingActive)
+    {
+        const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
+        std::int64_t effIn  = recStart;
+        std::int64_t effOut = std::numeric_limits<std::int64_t>::max();
+        if (transport.isPunchEnabled())
+        {
+            const auto pIn  = transport.getPunchIn();
+            const auto pOut = transport.getPunchOut();
+            if (pOut > pIn)
+            {
+                effIn  = std::max (effIn, pIn);
+                effOut = pOut;
+            }
+            else
+            {
+                effIn = effOut;
+            }
+        }
+
+        const auto sliceStart = std::max (blockStartSamples, effIn);
+        const auto sliceEnd   = std::min (blockStartSamples + numSamples, effOut);
+        if (sliceEnd > sliceStart)
+        {
+            linearCaptureOffset = (int) (sliceStart - blockStartSamples);
+            linearCaptureLength = (int) (sliceEnd - sliceStart);
+        }
+    }
+
+    // What the input capture keeps of this block, so a printed track keeps
+    // the same input samples, passes and positions when its strip delivers
+    // them.
+    if (recordManagerActive && anyPrintCapture)
+    {
+        if (loopRecordingActive)
+            forEachRecordCaptureSpan ([this] (const RecordManager::LoopCaptureSpan& span) noexcept
+            {
+                captureSchedule.add ({ captureClock + span.inputOffset, span.numSamples, span.passOrdinal,
+                                       span.timelineStart, span.startsPass, span.endsPass });
+            });
+        else if (linearCaptureLength > 0)
+            captureSchedule.add ({ captureClock + linearCaptureOffset, linearCaptureLength, 0,
+                                   blockStartSamples + linearCaptureOffset, false, false });
+    }
+
     // Post-DSP serial tail: metering + recording (audio thread).
     const double auditionRate = currentSampleRate.load (std::memory_order_relaxed);
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -8367,26 +8574,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // Recording capture - armed tracks always commit their input to
         // disk while recording. By default the raw deviceInput is written;
-        // when `printEffects` is engaged, the post-EQ/post-comp buffer that
-        // the strip just produced is written instead, "printing" the
-        // channel-strip processing to the WAV.
-        //
-        // Punch: when transport.isPunchEnabled(), only samples whose timeline
-        // position lies inside [punchIn, punchOut) are committed. The block
-        // is sliced to the intersection of [blockStart, blockEnd) and the
-        // punch window; outside samples are silently discarded (NOT written
-        // as zeros, so the WAV's frame count equals the punch window length).
+        // when the take prints (PRINT was on at its start), the post-EQ/
+        // post-comp buffer that the strip just produced is written instead,
+        // "printing" the channel-strip processing to the WAV.
         if (isRecording && job.armed && job.deviceInput != nullptr)
         {
-            const bool printEfx = session.track (t).printEffects.load (std::memory_order_relaxed);
-
             // Default sources: deviceInput on L; deviceInputR on R for stereo
-            // tracks (resolved earlier as monoInR). printEffects swaps both
-            // L and R to the strip's post-effect buffers when available.
+            // tracks (resolved earlier as monoInR).
             const float* recL = job.deviceInput;
             const float* recR = job.stereoInput ? job.monoInR : nullptr;
-            if (printEfx)
+            auto& print = printCaptures[(size_t) t];
+            if (print.print)
             {
+                // The strip's post-effect buffers, both L and R. A strip
+                // resting on a silent input produced none, and its output
+                // would be that silence.
                 auto& strip = *strips[(size_t) t];
                 if (auto* processed = strip.getLastProcessedMono();
                     processed != nullptr
@@ -8396,9 +8598,15 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     if (job.stereoInput)
                         recR = strip.getLastProcessedR();  // may be nullptr -> recorder duplicates L
                 }
+                if (print.delay < 0)
+                {
+                    print.delay = (int) std::min<std::int64_t> (strip.getProcessedLatencySamples(),
+                                                                CaptureSchedule::kHorizonSamples);
+                    longestPrintDelay = std::max (longestPrintDelay, print.delay);
+                }
+                capturePrinted (t, recL, recR, print, numSamples, loopRecordingActive);
             }
-
-            if (loopRecordingActive)
+            else if (loopRecordingActive)
             {
                 forEachRecordCaptureSpan (
                     [&] (const RecordManager::LoopCaptureSpan& span) noexcept
@@ -8410,62 +8618,28 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             t, writeL, writeR, span.numSamples, &span);
                     });
             }
-            else
+            else if (linearCaptureLength > 0)
             {
-                // Unified linear write-gate - honours BOTH:
-                //   - activeRecordStart (count-in/pre-roll)
-                //   - punch-in / punch-out
-                // Loop capture uses the immutable per-pass spans above.
-                const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
-                std::int64_t effIn  = recStart;
-                std::int64_t effOut = std::numeric_limits<std::int64_t>::max();
-                if (transport.isPunchEnabled())
-                {
-                    const auto pIn  = transport.getPunchIn();
-                    const auto pOut = transport.getPunchOut();
-                    if (pOut > pIn)
-                    {
-                        effIn  = std::max (effIn, pIn);
-                        effOut = pOut;
-                    }
-                    else
-                    {
-                        effIn = effOut;
-                    }
-                }
-
-                const auto blockEnd = blockStartSamples + numSamples;
-                const auto sliceStart = std::max (blockStartSamples, effIn);
-                const auto sliceEnd   = std::min (blockEnd, effOut);
-                if (sliceEnd > sliceStart)
-                {
-                    const int writeOffset = (int) (sliceStart - blockStartSamples);
-                    const int writeLength = (int) (sliceEnd - sliceStart);
-                    const float* writeL = recL + writeOffset;
-                    const float* writeR = recR != nullptr ? recR + writeOffset : nullptr;
-                    recordManager.writeInputBlock (t, writeL, writeR, writeLength);
-                }
+                const float* writeL = recL + linearCaptureOffset;
+                const float* writeR = recR != nullptr ? recR + linearCaptureOffset : nullptr;
+                recordManager.writeInputBlock (t, writeL, writeR, linearCaptureLength);
             }
         }
 
     }
 
+    if (recordManagerActive)
+    {
+        captureClock += numSamples;
+        captureSchedule.forgetBefore (captureClock - longestPrintDelay);
+    }
+
     perfLap (PerfSections::kMeterRecordTail);
 
-    // Only the direct tracks are in the mix yet; they wait for the bus
-    // oversamplers so the bus-routed tracks land with them (busAlignSamples).
-    if (busAlignSamples.load (std::memory_order_relaxed) > 0)
-    {
-        auto* mL = mixL.data();
-        auto* mR = mixR.data();
-        for (int i = 0; i < numSamples; ++i)
-        {
-            busAlignL.pushSample (mL[i]);
-            busAlignR.pushSample (mR[i]);
-            mL[i] = busAlignL.popSample();
-            mR[i] = busAlignR.popSample();
-        }
-    }
+    // Only the direct tracks are in the mix yet; while the buses' compressor
+    // stage holds its latency they carry it too, so the bus-routed tracks
+    // land with them.
+    directBusAlign.process (mixL.data(), mixR.data(), numSamples, busCompStage.block(), false, nullptr);
 
     for (int a = 0; a < Session::kNumBuses; ++a)
     {
@@ -8710,7 +8884,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // protect); plugin lanes wait out the tail window.
             const bool canSkip = inputSilent
                               && (! laneHasPlugin
-                                  || auxSilentRunSamples[(size_t) a] >= tailSamples);
+                                  || auxSilentRunSamples[(size_t) a] >= tailSamples)
+                              && auxBusAlignHeld[(size_t) a] <= 0;
             if (canSkip)
             {
                 // Reset the aux-lane meter on skip - same rationale as the
@@ -8748,6 +8923,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 wR[i] = dR.popSample();
             }
         }
+        // The return carries the buses' compressor stage, as the direct tracks
+        // do, and keeps its lane awake until what that delay holds is out.
+        if (const auto& busStage = busCompStage.block(); busStage.write)
+        {
+            const auto rngL = findSignedMinMax (auxLaneL[(size_t) a].data(), numSamples);
+            const auto rngR = findSignedMinMax (auxLaneR[(size_t) a].data(), numSamples);
+            const float returnPeak = std::max ({ std::abs (rngL.min), std::abs (rngL.max),
+                                                 std::abs (rngR.min), std::abs (rngR.max) });
+            auxBusAlignHeld[(size_t) a] = returnPeak > 1e-6f
+                ? busStage.latency : std::max (0, auxBusAlignHeld[(size_t) a] - numSamples);
+            auxBusAlign[(size_t) a].process (auxLaneL[(size_t) a].data(), auxLaneR[(size_t) a].data(),
+                                             numSamples, busStage, false, nullptr);
+        }
+        else
+            auxBusAlignHeld[(size_t) a] = 0;
         auto* capAuxL = stemAuxCapL[(size_t) a].load (std::memory_order_acquire);
         auto* capAuxR = stemAuxCapR[(size_t) a].load (std::memory_order_relaxed);
         if (capAuxL != nullptr && capAuxR != nullptr)
@@ -8874,10 +9064,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // The post-master click follows every mix delay. Master-stage PDC
         // uses the applied delay because its target can change mid-roll.
-        const int mixLatency = getTrackOutputLatencySamples()
-                             + busAlignSamples.load (std::memory_order_relaxed)
+        const int mixLatency = getAggregatePdcLatencySamples()
+                             + strips[0]->getOversamplingLatencySamples()
+                             + stripCompStage.latencySamples() + busCompStage.latencySamples()
                              + masterDryPdcApplied + master.getOversamplingLatencySamples()
-                             + getMasterTapeLatencySamples();
+                             + masterCompStage.latencySamples() + getMasterTapeLatencySamples();
         const auto clickStart = blockStartSamples - (std::int64_t) mixLatency;
         const double clickRate = currentSampleRate.load (std::memory_order_relaxed);
         if (! clickRolling || (! metronome.isEnabled() && ! inCountIn)

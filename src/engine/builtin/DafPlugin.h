@@ -127,10 +127,28 @@ public:
     virtual float getParameterValue (std::uint32_t index) const noexcept = 0;
     virtual void  setParameterValue (std::uint32_t index, float value) noexcept = 0;
 
+    // The plug-in's own text for a value of a parameter, in its host domain,
+    // written into text with its terminator. False when the plug-in prints no
+    // text of its own for that parameter, or the text does not fit. The
+    // plug-in's formatter may allocate, so never the audio thread.
+    virtual bool getParameterValueText (std::uint32_t, float, char*, std::uint32_t) const noexcept
+    {
+        return false;
+    }
+
+    // Text typed for a parameter back to a host value, as the plug-in reads it.
+    // False when the plug-in reads no text of its own for that parameter or
+    // this text does not parse. Never the audio thread.
+    virtual bool getParameterValueFromText (std::uint32_t, const char*, float&) const noexcept
+    {
+        return false;
+    }
+
     // Full-state access. A plug-in without DAF full state reports a count of zero.
     virtual std::uint32_t getStateCount() const noexcept = 0;
     virtual const std::string& getStateKey (std::uint32_t index) const noexcept = 0;
     virtual const std::string& getStateDefaultValue (std::uint32_t index) const noexcept = 0;
+    virtual bool isParameterSnapshotState (const std::string& key) const noexcept = 0;
     virtual std::string getStateValue (const std::string& key) const = 0;
     virtual void setState (const std::string& key, const std::string& value) = 0;
     virtual void  setTimePosition (const dusk::TransportPosition& position) noexcept = 0;
@@ -163,4 +181,32 @@ std::unique_ptr<DafPlugin> createTapeEcho2();
 std::unique_ptr<DafPlugin> createDuskVerb2();
 std::unique_ptr<DafPlugin> createTapeMachine2();
 std::unique_ptr<DafPlugin> createSunset();
+
+// Multi-Comp 2, the compressor the mixer's strips, buses and master each hold;
+// not an insertable unit. Bit n of faceMask lets its editor's mode row offer
+// mode n.
+std::unique_ptr<DafPlugin> createMultiComp2 (std::uint32_t faceMask);
+
+// The plug-in object inside a plug-in createMultiComp2 made, which the two
+// calls below take; null for any other plug-in. Finding it is a cast across
+// the bridge, so it is resolved once, off the audio thread, and kept: the
+// object lives as long as the plug-in.
+void* multiComp2Instance (DafPlugin& multiComp2) noexcept;
+
+// Gives that plug-in a mono (1) or stereo (2) main layout and no sidechain:
+// run() then reads inputs[0 .. channels - 1] and writes outputs[0 .. channels
+// - 1] only. Message thread, plug-in deactivated. Nothing for a null instance.
+void setMultiComp2Channels (void* instance, int channels) noexcept;
+
+// Puts that plug-in back to the rest its activation leaves, parameters,
+// layout and latency kept, without deactivating it. Audio thread, between two
+// run() calls: a plain call that allocates nothing and takes no lock. Nothing
+// for a null instance.
+void resetMultiComp2 (void* instance) noexcept;
+
+// A parameter of that plug-in as its own editor reads it back from the plug-in
+// rather than from the values its host hands it: the value the plug-in holds,
+// the three crossovers as its DSP orders them. Any thread; 0 for a null
+// instance.
+float multiComp2EditorValue (void* instance, std::uint32_t index) noexcept;
 } // namespace duskstudio::builtin

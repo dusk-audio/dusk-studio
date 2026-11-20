@@ -191,7 +191,7 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
 | 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Click the header's left status light to bypass/engage, click the **EQ** label to open the editor, or right-click anywhere on it for the EQ menu (E / G character, reset, open editor). |
-| 6   | Compressor          | Opto / FET / VCA. Click the header's left status light to bypass/engage, click the **COMP** label to open the editor, or right-click anywhere on it for the COMP menu (mode, reset, open editor). |
+| 6   | Compressor          | Multi-Comp 2's Opto / FET / VCA. Click the header's left status light to bypass/engage, click the **COMP** label to open Multi-Comp 2's editor, or right-click anywhere on it for the COMP menu (mode, reset, open editor). |
 | 7   | Aux 1 send          | Post-fader by default; right-click to flip pre-fader.                                                       |
 | 8   | Aux 2 send          |                                                                                                             |
 | 9   | Aux 3 send          |                                                                                                             |
@@ -226,7 +226,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | -------------- | ------------------------------------------------------------------------ |
 | 1   | Name           | Right-click to rename.                                                   |
 | 2   | Tone EQ        | HPF, then LF shelf / MID bell / HF shelf, ±9 dB per band.                |
-| 3   | Bus compressor | Console-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
+| 3   | Bus compressor | Multi-Comp 2's Bus mode. Threshold handle, ratio, attack, release (with Auto), make-up. |
 | 4   | Pan            | Same equal-power law as channel strips.                                  |
 | 5   | Fader          | −∞ to +12 dB.                                                            |
 | 6   | Mute / Solo    | Same additive solo-in-place rule as channels.                            |
@@ -240,7 +240,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | #   | Name                  | Description                                                                                      |
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Program EQ            | Tube-saturated low + high program EQ. Click the left status light to bypass/engage, click **EQ** to open the editor, or right-click anywhere for the EQ menu (reset, open editor). |
-| 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower. Click the left status light to bypass/engage, click **COMP** to open the editor, or right-click anywhere for the COMP menu (reset, open editor). |
+| 2   | Master bus compressor | Multi-Comp 2's Bus mode, as on the buses, typically used slower. Click the left status light to bypass/engage, click **COMP** to open the editor, or right-click anywhere for the COMP menu (reset, open editor). |
 | 3   | Tape saturation       | Reel-to-reel model, anti-aliased internally at a fixed rate rather than following the global Effect Oversampling setting. Click the left status light to bypass/engage, click **TAPE** to open the editor, or right-click anywhere for the TAPE menu. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
@@ -271,7 +271,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
-| 5   | Multiband compressor | Four bands with independent dynamics controls.                         |
+| 5   | Multiband compressor | Multi-Comp 2's Multiband mode: four bands with independent dynamics controls. |
 | 6   | Brickwall limiter | True-peak, 4× oversampled lookahead (see the mastering chapter).                            |
 | 7   | Phase module     | Post-limiter correlation, coherence, timing and mono compatibility by frequency band.       |
 | 8   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
@@ -346,7 +346,7 @@ chapter. Everything below is the long form.
   restores the software fallback.
 - **If the notepad ever takes Dusk Studio down with it**, it will not do so twice. A graphics driver that ends the application while the notepad is drawing its first frame leaves a marker behind, and the next launch refuses the notepad and names the renderer that did it. Upgrading to the packaged llvmpipe renderer automatically clears a marker written by an older release; markers created afterward remain guarded even if the renderer changes again. After any other graphics-driver change, delete the `notepad-first-frame` file in Dusk Studio's configuration folder to retry. Any build that encounters Mesa's GL-on-D3D12 OpenGL Compatibility Pack refuses it because it is known to end the application; install the graphics vendor's OpenGL driver instead. To keep the notepad switched off permanently, set `notepad_enabled=0` in `app-config.properties` in that same folder.
 
-Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see the *Audio* tab under *Settings → Settings...*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
+Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see the *Audio* tab under *Settings → Settings...*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The EQ on every channel and the master EQ are oversampled when **Effect Oversampling** is raised, which costs CPU, most at 4× (keep it at 1× on low-power machines). The compressors always run at their own 2×.
 
 ## Installing Dusk Studio
 
@@ -484,7 +484,7 @@ Open **Settings → Settings...**, then select the **Audio** tab to choose your 
 - **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI port enumeration waits until the transport stops. MIDI controllers on Linux do not need it; see [MIDI hot-plug](#midi-hot-plug).
 - **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way. If the device will not open with that input (a capture device on another card can refuse the output's sample rate, or be busy), Dusk Studio reopens the output on its own so playback keeps working, and when that output has no inputs of its own the transport bar says **No input device. Choose one in Settings > Audio.** until you pick one here. If even the output will not reopen, you get the same warning as when [no audio device opens at startup](#audio-device-in-use-or-wont-open-at-startup). At startup, when an open that pairs the output with an input fails as a whole, Dusk Studio opens that output on its own rather than leaving you with no device. On macOS the input waits for the microphone prompt: the output opens first, and the input follows once you click **Allow** (see the macOS steps under [Installing Dusk Studio](#installing-dusk-studio)).
 
-- **Effect Oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus compressor, and the master EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape and the mastering chain are the exceptions and ignore this setting: the tape anti-aliases locally at a fixed internal rate, the mastering EQ and limiter always run at 4×, and the multiband compressor runs at the session rate.
+- **Effect Oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and of the master EQ. Reduces aliasing on saturation stages at the cost of CPU, most at 4×. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, bounces trim it out, and a take recorded with **PRINT** on is placed without it. The compressors, the bus EQ, the master tape and the mastering chain ignore this setting: every compressor is Multi-Comp 2 and always runs at the plug-in's own 2× (see *Compressor* under The channel strip), the bus EQ is never oversampled, the tape anti-aliases locally at a fixed internal rate, and the mastering EQ and limiter always run at 4×.
 - **Render quality**: **High (4× oversampling)** is the default for offline bounces, mixdowns, stem bounces, master exports and track freezes. **Match playback (faster)** uses the session's current **Effect Oversampling** setting instead, reducing work at 1× or 2×; at 4× it is the same quality. Render speed still depends on the processors in the session. Saved per-machine. Realtime hardware bounces always use the playback settings.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off. In each block the strips with work to do are shared out over the audio thread and the worker threads, one thread per strip until every thread has some, and a worker thread left without one stays asleep. A block in which only one strip has work to do, or none has, runs on the audio thread alone, and every worker thread stays asleep. With the transport stopped, a strip has work when its track monitors input that is not silent, and in every block when it is a MIDI track with a plug-in loaded or a monitored audio track with a plug-in in its insert.
 - **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Type that number and press Enter, or use **-** and **+** to change it one sample at a time. Values are limited to -192,000 through 192,000 samples. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
@@ -554,7 +554,7 @@ A control surface's bank is a separate, fixed axis: eight strips at a time, trac
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
-The Startup dialog, audio editor, piano roll, compressor editor, Settings, SFZ Manager and Notepad can display Chinese, Japanese and Korean text using fonts installed on your computer. If a character has no available font, it appears as a replacement mark. Hebrew and Arabic names read right to left in the Startup dialog, audio editor, piano roll, compressor editor, mini timeline strip and SFZ Manager, with Arabic letters joined. A name too long for its space keeps its first letters. Text fields and the Notepad keep the order you typed.
+The Startup dialog, audio editor, piano roll, Settings, SFZ Manager and Notepad can display Chinese, Japanese and Korean text using fonts installed on your computer. If a character has no available font, it appears as a replacement mark. Hebrew and Arabic names read right to left in the Startup dialog, audio editor, piano roll, mini timeline strip and SFZ Manager, with Arabic letters joined. A name too long for its space keeps its first letters. Text fields and the Notepad keep the order you typed.
 
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair shows engine-side overruns / backend (driver) xruns. The first counts blocks whose processing took longer than one buffer's audio duration. Device buffering can absorb a late block, so an engine overrun alone does not establish an audible dropout. The second counts stream underrun, overrun or recovery events reported by the audio backend.
 
@@ -714,10 +714,10 @@ outgoing notes. Typing in the notepad never triggers transport shortcuts.
 Every track is processed by an identical channel strip. The order is fixed; you cannot reorder blocks. From top to bottom of the signal flow:
 
 <!-- Source: src/dsp/ChannelStrip.cpp::processAndAccumulate
-     Stages: phase invert (:471, :628) → insert (:487, :643) →
-             EQ incl. HPF + LPF (:533, :572, :678, :707) →
-             compressor (:561, :582, :697, :717) →
-             pan + fader + bus/master/aux branching (:796–:861).
+     Stages: phase invert (:1384, :1670) → insert (:1401, :1686) →
+             EQ incl. HPF + LPF (:1541, :1550, :1764, :1773) →
+             compressor (:1553, :1785, ChannelStrip::runCompressor) →
+             pan + fader + bus/master/aux branching (:1852–:1965).
      Verify on any DSP-order change. -->
 
 ```text
@@ -737,7 +737,7 @@ This is the order the audio actually flows. On screen, controls are arranged for
 
 EQ, COMP, and compact AUX controls are split buttons. The left 20% contains the status light; click it to bypass or engage the section without opening anything. The right 80% contains the label; click it once to open the editor. Right-click anywhere on the unified button for the section menu. Engaged sections have a solid coloured light and bright label; bypassed sections have a dark, hollow light and dim label. The compact AUX bypass mutes all four sends without changing their individual levels, so engaging it restores the previous send mix.
 
-Every editor a strip opens — EQ, COMP, or AUX — carries that strip's name centred at the top of the editor, so you can always tell which strip the modal belongs to: the track name on a channel strip, the bus name on a bus, **MASTER** on the master strip. Rename a strip while its editor is open and the title follows; a name too long for the row is shortened with an ellipsis rather than widening the editor.
+Every EQ or AUX editor a strip opens carries that strip's name centred at the top of the editor, so you can always tell which strip the modal belongs to: the track name on a channel strip, the bus name on a bus, **MASTER** on the master strip. Rename a strip while its editor is open and the title follows; a name too long for the row is shortened with an ellipsis rather than widening the editor. **COMP** opens Multi-Comp 2's own editor, which shows the plug-in's face and no strip name.
 
 ## Track name and colour
 
@@ -825,14 +825,18 @@ The four bands are:
 
 | Band   | Type       | Freq range     | Default freq | Gain   | Q range |
 | ------ | ---------- | -------------- | ------------ | ------ | ------- |
-| **LF** | Low shelf  | 30–450 Hz      | 100 Hz       | ±15 dB | n/a     |
-| **LM** | Peaking    | 200 Hz–2.5 kHz | 600 Hz       | ±15 dB | 0.4–4.0 |
-| **HM** | Peaking    | 600 Hz–7 kHz   | 2 kHz        | ±15 dB | 0.4–4.0 |
+| **LF** | Low shelf  | 30–450 Hz      | 200 Hz       | ±15 dB | n/a     |
+| **LM** | Peaking    | 200 Hz–2.5 kHz | 1 kHz        | ±15 dB | 0.4–4.0 |
+| **HM** | Peaking    | 600 Hz–7 kHz   | 3 kHz        | ±15 dB | 0.4–4.0 |
 | **HF** | High shelf | 1.5–16 kHz     | 8 kHz        | ±15 dB | n/a     |
 
-The frequency is where you hear the band: a peaking band is centred on it, and a shelf has its corner there. From 3 dB of boost or cut, roughly half to two-thirds of a shelf's boost or cut is in at its frequency, and nearly all of it two octaves further out. As on the console, gain moves a peaking band's centre, by up to about 2.5%. Sessions saved by earlier versions are converted when they open. Each knob shows the frequency its band plays, and each band keeps the frequency and shape it had until its frequency is changed (knob, MIDI or control surface). The one difference is at the very top of the audio band at 1× and 2× **Effect oversampling**, where the EQ no longer cramps (below). Switching such a track's saturation character plays each band at the frequency its knob shows, and switching back brings the old sound back, also after the session is saved and reopened in between. A band that played outside today's range keeps that frequency: its knob rests at the end and shows it, and the band moves into the range only when its frequency is changed.
+The frequency knobs carry the console's frequency markings, as the knobs of the 4K EQ 2 plug-in do: a knob turned to the same place reads the same and sounds the same on both. The frequency a band plays is not the one its knob reads. The strip plays each marking where measurements of the console put it, and that differs with the saturation character: with **E**, LM at 1 kHz peaks near 800 Hz and HF at 8 kHz has its corner near 2.7 kHz; with **G**, LM at 1 kHz peaks near 590 Hz. Switching between **E** and **G** moves where each band plays, not its knob or what the knob reads. From 3 dB of boost or cut, roughly half to two-thirds of a shelf's boost or cut is in at its corner, and nearly all of it two octaves further out. As on the console, gain moves a peaking band's centre, by up to about 2.5%.
 
-Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
+Sessions saved by earlier versions are converted when they open. A band saved by 0.14 to 0.16 moves to the marking that plays where it played, with the track's saturation character, so it keeps its frequency. A band that played further out than any marking on its knob reaches, such as an **E** HF shelf with its corner above about 6 kHz, moves to that end of the knob, the nearest it can play. A band saved before 0.14 keeps its setting, at the end of its knob if it was further out, and plays as it did, apart from the very top of the audio band at 1× and 2× **Effect oversampling**, where the EQ no longer cramps (below).
+
+Each knob is a rotary slider. Drag up to turn it clockwise, down to turn it back. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
+
+Gain and frequency rise clockwise. A Q knob runs the other way: 3, its narrowest, at the left end and 0.5, its broadest, at the right, so turning it clockwise widens the band. The frequency and Q knobs pass through the settings the console was measured at, one at every twentieth of their travel, and sweep evenly between them, on the strip and in the editor alike, as the knobs of the 4K EQ 2 plug-in do. Pointing straight up, LF reads 200 Hz, LM 1 kHz, HM 3 kHz, HF 8 kHz and a Q knob 1.5. A Q below 0.5 or above 3, set by MIDI, a control surface or an earlier version, keeps playing while its knob rests at the nearer end, until the knob is turned.
 
 The EQ does not cramp near Nyquist at any **Effect oversampling** setting, the default 1× included: a band set high keeps its shape up to 20 kHz. At a 44.1 kHz session rate, 2× and 4× take about 1 dB off the very top of the band, around 20 kHz, in each oversampled stage, whatever the EQ is set to; at 48 kHz they do not.
 
@@ -842,43 +846,54 @@ The band shapes, the way gain lands, the filter slopes and the console character
 
 ![The channel compressor editor in VCA mode.](docs/images/fx-02-comp.png)
 
-The channel compressor has three mutually-exclusive modes. Settings are remembered per mode — switch from FET back to Opto and your Opto settings are exactly as you left them.
+The channel compressor is Dusk Audio's Multi-Comp 2 plug-in, compiled into Dusk Studio and running the plug-in's own DSP, so a setting sounds the same here as in the plug-in. A channel strip offers three of its modes, **Opto**, **FET** and **VCA**, one at a time. Settings are remembered per mode: switch from FET back to Opto and your Opto settings are exactly as you left them.
 
-Click the header's left status light to bypass or engage the compressor; click the **COMP** label once to open the editor. Right-click anywhere on the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…**.
+Click the header's left status light to bypass or engage the compressor; click the **COMP** label once to open the editor. Right-click anywhere on the header for the COMP menu: the mode (**OPTO**, **FET** or **VCA**), **Reset comp**, and **Open editor...**. **Reset comp** returns every compressor setting of the strip, in all three modes, to the plug-in's defaults, and leaves the mode and the status light as they are. Engaging and bypassing crossfade over 20 ms.
 
-Every knob here takes a vertical drag; hold **Shift** while dragging for fine adjustment, use the scroll wheel for small steps, and double-click to return the knob to its default. Those defaults follow the active mode rather than one shared pair: **ATTACK** and **RELEASE** return to 0.2 ms / 400 ms in FET and 1 ms / 100 ms in VCA, which are the values a fresh track starts with, so a double-click and a new track agree. Double-clicking the threshold handle resets the **threshold only** — in FET mode the input and output drive keep their settings, matching what the same gesture does on the channel strip's meter and on a control surface.
+The strip shows the mode's controls. The triangle handle on the right edge of the gain-reduction meter strip sets the mode's main control: **PEAK REDUCTION** in Opto, **INPUT** in FET and the threshold in VCA. The knobs below the header hold the rest:
 
-All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain and is available in every mode; its range follows the active mode — −40 to +40 dB in Opto (the optical gain dial's full span), −20 to +20 dB in FET and VCA. Knob ranges retune per mode, as listed below.
+- **Opto**: **MAK**, the gain after the optical cell, and **LIMIT**.
+- **FET**: **RATIO**, **ATK**, **REL** and **MAK**, its output.
+- **VCA**: **RAT**, its compression, and **MAK**, its output.
 
-### Opto (optical style)
+Each of these is one of Multi-Comp 2's own controls: it travels the plug-in's whole range, reads as the plug-in prints it, and a double-click returns it to the plug-in's default. Every knob takes a vertical drag; hold **Shift** while dragging for fine adjustment, and use the scroll wheel for small steps. Dragging the handle or moving a knob engages the compressor, and so does switching **LIMIT** on; switching it off does not. A double-click on the handle returns only that control to its default and leaves the status light alone. Right-click the handle to MIDI Learn it.
 
-A program-dependent optical compressor. Only **threshold** (shown as **PEAK RED**) and **MAKEUP** are adjustable — ratio, attack, and release are fixed by the optical model and are hidden in this mode.
+**The editor.** **COMP** opens Multi-Comp 2's own editor over a dimmed window, scaled down if the window is too small to hold it. The tabs along its top, **OPTO**, **FET BLACK** and **VCA**, pick the mode as the COMP menu does. **AUTO MAKEUP** replaces the face's own make-up or output control with an automatic one, and **BYPASS** is the same switch as the status light. The editor opens on the compressor's settings as they stand, **BYPASS** included, whether or not the track has played since they changed. The face holds the mode's controls the strip has no room for as well, among them **MIX**, the sidechain filter (**SC HP** on Opto, **PULL/SC** on VCA) and the meter switches. A tab leaves the status light alone; any other control engages the compressor, as on the strip. Click outside the editor or press **Escape** to close it. The plug-in's settings drawer is not offered: stereo link, drive, the sidechain EQ and listen, true peak, analog noise and the FET's threshold, transient and curve stay at the plug-in's defaults, and a FET threshold carried over from an older session keeps playing with no control of its own.
 
-The Opto's character is slow attack, slow release, and a frequency-dependent gain reduction curve that is gentle in the lows and firmer in the mids and highs. Good on vocals, bass, and any source where you want compression to be felt but not heard.
+**Oversampling and latency.** The compressor always runs at Multi-Comp 2's own 2× oversampling, whatever **Effect Oversampling** is set to: that is the setting its sound was matched to the plug-in at. A bypassed compressor is not run at all. While any channel's compressor is engaged, every channel carries the compressor's delay, about 73 samples at 44.1 and 48 kHz and 79 at 96 kHz, so the tracks stay lined up whichever of them are compressed. The delay stays until the transport is stopped with every channel's compressor bypassed, so switching one in or out while playing never moves the timing; the first compressor engaged fades in once the delay is in place. Delay compensation covers it, bounces and freezes trim it out, and a take recorded with **PRINT** on is placed without it (see *Print mode* under Recording).
 
-### FET (classic FET style)
+Sessions saved by earlier versions are converted when they open: each compressor's settings move to Multi-Comp 2's controls as closely as those controls allow, so an older mix can sound slightly different through them.
 
-A fast solid-state compressor. The full grid is available:
+### Opto
 
-- **Threshold**: −60 to 0 dB.
-- **Ratio**: a stepped selector — **4:1**, **8:1**, **12:1**, **20:1**, **All** (the all-ratios-engaged "all-in" mode — extremely aggressive, almost a distortion effect).
-- **Attack**: 0.02 to 80 ms.
-- **Release**: 50 to 1100 ms.
+A program-dependent optical compressor.
 
-Classic FET compressors had no threshold control; Dusk Studio's FET exposes one so its UX matches the other modes, while the characteristic transformer/harmonic colour stays baked into the model. The FET is the right tool for drums, electric guitar, and anything where you want compression to be heard. The "All" setting is famously useful on parallel drum buses.
+- **PEAK REDUCTION** (the handle): 0 to 100, from no reduction at the top of the meter strip to the most at the bottom. 0 by default.
+- **MAK**: the gain after the optical cell, on the plug-in's 0 to 100 scale. Unity reads 20, the default.
+- **LIMIT**: switches the cell from compressing to limiting, a firmer action. Off by default.
 
-### VCA (Classic 160-style)
+Opto has no ratio, attack or release: the optical model sets them, and its attack and release follow the program. Good on vocals, bass, and any source where you want compression to be felt but not heard.
 
-A clean, fast, full-featured compressor.
+### FET
 
-- **Threshold**: −38 to +12 dB. Above this, compression begins.
-- **Ratio**: 1:1 to 120:1.
-- **Attack**: 0.1 to 50 ms.
-- **Release**: 10 to 5000 ms.
-- **Soft Knee**: when on, a parabolic (soft) knee replaces the hard knee.
-- **Detector**: **Adaptive** (default, level-dependent RMS time constant from 35 ms down to 5 ms) or **Classic** (fixed 10 ms RMS).
+A fast solid-state compressor, shown as **FET BLACK** in the editor.
 
-The soft-knee and detector toggles appear only in VCA mode. The sidechain has a built-in 60 Hz high-pass filter in VCA mode (so bass doesn't pump the compressor); Opto and FET have it disabled by default to preserve their period-correct character.
+- **INPUT** (the handle): −20 to +40 dB of drive into the compressor, −20 dB at the top of the meter strip and +40 dB at the bottom; more input compresses harder. 0 dB by default.
+- **RATIO**: a stepped selector, **4:1**, **8:1**, **12:1**, **20:1** or **All** (the all-ratios-engaged "all-in" mode, extremely aggressive, almost a distortion effect). 4:1 by default.
+- **ATK** and **REL**: the plug-in's numbered dials, 1.0 to 7.0; higher is faster. Attack reads 2.0 and release 3.0 by default.
+- **MAK**: the output level, −20 to +20 dB. 0 dB by default.
+
+The FET has no threshold control: drive it with **INPUT** and set its level with **MAK**. The FET is the right tool for drums, electric guitar, and anything where you want compression to be heard. The "All" setting is famously useful on parallel drum buses.
+
+### VCA
+
+A clean, predictable compressor.
+
+- **Threshold** (the handle): −55 to 0 dB, read on the level meter's scale beside it. −27 dB by default. Above this, compression begins.
+- **RAT**: the compression, read as the ratio it sets, from 1.0:1 to **INF**. About 4.2:1 by default.
+- **MAK**: the output level, −20 to +20 dB. 0 dB by default.
+
+The VCA has no attack or release control. The VCA face in the editor has a **PULL/SC** switch under its threshold, out by default. Out, the compressor hears lows and mids alike. In, it tilts the sidechain so lows drive the compressor less and mids and highs drive it more, which keeps bass from pumping it.
 
 The gain-reduction meter (the thin vertical bar beside the fader, right of the level meter) shows real-time reduction in dB, regardless of mode.
 
@@ -922,7 +937,7 @@ Each channel can be routed to any combination of the four mix buses. Right-click
 ## Meters
 
 - **Level meter** (right of the fader): peak level in dBFS, with a brief peak-hold and a numeric readout below it. Two columns for stereo tracks. In the Recording stage it shows **pre-fader input** when an audio track is armed or IN is engaged, so you can set record levels without enabling software monitoring. Otherwise it shows **post-fader output** (the track's contribution to the mix); Mixing remains post-fader unless IN is explicitly on. Bus and master meters are always post-fader output.
-- **GR meter** (right of the level meter): real-time compressor gain reduction, with the threshold handle on its right edge.
+- **GR meter** (right of the level meter): real-time compressor gain reduction, with the threshold handle on its right edge. The handle moves the compressor mode's main control: Opto's peak reduction, FET's input or VCA's threshold (see *Compressor*).
 
 A short red bar at the top of the input meter indicates a clip on that track. The bar holds for one second before clearing.
 
@@ -935,8 +950,8 @@ Between the channel strips and the master strip are four bus strips. They are sm
 ## Signal flow
 
 <!-- Source: src/dsp/BusStrip.cpp::processInPlace
-     HPF + tone EQ (:157, src/dsp/BusToneEq.cpp::process) → comp (:197, :209) →
-     pan × fader (:232–:236).
+     HPF + tone EQ (:127, src/dsp/BusToneEq.cpp::process) → comp (:135) →
+     pan × fader (:150–:154).
      Mute is applied at AudioEngine sum-into-master, not inside BusStrip. -->
 
 ```text
@@ -959,16 +974,19 @@ The EQ's status light bypasses the HPF with the bands, and moving any band knob 
 
 ## Bus compressor
 
-A console-style glue compressor.
+A console-style glue compressor: Multi-Comp 2's Bus mode, compiled into Dusk Studio as on the channel strips.
 
-- **Threshold**: −30 to +15 dB.
-- **Ratio**: 1:1 to 10:1. 4:1 is the default.
-- **Attack**: 0.1 to 50 ms.
-- **Release**: 50 to 1000 ms.
-- **Auto release**: on by default. Switches the release to a hardware-style program-dependent 150–450 ms envelope.
-- **Makeup**: −10 to +20 dB.
+- **Threshold**: −30 to +15 dB, set with the handle on the gain-reduction meter beside the fader. The handle spans that range over its full height, so its 0 dB default is not the level meter's 0 dB tick. Dragging it engages the compressor.
+- **RAT**: 2:1, 4:1 or 10:1. 2:1 by default.
+- **ATK**: 0.1ms, 0.3ms, 1ms, 3ms, 10ms or 30ms. 1ms by default.
+- **REL**: 0.1s, 0.3s, 0.6s, 1.2s or Auto, a program-dependent release. 0.3s by default.
+- **MAK**: make-up gain, 0.0 dB to 20.0 dB. 0.0 dB by default.
 
-A 2:1 ratio with a 10 ms attack and auto-release is a classic drum-bus setting. A 4:1 with a slower attack glues a full mix.
+Only the threshold engages the bus compressor: its knobs, on the strip and in the editor, leave the status light as it is. A double-click returns a knob or the handle to the plug-in's default. Right-click the header for the COMP menu: **Reset comp** and **Open editor...**. Click the **COMP** label to open Multi-Comp 2's Bus face over a dimmed window. Besides the controls above it holds **SC FILTER**, **MIX**, the **HR** headroom trim and **AUTO FADE** with its **RATE**, and its **IN** switch is the status light. Click outside it or press **Escape** to close it.
+
+As on the channel strips, the bus compressors run at Multi-Comp 2's own 2× whatever **Effect Oversampling** is set to, and a bypassed one is not run. While any bus compressor is engaged, every bus carries its delay, and so do the tracks and aux returns that reach the master directly, until the transport is stopped with every bus compressor bypassed.
+
+A 2:1 ratio with a 10ms attack and Auto release is a classic drum-bus setting. A 4:1 with a slower attack glues a full mix.
 
 ## Pan, fader, mute, solo
 
@@ -987,8 +1005,8 @@ The rightmost strip. Receives the sum of every channel that is not routed exclus
 ## Signal flow
 
 <!-- Source: src/dsp/MasterBus.cpp::processInPlace
-     program EQ (:218, :242) → bus comp (:227, :251) →
-     tape (:277) → fader (:296) → mono sum (:299–:303). -->
+     program EQ (:189, :195) → bus comp (:213) →
+     tape (:283) → fader (:322) → mono sum (:325–:329). -->
 
 ```text
 master input → program EQ → master bus compressor → tape saturation → master fader → mono sum → output
@@ -1025,7 +1043,7 @@ The program EQ is tube-saturated; pushing the boosts harder adds harmonic conten
 
 ## Master bus compressor
 
-Identical in DSP to the bus-strip compressor but typically used with slower settings: a 10 ms attack, auto-release, 2:1 to 4:1 ratio, and 1–3 dB of gain reduction on peaks. Click the left status light to bypass/engage, click the **COMP** label to open the editor, or right-click anywhere for the COMP menu.
+Multi-Comp 2's Bus mode, the same compressor with the same controls, ranges and defaults as the bus strips (see *Bus compressor*), typically used with slower settings: a 10ms attack, Auto release, a 2:1 or 4:1 ratio, and 1–3 dB of gain reduction on peaks. Click the left status light to bypass/engage, click the **COMP** label to open Multi-Comp 2's Bus face, or right-click anywhere for the COMP menu. Only the threshold handle, on the strip or in the editor, engages it. While it is engaged the master carries its delay, until the transport is stopped with it bypassed.
 
 ## Master fader
 
@@ -1112,7 +1130,7 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 
 The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
 
-Wide windows give the EQ and compressor similar widths, with additional space for the limiter meters and Phase frequency display. The panels share header height and spacing. The compressor uses subdued band buttons; colored meter outlines identify the bands, and an engaged **S** button highlights a soloed band. Bypassing the compressor dims its header while leaving its controls available for editing.
+Wide windows give the EQ the most width, with additional space for the limiter meters and Phase frequency display; the compressor's slot is narrower, because its controls open in an editor of their own. The panels share header height and spacing.
 
 ### Digital 5-band EQ
 
@@ -1130,9 +1148,13 @@ the **FFT** button in the panel's top-left.
 
 ### Multiband compressor
 
-The UniversalCompressor in Multiband mode provides four frequency bands with independent dynamics controls. The editor exposes the per-band controls and crossovers; the bus compressor settings do not apply to this stage.
+Multi-Comp 2's Multiband mode: four frequency bands, Low, Low-Mid, High-Mid and High, split by three crossovers, each band with its own dynamics controls. The bus compressor settings do not apply to this stage.
 
-**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the chart's threshold / ratio / attack / release / makeup and crossovers into the multiband comp. High-Mid is disabled when the chart's high crossover is at or below 5 kHz; above that, it stays enabled with the same settings as Low-Mid. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. The crossover spacing rule in Appendix A can raise the effective high split above the chart value.
+The compressor's slot holds the **MULTIBAND COMP** header, the preset picker and an overview of the bands: the crossovers, each band's threshold and ratio (or off, with BYP or SOLO when set), and the output. Click the header's status light to engage or bypass the compressor. Click the **MULTIBAND COMP** label to open Multi-Comp 2's Multiband face over the dimmed window, at its design size, scaled down if the window is too small to hold it. The face holds every band control, the crossovers, **MIX** and **OUTPUT**, and its **BYPASS** is the header's status light. Editing the face leaves the compressor as it is: only **BYPASS** and the status light switch it. What you set stays on the face while the compressor is bypassed. Press **Escape** or click outside the face to close it; it also closes when a dialog opens over the window and when you leave the MASTERING stage. Every band setting is saved with the session.
+
+The compressor runs at Multi-Comp 2's own 2×. Its delay is part of the chain's latency whether it is in or out, and while it is out the plug-in does not run.
+
+**Presets** (the **PRESET** dropdown under the header): nine genre starting points transcribed from a hardware portastudio's multiband compression chart: Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. The chart has three bands. Picking a preset writes its Low, Mid and High bands, with their threshold, ratio, attack, release and makeup, into Low, Low-Mid and High, sets the crossovers from the chart's two splits, switches High-Mid off and turns **AUTO MAKEUP** off. **MIX** and **OUTPUT** keep their values. It is a one-shot apply: the picked name stays showing when you change a band afterwards.
 
 ### Brickwall limiter
 
@@ -1233,6 +1255,14 @@ Click **IN** to monitor the live input through the channel strip. When the IN li
 
 When you record an audio take, you choose whether to print the channel processing — EQ, compressor, **and any insert plugin** — to disk or keep it live. Click **PRINT** to commit it; leave it off to record dry and shape the take later. The default is off (dry recording), which is the more flexible choice — it lets you re-EQ, re-compress, and re-process in mixing without re-recording.
 
+The channel delays what passes through it: by the compressors' 73 samples at 44.1 and 48 kHz and 79 at 96 kHz while any channel compressor is engaged, by the EQ at 2× and 4× **Effect Oversampling**, by an insert plugin's latency and by the track's delay compensation (see *Latency compensation*). A printed take is placed with that delay taken out, so it lands on the timeline where a dry take of the same input lands, to the sample. At 4× the EQ's delay is 26.5 samples, and the take is placed to the nearest sample. A punch window holds what you played inside it, and each loop pass holds what you played in that pass, up to the wrap.
+
+PRINT is read when you press Record: switching it during a take changes the next take, not this one.
+
+A take keeps the delay the channel had when you pressed Record, so it never jumps. If the delay changes during the take, the rest of the take lands later or earlier by the difference: engaging the first channel compressor while recording, for instance, puts the rest of the take 73 samples late at 48 kHz. Engage the compressor before you press Record; its delay then stays until the transport is stopped with every channel compressor bypassed.
+
+When you press Stop, what you played in the last moments is still inside the channel, so a printed take ends that much earlier than a dry take of the same input: by the channel's delay, 73 samples or about 1.5 ms at 48 kHz with a compressor engaged.
+
 ## Count-in
 
 Toggle **C/I** on the transport bar. The next time you press Record, the metronome will click for one full bar before recording actually starts. The playhead rolls back by one bar so that the first recorded sample lines up with the intended start position.
@@ -1246,7 +1276,7 @@ To overdub a specific section without erasing material before or after:
 1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. You can also press **Shift+[** and **Shift+]** at the playhead. Every way turns punch on as soon as the in point sits before the out point.
 2. Check that the **Punch** button on the transport bar is lit. **P** or the button turns punch off and on again without moving the brackets.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
-4. Press Record. Playback begins at the pre-roll position, or where the playhead already is if that is further back. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
+4. Press Record. Playback begins at the pre-roll position, or where the playhead already is if that is further back. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample, on a track with **PRINT** on too. The audio before and after is untouched.
 
 You can also right-click the ruler to set the punch in and out points separately. Punch arms automatically once the in point is before the out point; equal points leave it off.
 
@@ -1260,7 +1290,7 @@ To repeat a section while you experiment:
 2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. At each wrap a MIDI track ends only what its regions were playing: their notes stop with note-offs, and a pedal, mod wheel, expression, pitch bend or pressure the regions moved goes back to its default unless the loop start sets it again. Notes the regions hold across the loop start sound again, and a pedal the loop start holds goes back down just after their notes have ended. With **IN** on, keys you hold through the track's input, your own sustain pedal, and the release and reverb tails still ringing carry on across the wrap. An instrument has one key of each pitch and one sustain pedal per channel, so a key a region is playing too, on the same channel, ends with the region's note, and your pedal comes up with the regions' own when they hold one on your channel. A seek or scrub while the transport rolls, and pressing Play with **IN** on, do the same. A wrap, seek or Play that would have to end more than 48 of the regions' notes and pedals at once sends all notes off and all sound off on every channel instead, and that ends what you hold too. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. With **MIDI Merge** off, a MIDI track keeps the current pass plus up to **8 previous passes** attached to one range-aligned region, so you can cycle performances after stopping. With **MIDI Merge** on, each pass adds its performance to the region instead. A loop must be at least 128 samples long to record.
+In loop play, the transport wraps at the loop boundary indefinitely. At each wrap a MIDI track ends only what its regions were playing: their notes stop with note-offs, and a pedal, mod wheel, expression, pitch bend or pressure the regions moved goes back to its default unless the loop start sets it again. Notes the regions hold across the loop start sound again, and a pedal the loop start holds goes back down just after their notes have ended. With **IN** on, keys you hold through the track's input, your own sustain pedal, and the release and reverb tails still ringing carry on across the wrap. An instrument has one key of each pitch and one sustain pedal per channel, so a key a region is playing too, on the same channel, ends with the region's note, and your pedal comes up with the regions' own when they hold one on your channel. A seek or scrub while the transport rolls, and pressing Play with **IN** on, do the same. A wrap, seek or Play that would have to end more than 48 of the regions' notes and pedals at once sends all notes off and all sound off on every channel instead, and that ends what you hold too. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. With **PRINT** on, a pass holds what you played in it up to the wrap, though the channel delivers the last moments of it after the transport has wrapped. With **MIDI Merge** off, a MIDI track keeps the current pass plus up to **8 previous passes** attached to one range-aligned region, so you can cycle performances after stopping. With **MIDI Merge** on, each pass adds its performance to the region instead. A loop must be at least 128 samples long to record.
 
 With Punch enabled, each pass records only the overlap between the loop and punch ranges. Pressing Record anywhere inside the loop aligns the gesture to that effective capture start before count-in or pre-roll begins, so every pass covers the same timeline range. Punch post-roll auto-stop is suspended during loop recording; press Stop when you are finished.
 
@@ -1311,7 +1341,7 @@ A region that names no take (an imported file, a reversed or rendered region, or
 
 With **MIDI Merge** off, MIDI tracks keep their own take history. Each MIDI region holds up to **8 previous takes**; see *Take count and MIDI take cycling* under The tape strip. Merging preserves that history while adding to the current performance.
 
-Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v11 to preserve the full MIDI channel performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot open them, so keep a copy before saving if you still need an older version.
+Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are saved in format 12, which holds Multi-Comp 2's settings for every compressor along with the full MIDI channel performance and managed SFZ references. Dusk Studio 0.16 and earlier cannot open them, so keep a copy before saving if you still need an older version.
 
 Opening a newer format leaves the current session in place and raises the **Session needs a newer Dusk Studio** alert. The status bar reports **Session format [file version] is newer than supported format [supported version]. Upgrade Dusk Studio to open: [session name]**.
 
@@ -1718,7 +1748,7 @@ Mixing is the act of balancing your tracks, shaping them with EQ and dynamics, p
 5. **HPF every track that doesn't need lows.** Vocals, guitars, and most overdubs need a 60–100 Hz high-pass. Kick and bass don't; everything else probably does.
 6. **EQ.** Cut before you boost. If something is muddy, find the muddy frequency and pull it down before you reach for a top-end boost.
 7. **Compress.** Use the Opto on smooth sources (vocals, bass), the FET on transients (drums, guitars), the VCA when you need precision.
-8. **Bus routing.** Assign drums to bus 1, vocals to bus 2, etc. Tighten the buses with the console-style compressor (2:1 ratio, ~10 ms attack, auto-release, 1–3 dB of reduction).
+8. **Bus routing.** Assign drums to bus 1, vocals to bus 2, etc. Tighten the buses with the console-style compressor (2:1 ratio, 10ms attack, Auto release, 1–3 dB of reduction).
 9. **Aux sends.** Route what needs reverb to aux 1, what needs delay to aux 2.
 10. **Master bus.** Glue the whole mix with the master compressor and program EQ. Add a touch of tape if it needs body.
 11. **Listen on multiple systems.** Check the **MONO** button on the master strip. Check headphones, laptop speakers, the car. Adjust.
@@ -1858,11 +1888,11 @@ The controls are applied in the order polarity, width, mono, gain. Every one of 
 
 ### DuskVerb 2
 
-Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. It combines sixteen plate, room, chamber, hall, spring, gated, reverse and shimmer engines with the plug-in's own DSP and editor, so a setting sounds the same here as in the plug-in. Controls change labels or availability where an engine needs them; click **?** in the editor for its complete engine-specific reference.
+Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. Its engine menu offers thirteen plate, room, chamber, hall, spring, gated, reverse, shimmer and nonlinear engines, which run on the plug-in's own DSP and editor, so a setting sounds the same here as in the plug-in. Controls change labels or availability where an engine needs them; click **?** in the editor for its complete engine-specific reference.
 
 | Section | Controls and ranges | What they do |
 |---|---|---|
-| Engine | **Algorithm**: 16 engines | Chooses the reverb topology. |
+| Engine | **Algorithm**: 13 engines | Chooses the reverb topology. |
 | Input | **Pre-Delay**: 0 to 250 ms; **Pre-Delay Sync**: Free, 1/32, 1/16, 1/8, 1/4, 1/2 or 1/1; **Saturation**: 0 to 100% | Separates the source from the tail, optionally follows session tempo, and adds colour before the reverb. |
 | Filter | **Low Cut**: 5 to 500 Hz; **High Cut**: 1 to 20 kHz; **Mono Below**: 20 to 300 Hz; **Mono Depth**: 0 to 100% | Shapes what reaches the reverb and controls the low-frequency stereo content. |
 | Decay / Size | **Decay**: 0.2 to 30 s; **Size**: 0 to 100% | Sets the tail length and scale of the selected space. |
@@ -1871,11 +1901,11 @@ Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. It combines si
 | Damping | **Bass Multiply**, **Mid Multiply**: 0.3 to 2.5; **Treble Multiply**: 0.1 to 1.5; **Low Crossover**: 200 Hz to 4 kHz; **High Crossover**: 1 to 12 kHz | Shapes how long different frequency bands decay. |
 | Modulation | **Depth**: 0 to 100%; **Rate**: 0.1 to 10 Hz | Adds movement to the tail, with engine-specific labels where applicable. |
 | Macro | **Tone**: −1 to +1; **Character**, **Duck**: 0 to 100% | Provides broad dark-to-bright, movement/grit and wet-ducking adjustments. |
-| Holds and modes | **Freeze**, **Gate**, **Tonal Correction**: Off / On | Freeze holds the tail; Gate and Tonal Correction appear on the engines that support them. |
+| Holds and modes | **Freeze**, **Gate**, **Tonal Correction**: Off / On | Freeze holds the tail, and is hidden on the Reverse and Nonlinear engines, which have no tail loop to hold. Gate and Tonal Correction appear on the engines that support them. |
 
-DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset has **Mix (Dry / Wet) at 35%**, so a freshly loaded instance is audible. On an aux lane, turn on **Bus Mode** for a 100% wet return.
+DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset has **Mix (Dry / Wet) at 35%**, so a freshly loaded instance is audible. On an aux lane, turn on **Bus Mode** for a 100% wet return. **MIX LOCK**, under the **BUS** switch, keeps Dry / Wet and Bus Mode where they are when you recall a preset or **INIT**, so a return stays fully wet while you audition presets. **A** and **B** still bring back the complete sound. Its setting is saved with the session.
 
-The unit reports zero latency. Its tail can run for up to 30 seconds, and an aux lane keeps processing for as long as its return remains audible.
+The unit reports zero latency. Its tail can run for more than 30 seconds at the longest Decay settings, and an aux lane keeps processing for as long as its return remains audible.
 
 Presets and **INIT** in DuskVerb 2's editor are saved with the session, as is whichever of **A** and **B** is active when you save. The other comparison slot lasts as long as the session is open, and comes back holding the saved sound when you reopen it. Sessions saved with the old built-in Reverb still load under the same unit, but they return at DuskVerb 2's defaults; the old Reverb settings are not converted.
 
@@ -1898,6 +1928,8 @@ Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug
 | Bass / Treble | −1 to +1 | 0 | Shelves on the echo path. |
 | Wow & Flutter | 0 to 1 | 0 | Transport instability. |
 | Tape Age | New / Used / Old | Used | Worn tape: hiss, extra wow, high-frequency loss and level wobble. Even new tape carries a hiss floor, around −113 dBFS. |
+| Noise | 0 to 1 | 0 | Raises the tape and electronics noise, hum, machine bed and hiss together, by up to 60 dB; the editor's **NOISE** knob shows the lift in dB. At 0 the noise sits at its quiet captured level. Tape Age still scales it. |
+| Hum Frequency | 60 Hz / 50 Hz | 60 Hz | The mains hum in that noise, the editor's **HUM** switch. Set it to match your region. It is not stored in presets, so recalling one leaves it where you set it. |
 | Echo Pan / Reverb Pan | 0 to 1 | 0.5 | Where the repeats and the spring sit, from left to right. |
 | Input Send | Off / On | On | Feeds the input to the tape. Off lets what is already on the tape play out, the dub move. |
 | Tempo Sync | Off / On | Off | Locks the first active head to the session tempo. |
@@ -1940,7 +1972,7 @@ The editor's preset bar holds the plug-in's factory presets and any you save you
 
 Dusk Audio's Sunset Circuits plug-in, compiled into Dusk Studio with the plug-in's own DSP and editor. A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), each with its own oscillators, filter, envelopes, LFOs, modulation matrix and effects, plus unison, glide and an arpeggiator. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
 
-Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) costs a few samples of latency above 1x, which the unit reports and delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults. A setting the panel saved between two steps plays the step the panel played, except PB Range, which takes the nearest whole semitone. MIDI bindings learned on the panel's knobs stay on the controls they were learned on.
+Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) does not change the latency: the unit reports the same 13 samples at every setting, which delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults. A setting the panel saved between two steps plays the step the panel played, except PB Range, which takes the nearest whole semitone. MIDI bindings learned on the panel's knobs stay on the controls they were learned on.
 
 It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does. A MIDI program change loads the factory preset with that number, counting from 0, and the session saves the preset it loaded.
 
@@ -1956,7 +1988,7 @@ On an aux lane there is nothing to open: the unit's controls are always on scree
 
 On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Click a toggle to switch it on or off. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
-Unlike the channel compressor's editor or a third-party plug-in's, the editors DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open leave the keyboard with the main window, so every shortcut keeps working while one is open, not just the transport keys. A click into one gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again. Utility's knob panel is a dialog like the compressor's editor: while it is open only the transport keys, Undo, Redo, Save, Save As and Quit work (see [Notes on shortcut design](#notes-on-shortcut-design)).
+Unlike a third-party plug-in's editor, the editors DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open leave the keyboard with the main window, so every shortcut keeps working while one is open, not just the transport keys. Multi-Comp 2's editors on the strips, buses, master and mastering stage do the same. A click into one gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again. Utility's knob panel is a dialog: while it is open only the transport keys, Undo, Redo, Save, Save As and Quit work (see [Notes on shortcut design](#notes-on-shortcut-design)).
 
 **MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in a unit's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot, choose **MIDI Learn last-touched parameter**, and choose **MIDI Learn (this track)...** in the next menu. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
@@ -2145,6 +2177,10 @@ Run the ping after any change to your interface routing or your external gear's 
 
 The measured latency is stored per insert and applied as an internal delay line inside the hardware insert slot itself, so that the signal returning from external gear lines up with where it left the channel. **Cross-track plugin delay compensation (PDC) is automatic**: Dusk Studio finds the deepest insert latency in the session (any track's plugin or hardware insert) and delays every other track to match, so a track with a lookahead/linear-phase plugin stays sample-aligned with the rest. It applies on every route (master, buses, aux) and is trimmed out of bounces and stems so rendered files still start at sample 0. MIDI instrument tracks are already aligned via the note-scheduling pre-shift, so they count as zero added latency. Compensation follows a plugin that changes its latency while it runs, a look-ahead raised in its editor for example: an in-process plugin within a thirtieth of a second of reporting the change, a native VST3 or CLAP plugin once Dusk Studio has restarted it at the plugin's request, and a native LV2 plugin as soon as it reports the change. A restart suspends the audio for a moment, so a restart for a new latency that is asked for while recording waits until you stop, and a plugin that keeps asking for one is restarted at most twice a second, then held back until it stops asking. The plugin keeps playing, at its old latency, while it waits. A native VST3 plugin that changes its inputs or outputs, a sidechain or a channel layout switched in its editor for example, is silent until it has been restarted, so it is restarted at once, on the next tick of the engine's plugin timer (30 a second), while recording too. That restart puts a gap of a moment in every take being recorded, not only one on the plugin's own track. Waiting would instead leave the insert or aux return silent in what you hear, and in a take recorded with **PRINT** on, until you stop. A plugin that changes them again within half a second of each of six restarts in a row is taken offline instead. It passes the dry signal, which for an instrument means silence, and the Plug-in unavailable alert names it the first time. Once it has made no change for a second it is restarted and comes back, or when the take ends if you are recording. If it changes them again within half a second of that restart, it stays offline until you load it again or reopen the session, or until the audio engine restarts, for instance for a change of audio device, sample rate, block size or **Effect oversampling**, or for an offline mixdown, bounce, stem bounce or freeze. Each track whose compensation changes moves to it at its next silence, so the change never clicks. A plugin in the OOP sandbox keeps the latency it reported when it loaded; reload it after a change that moves its latency. Aux-lane plugin latency is compensated at the master: the dry mix waits for the deepest aux-lane latency so the wet returns land aligned, and that wait changes only while the transport is stopped.
 
+The compressors carry a delay of their own, about 73 samples at 44.1 and 48 kHz and 79 at 96 kHz, which each stage of the mixer holds as one: the channel strips, the buses and the master. A stage carries it only while one of its compressors is engaged, and then on every path through it, compressed or not, so everything stays lined up. It leaves once the transport is stopped with every compressor of that stage bypassed, so switching a compressor in or out while playing never moves the timing. It fades out over 20 ms after the stop, and if you start the transport again before that fade ends, the delay is back in full from the first sample played. Bounces and freezes trim it out. The mastering chain carries its compressor's delay whether the compressor is in or out.
+
+A take recorded with **PRINT** on is the channel's output, so it carries the channel's delays: its insert's latency, its delay compensation, its oversampled EQ and the compressors' delay. It is placed with them taken out and lands where a dry take of the same input lands; see *Print mode* under Recording.
+
 \newpage
 
 # Sync to external gear
@@ -2204,8 +2240,8 @@ Once connected:
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
 - **V-pot** rotaries drive pan, sends, the channel EQ, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
-- In **EQ** assign mode the encoders act on the *selected* channel: 1 = HPF frequency, 2 = LF gain, 3 = LF frequency, 4 = LM gain, 5 = LM frequency, 6 = HM gain, 7 = HF gain, 8 = HF frequency. Turning an encoder engages the channel's EQ if it was bypassed, as moving the knob does. Turning the HPF encoder up from OFF switches the HPF on and engages the EQ, and turning it back down to OFF switches the HPF off and leaves the EQ engaged. Pushing an encoder resets it to its knob's default without engaging the EQ: the HPF to OFF, switched off; a gain to 0 dB; LF to 100 Hz, LM to 600 Hz, HF to 8 kHz. A band that a converted older session holds past its knob's range stays there when turned further out, and steps in from the end of the range when turned back.
-- In **compressor** assign mode the encoders act on the *selected* channel: 1 = threshold, 2 = ratio, 3 = attack, 4 = release, 5 = makeup. Each drives the active compressor mode's own parameter over that mode's range, and turning one engages the compressor if it was bypassed, as the strip's knobs and threshold handle do. Pushing an encoder resets it without engaging the compressor: threshold goes to **no compression** (the top of the mode's range), makeup to unity, and ratio, attack and release to the mode's default. Opto has no ratio, attack or release, so encoders 2–4 do nothing in that mode. Attack, release and the VCA ratio step by a fixed percentage per detent rather than a fixed amount, so the fast end of each range stays dialable. The FET ratio is a five-position switch, so its encoder moves one position per turn of the wrist however fast you spin it, where the VCA's continuous ratio scales with every detent.
+- In **EQ** assign mode the encoders act on the *selected* channel: 1 = HPF frequency, 2 = LF gain, 3 = LF frequency, 4 = LM gain, 5 = LM frequency, 6 = HM gain, 7 = HF gain, 8 = HF frequency. Turning an encoder engages the channel's EQ if it was bypassed, as moving the knob does. Turning the HPF encoder up from OFF switches the HPF on and engages the EQ, and turning it back down to OFF switches the HPF off and leaves the EQ engaged. Pushing an encoder resets it to its knob's default without engaging the EQ: the HPF to OFF, switched off; a gain to 0 dB; LF to 200 Hz, LM to 1 kHz, HF to 8 kHz. An HPF that a converted older session holds past its knob's range stays there when turned further out, and steps in from the end of the range when turned back.
+- In **compressor** assign mode the encoders act on the *selected* channel: 1 = threshold, 2 = ratio, 3 = attack, 4 = release, 5 = makeup. Each moves the control the active mode plays for that role across the plug-in's whole range: the threshold is Opto's peak reduction, FET's input or VCA's threshold, and turning it right means less compression in every mode; the ratio is FET's ratio or VCA's compression. Turning an encoder engages the compressor if it was bypassed, as the strip's knobs and threshold handle do. Pushing an encoder returns its control to the plug-in's default without engaging the compressor. Opto has no ratio, attack or release, and VCA no attack or release, so those encoders do nothing in those modes. A continuous control moves a hundredth of its range per detent. The FET ratio is a five-position switch, so its encoder moves one position per turn of the wrist however fast you spin it.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
 - **Touch sense** drives Touch automation: touching a fader on the surface puts it into touch-write mode while you hold it.
@@ -2237,7 +2273,7 @@ In addition to MCU support, any control in Dusk Studio can be bound to a MIDI CC
 
 The binding is captured and immediately active. The next time that CC arrives, the control responds.
 
-A bound EQ or compressor control acts as its knob does: moving a channel or bus EQ band, or turning a highpass up off OFF, engages that EQ if it was bypassed, and moving a compressor's threshold or makeup engages the compressor.
+A bound EQ or compressor control acts as its knob does: moving a channel or bus EQ band, or turning a highpass up off OFF, engages that EQ if it was bypassed, and moving a channel compressor's threshold or makeup engages that compressor. Each moves the control the strip's mode plays for it, as the strip's handle and **MAK** knob do, across the plug-in's whole range. The master compressor's threshold, makeup and ratio bindings move Multi-Comp 2's Bus-mode controls across their ranges and leave the master compressor's status light as it is.
 
 **Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for every native host (CLAP and VST3-Native on every OS, LV2-Native on Linux and macOS, and AudioUnit on macOS), including LV2 plugins whose parameters are atom "patch" properties (JUCE-built LV2s, notably).
 
@@ -2628,8 +2664,8 @@ An open chord slot takes the keys instead:
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
 - While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, **Recover from autosave?**, **Session won't open**, **Session needs a newer Dusk Studio**, and the Startup dialog, which decides which session there is to work on. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows.
-- Every other dialog, menu and popup lets through only these keys: **Space**, **R**, **Home**, **.**, **L**, **P**, **[**, **]**, **Shift+[**, **Shift+]** and **F11**, then **Cmd+Z**, **Cmd+Shift+Z** and **Cmd+Y** (Undo and Redo), **Cmd+S** (Save), **Cmd+Shift+S** (Save As) and **Cmd+Q** (Quit). So do the EQ, compressor, aux and plug-in editors that open over the window, Utility's knob panel, **Audio settings** and the tuner, whether you last clicked in them or not; **U** or **Esc** closes the tuner. A browser or prompt that Save, Save As or Quit brings up closes the compressor editor, Utility's knob panel and Audio settings first, so it is not hidden behind them, and one that comes up over a file browser, such as the quit prompt **Cmd+Q** raises there, opens above it. A dialog keeps every other key to itself, even after a click on the dimmed window behind it: **M**, **C** or **T** typed into a file browser, the import target picker or the compressor editor does nothing behind it, and **Tab** moves only between its own controls. In a file browser **Cmd+S** and **Cmd+Shift+S** do nothing either: answer the browser first. The Import browser's **file:** box lists the files you have picked and takes no typing, the transport keys included; to go to another folder, type it into the path box at the top and press Enter.
-- A few windows keep rules of their own. The audio region editor and the notepad give theirs with them. The piano roll takes the keys it uses and leaves every other shortcut working, so **K** still opens the virtual keyboard for step entry. The virtual keyboard plays a note on every letter and digit in its layout, with or without **Cmd**, so while it is up **Cmd+Z**, **Cmd+S**, **Cmd+Q** and **Cmd+B** play notes instead of acting on the session; of the keys outside its layout it lets through only the transport keys above, and **K** or **Esc** closes it. Opened over the piano roll, on Linux and macOS it still keeps the keys in its layout, and the piano roll keeps its own editing keys while it has the focus. The SoundFont preset picker filters as you type and lets no shortcut through, Undo, Save and Quit included, until you pick a preset or close it. The editors DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open leave every shortcut working, but whatever opens over the window closes them first, so nothing comes up hidden behind them: the virtual keyboard (**K**), the tuner (**U**) and every dialog or menu. An editor drawn inside an aux lane steps aside while the tuner is up and comes back when it closes.
+- Every other dialog, menu and popup lets through only these keys: **Space**, **R**, **Home**, **.**, **L**, **P**, **[**, **]**, **Shift+[**, **Shift+]** and **F11**, then **Cmd+Z**, **Cmd+Shift+Z** and **Cmd+Y** (Undo and Redo), **Cmd+S** (Save), **Cmd+Shift+S** (Save As) and **Cmd+Q** (Quit). So do the EQ, aux and plug-in editors that open over the window, Utility's knob panel, **Audio settings** and the tuner, whether you last clicked in them or not; **U** or **Esc** closes the tuner. A browser or prompt that Save, Save As or Quit brings up closes Utility's knob panel and Audio settings first, so it is not hidden behind them, and one that comes up over a file browser, such as the quit prompt **Cmd+Q** raises there, opens above it. A dialog keeps every other key to itself, even after a click on the dimmed window behind it: **M**, **C** or **T** typed into a file browser or the import target picker does nothing behind it, and **Tab** moves only between its own controls. In a file browser **Cmd+S** and **Cmd+Shift+S** do nothing either: answer the browser first. The Import browser's **file:** box lists the files you have picked and takes no typing, the transport keys included; to go to another folder, type it into the path box at the top and press Enter.
+- A few windows keep rules of their own. The audio region editor and the notepad give theirs with them. The piano roll takes the keys it uses and leaves every other shortcut working, so **K** still opens the virtual keyboard for step entry. The virtual keyboard plays a note on every letter and digit in its layout, with or without **Cmd**, so while it is up **Cmd+Z**, **Cmd+S**, **Cmd+Q** and **Cmd+B** play notes instead of acting on the session; of the keys outside its layout it lets through only the transport keys above, and **K** or **Esc** closes it. Opened over the piano roll, on Linux and macOS it still keeps the keys in its layout, and the piano roll keeps its own editing keys while it has the focus. The SoundFont preset picker filters as you type and lets no shortcut through, Undo, Save and Quit included, until you pick a preset or close it. The editors DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open, and Multi-Comp 2's compressor editors, leave every shortcut working, but whatever opens over the window closes them first, so nothing comes up hidden behind them: the virtual keyboard (**K**), the tuner (**U**) and every dialog or menu. An editor drawn inside an aux lane steps aside while the tuner is up and comes back when it closes.
 
 \newpage
 
@@ -2639,14 +2675,14 @@ An open chord slot takes the keys instead:
 
 1. **HPF** at 80–100 Hz to remove low-frequency rumble.
 2. **EQ**: a 2–4 dB cut at the muddy frequency (usually 200–400 Hz) and a 1–2 dB shelf boost above 8 kHz for air.
-3. **Compressor → Opto** with 40% peak reduction and 50% gain. Should pull 3–5 dB on peaks.
+3. **Compressor → Opto** with the peak reduction around 40, and **MAK** raised until the level matches the bypassed sound. Should pull 3–5 dB on peaks.
 4. **Aux 1** send (post-fader) at −12 dB to a reverb on the aux lane.
 5. **Aux 2** send (post-fader) at −18 dB to a delay on the aux lane.
 
 ## Glued drums on a bus
 
 1. Route every drum channel to **Bus 1** (right-click → bus assigns).
-2. On Bus 1, enable the bus compressor: **4:1 ratio**, **10 ms attack**, **auto-release on**. Set the threshold to pull 2–3 dB on the loudest hits.
+2. On Bus 1, enable the bus compressor: **4:1 ratio**, **10ms attack**, release at **Auto**. Set the threshold to pull 2–3 dB on the loudest hits.
 3. Boost the bus EQ's **HF** band 1–2 dB at 8 kHz to bring out the cymbals.
 
 ## Mastering for streaming
@@ -2654,7 +2690,7 @@ An open chord slot takes the keys instead:
 1. Switch to the **MASTERING** stage and **Load latest mixdown**.
 2. Enable all three stages: **EQ**, **Comp**, **Limiter**.
 3. On the EQ, a 1–2 dB shelf boost at 10 kHz and a 0.5–1 dB cut at 250 Hz is a safe starting point.
-4. On the bus comp, aim for 0.5–1 dB of reduction on peaks. Slow attack (30 ms), slow release (250 ms), 2:1.
+4. On the multiband compressor, aim for 0.5–1 dB of reduction on peaks in each band. Slow attack (30 ms), slow release (250 ms), 2:1.
 5. On the limiter, leave the ceiling at **−1.0 dB**, the true-peak ceiling of every streaming target. Push the **Drive** until the integrated LUFS reads −14 (Spotify and YouTube) or −16 (Apple Music) — but stop pushing as soon as the limiter is regularly pulling more than 2 dB.
 6. Use the **loudness target** picker to colour-code the readouts and confirm you're within target.
 
@@ -3066,30 +3102,31 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | LPF      | Frequency (−3 dB) | 3–20 kHz                   | 20 kHz   |
 | EQ       | Enable         | Off / On                      | Off      |
 | EQ       | Mode           | E (brown) / G (black)         | E        |
-| EQ LF    | Frequency      | 30–450 Hz                     | 100 Hz   |
+| EQ LF    | Frequency      | 30–450 Hz                     | 200 Hz   |
 | EQ LF    | Gain           | ±15 dB                        | 0 dB     |
-| EQ LM    | Frequency      | 200 Hz–2.5 kHz                | 600 Hz   |
+| EQ LM    | Frequency      | 200 Hz–2.5 kHz                | 1 kHz    |
 | EQ LM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ LM    | Q              | 0.4–4.0                       | 0.7      |
-| EQ HM    | Frequency      | 600 Hz–7 kHz                  | 2 kHz    |
+| EQ HM    | Frequency      | 600 Hz–7 kHz                  | 3 kHz    |
 | EQ HM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ HM    | Q              | 0.4–4.0                       | 0.7      |
 | EQ HF    | Frequency      | 1.5–16 kHz                    | 8 kHz    |
 | EQ HF    | Gain           | ±15 dB                        | 0 dB     |
 | Comp     | Enable         | Off / On                      | Off      |
 | Comp     | Mode           | Opto / FET / VCA              | Opto     |
-| Opto     | Threshold (Peak red.) | set on GR meter         | —        |
-| FET      | Threshold      | −60 to 0 dB                   | −10 dB   |
+| Comp     | Auto makeup    | Off / On                      | Off      |
+| Comp     | Mix            | 0–100%                        | 100%     |
+| Opto     | Peak reduction (handle) | 0–100                | 0        |
+| Opto     | Gain (MAK)     | 0–100, unity reads 20         | 20       |
+| Opto     | Limit          | Off / On                      | Off      |
+| FET      | Input (handle) | −20 to +40 dB                 | 0 dB     |
 | FET      | Ratio          | 4:1 / 8:1 / 12:1 / 20:1 / All | 4:1      |
-| FET      | Attack         | 0.02–80 ms                    | 0.2 ms   |
-| FET      | Release        | 50–1100 ms                    | 400 ms   |
-| VCA      | Threshold      | −38 to +12 dB                 | +12 dB   |
-| VCA      | Ratio          | 1:1–120:1                     | 4:1      |
-| VCA      | Attack         | 0.1–50 ms                     | 1 ms     |
-| VCA      | Release        | 10–5000 ms                    | 100 ms   |
-| VCA      | Soft knee      | Off / On                      | Off      |
-| VCA      | Detector       | Adaptive / Classic            | Adaptive |
-| Comp     | Makeup         | −40 to +40 dB (Opto), −20 to +20 dB (FET / VCA) | 0 dB |
+| FET      | Attack         | 1.0–7.0, higher is faster     | 2.0      |
+| FET      | Release        | 1.0–7.0, higher is faster     | 3.0      |
+| FET      | Output (MAK)   | −20 to +20 dB                 | 0 dB     |
+| VCA      | Threshold (handle) | −55 to 0 dB               | −27 dB   |
+| VCA      | Compression (RAT) | 1.0:1 to INF               | about 4.2:1 |
+| VCA      | Output (MAK)   | −20 to +20 dB                 | 0 dB     |
 | Send 1–4 | Level          | OFF, or −59.9 to +6 dB                 | OFF      |
 | Send 1–4 | Pre/Post       | Pre / Post                    | Post     |
 | Pan      | Position       | −1.0 to +1.0                  | 0        |
@@ -3109,12 +3146,14 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | EQ MID | Gain         | ±9 dB         | 0 dB    |
 | EQ HF  | Gain         | ±9 dB         | 0 dB    |
 | Comp   | Enable       | Off / On      | Off     |
-| Comp   | Threshold    | −60 to 0 dB | 0 dB    |
-| Comp   | Ratio        | 1:1–10:1      | 4:1     |
-| Comp   | Attack       | 0.1–50 ms     | 10 ms   |
-| Comp   | Release      | 50–1000 ms    | 100 ms  |
-| Comp   | Auto release | Off / On      | On      |
-| Comp   | Makeup       | −10 to +20 dB | 0 dB    |
+| Comp   | Threshold    | −30 to +15 dB | 0 dB    |
+| Comp   | Ratio        | 2:1 / 4:1 / 10:1 | 2:1  |
+| Comp   | Attack       | 0.1ms / 0.3ms / 1ms / 3ms / 10ms / 30ms | 1ms |
+| Comp   | Release      | 0.1s / 0.3s / 0.6s / 1.2s / Auto | 0.3s |
+| Comp   | Make-up      | 0–20 dB       | 0 dB    |
+| Comp   | Mix          | 0–100%        | 100%    |
+| Comp   | Auto makeup  | Off / On      | Off     |
+| Comp   | Auto fade    | Off / On      | Off     |
 | Pan    | Position     | −1.0 to +1.0  | 0       |
 | Fader  | Level        | −∞ to +12 dB  | 0 dB    |
 | Mute   | On/Off       | Off / On      | Off     |
@@ -3143,12 +3182,14 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Program EQ   | HF Atten      | 0–10                       | 0       |
 | Program EQ   | HF Atten Freq | 5, 10, 20 kHz              | 10 kHz  |
 | Comp         | Enable        | Off / On                   | Off     |
-| Comp         | Threshold     | −60 to 0 dB              | 0 dB    |
-| Comp         | Ratio         | 1:1–10:1                   | 4:1     |
-| Comp         | Attack        | 0.1–50 ms                  | 10 ms   |
-| Comp         | Release       | 50–1000 ms                 | 100 ms  |
-| Comp         | Auto release  | Off / On                   | On      |
-| Comp         | Makeup        | −10 to +20 dB              | 0 dB    |
+| Comp         | Threshold     | −30 to +15 dB              | 0 dB    |
+| Comp         | Ratio         | 2:1 / 4:1 / 10:1           | 2:1     |
+| Comp         | Attack        | 0.1ms / 0.3ms / 1ms / 3ms / 10ms / 30ms | 1ms |
+| Comp         | Release       | 0.1s / 0.3s / 0.6s / 1.2s / Auto | 0.3s |
+| Comp         | Make-up       | 0–20 dB                    | 0 dB    |
+| Comp         | Mix           | 0–100%                     | 100%    |
+| Comp         | Auto makeup   | Off / On                   | Off     |
+| Comp         | Auto fade     | Off / On                   | Off     |
 | Master fader | Level         | −∞ to +12 dB               | 0 dB    |
 | Mono         | Off / On      | Off / On                   | Off     |
 
@@ -3174,7 +3215,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Phase     | Mono monitor                     | Off / On      | Off         |
 | Phase     | Reset                            | Clear minima and warnings |             |
 
-The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled.
+The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled: with fewer, all four play. Auto makeup is off by default. Every multiband setting is saved with the session.
 
 | Multiband control | Range | Default |
 | ----------------- | ----- | ------- |
@@ -3248,7 +3289,7 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 **Tape strip.** Dusk Studio's timeline canvas.
 
-**VCA compressor.** A compressor with a Voltage-Controlled Amplifier as the gain element. Clean, fast, with wide attack/release ranges and adjustable knee.
+**VCA compressor.** A compressor with a Voltage-Controlled Amplifier as the gain element. Clean and predictable; Multi-Comp 2's VCA has a threshold and a compression control and no attack or release control.
 
 ---
 

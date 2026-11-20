@@ -917,7 +917,7 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
     { answer ("Session needs a newer Dusk Studio", "OK", "an OPEN of a newer session format"); } });
     steps->push_back ({ 700, [&host, &ctx, failed]
     {
-        failed ("Session format 9999 is newer than supported format 11. Upgrade Dusk Studio to open",
+        failed ("Session format 9999 is newer than supported format 12. Upgrade Dusk Studio to open",
                 "an OPEN of a newer session format");
         host.closeStartupDialog();
         ctx.expect (host.clickFileMenu(), "the File menu is unavailable");

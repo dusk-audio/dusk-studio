@@ -252,22 +252,23 @@ ScenarioResult runTargets (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// Keeps a strip's format-7 EQ dials as they are now, restored after the
+// Keeps a strip's format-7 filter dials as they are now, restored after the
 // frequencies they pair with: cleanups run latest-registered first, so call
 // this before keeping the frequencies.
 void keepEqDials (ScenarioContext& ctx, ChannelStripParams& strip)
 {
-    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> words {};
-    for (size_t i = 0; i < words.size(); ++i) words[i] = strip.eqFreqDial[i].raw();
-    ctx.cleanup ([&strip, words]
+    const auto hpf = strip.hpfDial.raw(), lpf = strip.lpfDial.raw();
+    ctx.cleanup ([&strip, hpf, lpf]
     {
-        for (size_t i = 0; i < words.size(); ++i) strip.eqFreqDial[i].setRaw (words[i]);
+        strip.hpfDial.setRaw (hpf);
+        strip.lpfDial.setRaw (lpf);
     });
 }
 
-// A converted older session's band plays its format-7 dial until something
+// A converted older session's filter plays its format-7 dial until something
 // moves its frequency. A bound controller does, on the audio thread, and moves
-// only the band or filter it is bound to.
+// only the band or filter it is bound to. A band takes the marking the
+// controller gives over the knob's range.
 ScenarioResult runEqFreqDropsDial (ScenarioContext& ctx)
 {
     using EqFreq = ChannelStripParams::EqFreq;
@@ -275,38 +276,39 @@ ScenarioResult runEqFreqDropsDial (ScenarioContext& ctx)
     constexpr int kTrack = 6;
     auto& strip = session.track (kTrack).strip;
     keepEqDials (ctx, strip);
-    for (const auto f : { EqFreq::Hpf, EqFreq::Lf, EqFreq::Lm })
+    for (const auto f : { EqFreq::Hpf, EqFreq::Lpf, EqFreq::Lf })
         ctx.keep (strip.eqFreq (f));
     ctx.keep (strip.hpfEnabled);
     restoreBindings (ctx);
 
     const bool black = strip.eqBlackMode.load();
-    const auto dialOf = [&strip, black] (EqFreq f)
+    const auto dialOf = [black] (const LegacyEqDial& dial, const std::atomic<float>& freq)
     {
         float hz = 0.0f;
-        return strip.legacyDial (f).dialFor (strip.eqFreq (f), black, hz);
+        return dial.dialFor (freq, black, hz);
     };
-    strip.legacyDial (EqFreq::Hpf).set (40.0f, strip.hpfFreq.load(), black);
-    strip.legacyDial (EqFreq::Lf).set (100.0f, strip.lfFreq.load(), black);
-    strip.legacyDial (EqFreq::Lm).set (600.0f, strip.lmFreq.load(), black);
+    const auto hpfDial = [&strip, dialOf] { return dialOf (strip.hpfDial, strip.hpfFreq); };
+    const auto lpfDial = [&strip, dialOf] { return dialOf (strip.lpfDial, strip.lpfFreq); };
+    strip.hpfDial.set (40.0f, strip.hpfFreq.load(), black);
+    strip.lpfDial.set (12800.0f, strip.lpfFreq.load(), black);
 
     publish (session, { ccBinding (25, MidiBindingTarget::TrackEqFreq, packTrackEqBand (kTrack, 0)),
                         ccBinding (26, MidiBindingTarget::TrackHpfFreq, kTrack) });
     ctx.pump (1);
-    ctx.expect (dialOf (EqFreq::Lf) > 0.0f && dialOf (EqFreq::Lm) > 0.0f && dialOf (EqFreq::Hpf) > 0.0f,
-                "the dials did not hold before any controller moved");
+    ctx.expect (hpfDial() > 0.0f && lpfDial() > 0.0f, "the dials did not hold before any controller moved");
 
-    const float lfBefore = strip.lfFreq.load();
     ctx.pumpWithMidi (kInput, cc (1, 25, 90));
-    ctx.expect (std::abs (strip.lfFreq.load() - lfBefore) > 1.0f, "the bound CC did not move the LF band");
-    ctx.expect (strip.legacyDial (EqFreq::Lf).raw() == 0, "the bound CC kept the LF band's dial");
-    ctx.expect (dialOf (EqFreq::Lm) > 0.0f && dialOf (EqFreq::Hpf) > 0.0f,
-                "the LF band's CC dropped another band's dial");
+    const float marking = ChannelStripParams::kLfFreqMin
+        * std::exp (90.0f / 127.0f * std::log (ChannelStripParams::kLfFreqMax / ChannelStripParams::kLfFreqMin));
+    ctx.expect (std::abs (strip.lfFreq.load() - marking) < 0.01f,
+                "the bound CC put the LF band on " + std::to_string (strip.lfFreq.load())
+                    + ", not on the marking " + std::to_string (marking));
+    ctx.expect (hpfDial() > 0.0f && lpfDial() > 0.0f, "the LF band's CC dropped a filter's dial");
 
     ctx.pumpWithMidi (kInput, cc (1, 26, 64));
-    ctx.expect (strip.hpfEnabled.load() && strip.legacyDial (EqFreq::Hpf).raw() == 0,
+    ctx.expect (strip.hpfEnabled.load() && strip.hpfDial.raw() == 0,
                 "the bound HPF CC kept the filter's dial");
-    ctx.expect (dialOf (EqFreq::Lm) > 0.0f, "the HPF's CC dropped the LM band's dial");
+    ctx.expect (lpfDial() > 0.0f, "the HPF's CC dropped the LPF's dial");
     return ctx.verdict();
 }
 
@@ -327,7 +329,8 @@ ScenarioResult runMovesEngage (ScenarioContext& ctx)
     for (const auto f : { EqFreq::Hpf, EqFreq::Lm })
         ctx.keep (strip.eqFreq (f));
     for (auto* value : { &strip.lfGainDb, &strip.hfGainDb, &strip.hmQ,
-                         &strip.compFetThresholdDb, &strip.compFetOutput })
+                         &strip.comp.atom (CompParamId::FetInput),
+                         &strip.comp.atom (CompParamId::FetOutput) })
         ctx.keep (*value);
     for (auto* value : { &strip.eqEnabled, &strip.hpfEnabled, &strip.compEnabled,
                          &bus.eqEnabled, &bus.hpfEnabled })

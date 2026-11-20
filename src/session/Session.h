@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 #include "AtomicSnapshot.h"
+#include "CompParams.h"
 #include "MidiEvents.h"
 #include "MidiPlayback.h"
 #include "MidiBindings.h"
@@ -181,20 +182,18 @@ struct HardwareInsertParams
     mutable std::atomic<int>  pingResult  { -1 };
 };
 
-// Up to format 7 a channel EQ band's or filter's frequency was a dial position
-// of the 4K EQ core. The migrator stores the Hz that position played and keeps
-// the position here, because only the core's dial API plays it exactly: on a
-// flat stretch of the core's measured table the Hz API reads the band's Q and
-// the LF/LM, HM/HF pair interaction at the table's edge where the dial API read
-// them at the position, and the filters' shapes differ slightly anywhere.
+// Up to format 7 the channel HPF's and LPF's frequency was a dial position of
+// the 4K EQ core. The migrator stores the Hz that position played and keeps
+// the position here, because only the core's dial API plays it exactly: the
+// filters' shapes differ slightly between its two APIs anywhere.
 //
-// A dial plays only while its band's frequency and the strip's voicing are the
-// ones it was converted under: a write that moves the frequency also clears it
-// (ChannelStripParams::setEqFreq), and a voicing switch suspends it, so a knob
-// never shows one frequency while the band plays another. A suspended dial is
-// kept, saved included, so switching back plays it again. Dial, frequency and
-// voicing share one lock-free word, so a reader never pairs one write's dial
-// with another's frequency.
+// A dial plays only while its filter's frequency and the strip's voicing are
+// the ones it was converted under: a write that moves the frequency also
+// clears it (ChannelStripParams::setEqFreq), and a voicing switch suspends it,
+// so a knob never shows one frequency while the filter plays another. A
+// suspended dial is kept, saved included, so switching back plays it again.
+// Dial, frequency and voicing share one lock-free word, so a reader never
+// pairs one write's dial with another's frequency.
 class LegacyEqDial
 {
 public:
@@ -224,8 +223,8 @@ public:
         return dial;
     }
 
-    // The dial to drive the core with in voicing black, or 0 when the band or
-    // filter follows the Hz left in hz.
+    // The dial to drive the core with in voicing black, or 0 when the filter
+    // follows the Hz left in hz.
     float dialFor (const std::atomic<float>& freq, bool black, float& hz) const noexcept
     {
         bool dialBlack = false;
@@ -291,34 +290,37 @@ struct ChannelStripParams
     std::array<std::atomic<bool>, kNumAuxSends> auxSendPreFader {};
 
     // 4K-style EQ: HPF + 4-band parametric + LPF + Brown/Black mode.
-    // Frequencies are the Hz each plays: a filter's -3 dB point, a bell's
-    // centre, a shelf's corner. Sessions before format 8 stored the core's
-    // dial position here; migrateSession converts them and keeps the dial
-    // (eqFreqDial), and a converted value may sit past its knob's range (the
-    // k*Held* bounds).
+    // A filter's frequency is the Hz it plays, its -3 dB point. A band's is
+    // the console's frequency marking, the number 4K EQ 2's knob reads, which
+    // the core plays through its measured dial law, as the plug-in does: the
+    // frequency a band plays differs from its marking, and with the voicing.
+    // Sessions before format 8 stored the core's dial position for the filters
+    // too; migrateSession converts them to Hz and keeps the dial (hpfDial,
+    // lpfDial), and a converted HPF may sit past its knob's top
+    // (kHpfHeldMaxHz).
     std::atomic<bool>  hpfEnabled { false };
     std::atomic<float> hpfFreq    { 20.0f };
     std::atomic<bool>  lpfEnabled { false };
     std::atomic<float> lpfFreq    { 20000.0f };
     std::atomic<float> lfGainDb   { 0.0f };
-    std::atomic<float> lfFreq     { 100.0f };
+    std::atomic<float> lfFreq     { kLfFreqDefault };
     std::atomic<float> lmGainDb   { 0.0f };
-    std::atomic<float> lmFreq     { 600.0f };
+    std::atomic<float> lmFreq     { kLmFreqDefault };
     std::atomic<float> lmQ        { 0.7f };
     std::atomic<float> hmGainDb   { 0.0f };
-    std::atomic<float> hmFreq     { 2000.0f };
+    std::atomic<float> hmFreq     { kHmFreqDefault };
     std::atomic<float> hmQ        { 0.7f };
     std::atomic<float> hfGainDb   { 0.0f };
-    std::atomic<float> hfFreq     { 8000.0f };
+    std::atomic<float> hfFreq     { kHfFreqDefault };
     std::atomic<bool>  eqBlackMode { false };  // false = Brown (E-series), true = Black (G-series)
     // Auto-arms on first knob adjustment.
     std::atomic<bool>  eqEnabled   { false };
 
-    // The frequencies above by index, and the format-7 dial each may still
-    // play through (LegacyEqDial).
+    // The frequencies above by index.
     enum class EqFreq : int { Hpf = 0, Lpf, Lf, Lm, Hm, Hf };
     static constexpr int kNumEqFreqs = 6;
-    std::array<LegacyEqDial, kNumEqFreqs> eqFreqDial {};
+    // The format-7 dial each filter may still play through (LegacyEqDial).
+    LegacyEqDial hpfDial, lpfDial;
 
     std::atomic<float>& eqFreq (EqFreq f) noexcept
     {
@@ -337,16 +339,15 @@ struct ChannelStripParams
     {
         return const_cast<ChannelStripParams*> (this)->eqFreq (f);
     }
-    LegacyEqDial&       legacyDial (EqFreq f) noexcept       { return eqFreqDial[(size_t) f]; }
-    const LegacyEqDial& legacyDial (EqFreq f) const noexcept { return eqFreqDial[(size_t) f]; }
 
     // Every write of a new band or filter frequency goes through here, and
-    // drops the format-7 dial the band or filter played until now. Lock-free,
-    // for the audio thread's MIDI and control-surface writers too.
-    void setEqFreq (EqFreq f, float hz) noexcept
+    // drops the format-7 dial a filter played until now. Lock-free, for the
+    // audio thread's MIDI and control-surface writers too.
+    void setEqFreq (EqFreq f, float v) noexcept
     {
-        eqFreq (f).store (hz, std::memory_order_relaxed);
-        legacyDial (f).clear();
+        eqFreq (f).store (v, std::memory_order_relaxed);
+        if (f == EqFreq::Hpf) hpfDial.clear();
+        else if (f == EqFreq::Lpf) lpfDial.clear();
     }
 
     // A move of a band's gain, Q or frequency engages the EQ, from its knob, a
@@ -364,18 +365,18 @@ struct ChannelStripParams
     }
 
     // Returns whether the move engaged the EQ.
-    bool moveEqFreq (EqFreq f, float hz) noexcept
+    bool moveEqFreq (EqFreq f, float v) noexcept
     {
-        setEqFreq (f, hz);
+        setEqFreq (f, v);
         bool engages = true;
         if (f == EqFreq::Hpf)
         {
-            engages = hz > kHpfOffHz + 0.5f;
+            engages = v > kHpfOffHz + 0.5f;
             hpfEnabled.store (engages, std::memory_order_relaxed);
         }
         else if (f == EqFreq::Lpf)
         {
-            engages = hz < kLpfOffHz - 0.5f;
+            engages = v < kLpfOffHz - 0.5f;
             lpfEnabled.store (engages, std::memory_order_relaxed);
         }
         if (engages) eqEnabled.store (true, std::memory_order_release);
@@ -396,32 +397,7 @@ struct ChannelStripParams
     // does not, as a double-click on the threshold handle does not.
     void armComp() noexcept { compEnabled.store (true, std::memory_order_relaxed); }
 
-    // Opto (LA-2A style).
-    std::atomic<float> compOptoPeakRed { 0.0f };   // 0..100 %
-    std::atomic<float> compOptoGain    { 50.0f };  // 0..100 % (50 = unity)
-    std::atomic<bool>  compOptoLimit   { false };
-
-    // FET (1176 style).
-    std::atomic<float> compFetInput   { 0.0f };    // -20..40 dB (drive into detection)
-    std::atomic<float> compFetOutput  { 0.0f };    // -20..20 dB
-    std::atomic<float> compFetAttack  { 0.2f };    // 0.02..80 ms
-    std::atomic<float> compFetRelease { 400.0f };  // 50..1100 ms
-    std::atomic<int>   compFetRatio   { 0 };       // 0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All
-    // Adjustable FET threshold - donor's original was a hardcoded -10
-    // dBFS; defaulting here to the same value preserves saved-state
-    // behaviour for sessions written before fet_threshold existed.
-    std::atomic<float> compFetThresholdDb { -10.0f }; // -60..0 dB
-
-    // VCA (textbook).
-    std::atomic<float> compVcaThreshDb { 12.0f };   // -38..12 dB
-    std::atomic<float> compVcaRatio    { 4.0f };    // 1..120
-    std::atomic<float> compVcaAttack   { 1.0f };    // 0.1..50 ms
-    std::atomic<float> compVcaRelease  { 100.0f };  // 10..5000 ms
-    std::atomic<float> compVcaOutput   { 0.0f };    // -20..20 dB
-    // dbx 160X OverEasy parabolic soft knee.
-    std::atomic<bool>  compVcaOverEasy { false };
-    // false = Adaptive (donor's 35->5 ms RMS TC); true = Classic (fixed 10 ms).
-    std::atomic<bool>  compVcaDetectorClassic { false };
+    CompParams comp;
 
     // Engine writes liveFaderDb at the top of every block: Off mode
     // mirrors faderDb; Read mode carries lane value. ChannelStrip
@@ -466,19 +442,20 @@ struct ChannelStripParams
     static constexpr float kLpfMinHz   = 3000.0f;
     static constexpr float kLpfMaxHz   = 20000.0f;
     static constexpr float kLpfOffHz   = 20000.0f;
+    // A band's markings run between the ends of the core's measured table,
+    // which are 4K EQ 2's parameter ranges; the dial law plays flat past them.
+    // Its default is the plug-in's, the marking straight up.
     static constexpr float kLfFreqMin  = 30.0f,   kLfFreqMax = 450.0f;
     static constexpr float kLmFreqMin  = 200.0f,  kLmFreqMax = 2500.0f;
     static constexpr float kHmFreqMin  = 600.0f,  kHmFreqMax = 7000.0f;
     static constexpr float kHfFreqMin  = 1500.0f, kHfFreqMax = 16000.0f;
-    // What a stored frequency may hold: the knob's range widened to take
+    static constexpr float kLfFreqDefault = 200.0f,  kLmFreqDefault = 1000.0f;
+    static constexpr float kHmFreqDefault = 3000.0f, kHfFreqDefault = 8000.0f;
+    // What a stored HPF frequency may hold: the knob's range widened to take
     // every Hz a format-7 dial played, in either voicing, so a converted
     // session keeps its sound. A value past the knob sits on its end stop
     // until the knob moves. The LPF's knob range already covers its v7 reach;
     // its off end, like the HPF's, is where a filter that was on stops short.
-    static constexpr float kLfFreqHeldMin  = 30.0f,   kLfFreqHeldMax = 670.0f;
-    static constexpr float kLmFreqHeldMin  = 135.0f,  kLmFreqHeldMax = 2500.0f;
-    static constexpr float kHmFreqHeldMin  = 600.0f,  kHmFreqHeldMax = 8800.0f;
-    static constexpr float kHfFreqHeldMin  = 630.0f,  kHfFreqHeldMax = 16000.0f;
     static constexpr float kHpfHeldMaxHz   = 320.0f;
     static constexpr float kBandGainMin = -15.0f, kBandGainMax = 15.0f;
     static constexpr float kBandQMin = 0.4f, kBandQMax = 4.0f;
@@ -1273,7 +1250,7 @@ struct StagedTrack
     std::array<std::unique_ptr<std::vector<AutomationPoint>>, kNumAutomationParams> lanes;
 };
 
-// Bus comp = UniversalCompressor in Bus mode.
+// Bus comp = Multi-Comp 2's Bus mode, a CompStage::Bus MultiCompStage.
 struct BusParams
 {
     std::atomic<float> faderDb { 0.0f };
@@ -1316,14 +1293,8 @@ struct BusParams
     }
 
     std::atomic<bool>  compEnabled   { false };
-    std::atomic<float> compThreshDb  { 0.0f };
-    std::atomic<float> compRatio     { 4.0f };
-    std::atomic<float> compAttackMs  { 10.0f };
-    std::atomic<float> compReleaseMs { 100.0f };
-    // Donor's bus-comp choice param clamps non-discrete values to
-    // "Auto" anyway, so this matches what existing sessions hear.
-    std::atomic<bool>  compReleaseAuto { true };
-    std::atomic<float> compMakeupDb  { 0.0f };
+
+    CompParams comp;
 
     // Audio reads THESE (post-automation) so the Off/Read/Write/Touch
     // hand-off lives in the engine; BusStrip::updateGainTargets and the
@@ -1536,14 +1507,9 @@ struct MasterBusParams
     std::atomic<float> eqHfAttenFreq   { 10000.0f }; // discrete: 5k/10k/20k Hz
     std::atomic<float> eqOutputGainDb  { 0.0f };
 
-    // SSL-style bus comp.
     std::atomic<bool>  compEnabled    { false };
-    std::atomic<float> compThreshDb   { 0.0f };
-    std::atomic<float> compRatio      { 4.0f };
-    std::atomic<float> compAttackMs   { 10.0f };
-    std::atomic<float> compReleaseMs  { 100.0f };
-    std::atomic<bool>  compReleaseAuto { true };
-    std::atomic<float> compMakeupDb   { 0.0f };
+
+    CompParams comp;
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };
@@ -1574,14 +1540,10 @@ struct MasteringParams
     std::atomic<float> eqTubeDrive     { 0.3f };
     std::atomic<float> eqOutputGainDb  { 0.0f };
 
-    // Mastering tends slower / softer than bus comp; defaults reflect.
+    // The multiband compressor: its engage switch and Multi-Comp 2's
+    // Multiband parameters.
     std::atomic<bool>  compEnabled    { false };
-    std::atomic<float> compThreshDb   { 0.0f };
-    std::atomic<float> compRatio      { 2.0f };
-    std::atomic<float> compAttackMs   { 30.0f };
-    std::atomic<float> compReleaseMs  { 250.0f };
-    std::atomic<bool>  compReleaseAuto { true };
-    std::atomic<float> compMakeupDb   { 0.0f };
+    CompParams comp;
 
     // -0.3 dB ceiling matches streaming-platform headroom.
     std::atomic<bool>  limiterEnabled  { true };

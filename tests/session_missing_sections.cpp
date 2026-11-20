@@ -538,12 +538,11 @@ TEST_CASE ("loading a session without a mastering section resets the chain",
     m.eqTubeDrive    .store (0.9f);
     m.eqOutputGainDb .store (2.0f);
     m.compEnabled    .store (true);
-    m.compThreshDb   .store (-18.0f);
-    m.compRatio      .store (8.0f);
-    m.compAttackMs   .store (1.0f);
-    m.compReleaseMs  .store (500.0f);
-    m.compReleaseAuto.store (false);
-    m.compMakeupDb   .store (6.0f);
+    for (const auto id : compStageParams (CompStage::Multiband))
+    {
+        const auto& spec = compParamSpec (id);
+        m.comp.set (id, spec.hostDefault >= spec.hostMax ? spec.hostMin : spec.hostMax);
+    }
     m.limiterEnabled   .store (false);
     m.limiterDriveDb   .store (9.0f);
     m.limiterCeilingDb .store (-6.0f);
@@ -584,12 +583,11 @@ TEST_CASE ("loading a session without a mastering section resets the chain",
     REQUIRE_THAT (m.eqTubeDrive   .load(), WithinAbs (def.eqTubeDrive   .load(), 1e-6f));
     REQUIRE_THAT (m.eqOutputGainDb.load(), WithinAbs (def.eqOutputGainDb.load(), 1e-6f));
     REQUIRE (m.compEnabled.load() == def.compEnabled.load());
-    REQUIRE_THAT (m.compThreshDb  .load(), WithinAbs (def.compThreshDb  .load(), 1e-6f));
-    REQUIRE_THAT (m.compRatio     .load(), WithinAbs (def.compRatio     .load(), 1e-6f));
-    REQUIRE_THAT (m.compAttackMs  .load(), WithinAbs (def.compAttackMs  .load(), 1e-6f));
-    REQUIRE_THAT (m.compReleaseMs .load(), WithinAbs (def.compReleaseMs .load(), 1e-6f));
-    REQUIRE (m.compReleaseAuto.load() == def.compReleaseAuto.load());
-    REQUIRE_THAT (m.compMakeupDb  .load(), WithinAbs (def.compMakeupDb  .load(), 1e-6f));
+    for (const auto id : compStageParams (CompStage::Multiband))
+    {
+        CAPTURE (compParamSpec (id).symbol);
+        REQUIRE_THAT (m.comp.get (id), WithinAbs (def.comp.get (id), 1e-6f));
+    }
     REQUIRE (m.limiterEnabled.load() == def.limiterEnabled.load());
     REQUIRE_THAT (m.limiterDriveDb    .load(), WithinAbs (def.limiterDriveDb    .load(), 1e-6f));
     REQUIRE_THAT (m.limiterCeilingDb  .load(), WithinAbs (def.limiterCeilingDb  .load(), 1e-6f));
@@ -606,7 +604,7 @@ TEST_CASE ("loading a session without a mastering section resets the chain",
 // Mastering follows the master strip rather than the per-track fill: a section
 // that IS there describes the chain, and a key it omits keeps the live value.
 // Limiter and Phase keys reset when absent, including in older sessions with
-// a mastering section.
+// a mastering section, and so does the compressor.
 TEST_CASE ("a partial mastering section retains the keys it omits",
            "[session][serializer]")
 {
@@ -620,7 +618,8 @@ TEST_CASE ("a partial mastering section retains the keys it omits",
     m.eqEnabled       .store (true);
     m.eqLfBoost       .store (5.0f);
     m.eqOutputGainDb  .store (2.0f);
-    m.compRatio       .store (8.0f);
+    m.compEnabled     .store (true);
+    m.comp.set (compBandParam (0, CompBandField::Ratio), 0.9f);
     m.limiterCeilingDb.store (-6.0f);
     m.phase.bands.store (64);
     m.phase.q.store (8.0f);
@@ -633,7 +632,12 @@ TEST_CASE ("a partial mastering section retains the keys it omits",
     REQUIRE (SessionSerializer::load (s, target));
 
     const MasteringParams def;
-    REQUIRE_THAT (m.compRatio.load(), WithinAbs (6.0f, 1e-6f));
+    // The older session's comp_ratio never reached the multiband compressor, so
+    // its conversion plays the plug-in's band settings; comp_enabled is absent,
+    // so the switch takes its default.
+    REQUIRE_THAT (m.comp.get (compBandParam (0, CompBandField::Ratio)),
+                  WithinAbs (def.comp.get (compBandParam (0, CompBandField::Ratio)), 1e-6f));
+    REQUIRE (m.compEnabled.load() == def.compEnabled.load());
     // Past float range: unusable, so the model default rather than the file's
     // value or the live one.
     REQUIRE_THAT (m.eqOutputGainDb.load(), WithinAbs (def.eqOutputGainDb.load(), 1e-6f));

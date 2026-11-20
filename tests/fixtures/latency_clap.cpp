@@ -27,7 +27,8 @@ const clap_plugin_descriptor_t kDescriptor {
     "",
     "",
     "1.0.0",
-    "A look-ahead in samples that changes the latency the way CLAP allows: by restart",
+    "A look-ahead in samples that changes the latency the way CLAP allows: by restart; "
+    "a tone while a note is held",
     kFeatures
 };
 
@@ -38,6 +39,11 @@ const clap_plugin_descriptor_t kDescriptor {
 // Three switches make it misbehave the ways a host has to survive: asking for
 // a restart from inside activate(), asking on every block, and refusing to
 // activate again. A read-only counter reports how often activate() ran.
+//
+// It also takes notes, so it can stand as a MIDI track's instrument whose
+// latency moves while the transport rolls: while any key is held it adds a
+// square wave to its output, from the sample the note-on lands on to the
+// sample of the note-off, so a note left hanging keeps the track sounding.
 struct Instance
 {
     clap_plugin_t plugin {};
@@ -49,6 +55,9 @@ struct Instance
     bool askEveryBlock = false;
     bool refuseActivate = false;
     uint32_t activations = 0;
+    bool held[128] {};
+    uint32_t heldCount = 0;
+    uint32_t tonePhase = 0;
 };
 
 struct ParamRow
@@ -90,6 +99,22 @@ bool CLAP_ABI audioPortGet (const clap_plugin_t*, uint32_t index, bool isInput,
 }
 
 const clap_plugin_audio_ports_t kAudioPorts { audioPortCount, audioPortGet };
+
+uint32_t CLAP_ABI notePortCount (const clap_plugin_t*, bool isInput) { return isInput ? 1 : 0; }
+
+bool CLAP_ABI notePortGet (const clap_plugin_t*, uint32_t index, bool isInput,
+                           clap_note_port_info_t* info)
+{
+    if (! isInput || index != 0 || info == nullptr) return false;
+    *info = {};
+    info->id = 0;
+    info->supported_dialects = CLAP_NOTE_DIALECT_CLAP;
+    info->preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
+    std::snprintf (info->name, sizeof (info->name), "%s", "Notes");
+    return true;
+}
+
+const clap_plugin_note_ports_t kNotePorts { notePortCount, notePortGet };
 
 uint32_t CLAP_ABI latencyGet (const clap_plugin_t* plugin)
 {
@@ -173,6 +198,23 @@ void readInputEvents (Instance& instance, const clap_input_events_t* events)
     }
 }
 
+void playNote (Instance& instance, const clap_event_header_t* header)
+{
+    if (header->space_id != CLAP_CORE_EVENT_SPACE_ID) return;
+    const bool on = header->type == CLAP_EVENT_NOTE_ON;
+    if (! on && header->type != CLAP_EVENT_NOTE_OFF && header->type != CLAP_EVENT_NOTE_CHOKE)
+        return;
+    const auto* note = reinterpret_cast<const clap_event_note_t*> (header);
+    for (int key = 0; key < 128; ++key)
+    {
+        if (note->key >= 0 && note->key != key) continue;
+        if (instance.held[key] == on) continue;
+        instance.held[key] = on;
+        if (on) ++instance.heldCount;
+        else    --instance.heldCount;
+    }
+}
+
 void requestRestart (const Instance& instance)
 {
     if (instance.host != nullptr && instance.host->request_restart != nullptr)
@@ -223,7 +265,13 @@ bool CLAP_ABI pluginActivate (const clap_plugin_t* plugin, double, uint32_t, uin
 void CLAP_ABI pluginDeactivate (const clap_plugin_t*) {}
 bool CLAP_ABI pluginStart (const clap_plugin_t*) { return true; }
 void CLAP_ABI pluginStop (const clap_plugin_t*) {}
-void CLAP_ABI pluginReset (const clap_plugin_t*) {}
+void CLAP_ABI pluginReset (const clap_plugin_t* plugin)
+{
+    auto& instance = self (plugin);
+    for (auto& key : instance.held) key = false;
+    instance.heldCount = 0;
+    instance.tonePhase = 0;
+}
 
 clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
                                             const clap_process_t* process)
@@ -244,9 +292,32 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
     auto& instance = self (plugin);
     readInputEvents (instance, process->in_events);
 
-    for (uint32_t channel = 0; channel < 2; ++channel)
-        for (uint32_t frame = 0; frame < process->frames_count; ++frame)
-            out.data32[channel][frame] = in.data32[channel][frame];
+    // A square wave of 24-sample half-periods, 1 kHz at 48 kHz.
+    static constexpr float kToneLevel = 0.25f;
+    static constexpr uint32_t kHalfPeriod = 24;
+    const auto* events = process->in_events;
+    const uint32_t eventCount = events != nullptr && events->size != nullptr && events->get != nullptr
+                              ? events->size (events) : 0;
+    uint32_t nextEvent = 0;
+    for (uint32_t frame = 0; frame < process->frames_count; ++frame)
+    {
+        for (; nextEvent < eventCount; ++nextEvent)
+        {
+            const auto* header = events->get (events, nextEvent);
+            if (header == nullptr) continue;
+            if (header->time > frame) break;
+            playNote (instance, header);
+        }
+        float tone = 0.0f;
+        if (instance.heldCount > 0)
+            tone = (instance.tonePhase / kHalfPeriod) % 2 == 0 ? kToneLevel : -kToneLevel;
+        instance.tonePhase = instance.heldCount > 0 ? instance.tonePhase + 1 : 0;
+        for (uint32_t channel = 0; channel < 2; ++channel)
+            out.data32[channel][frame] = in.data32[channel][frame] + tone;
+    }
+    for (; nextEvent < eventCount; ++nextEvent)
+        if (const auto* header = events->get (events, nextEvent); header != nullptr)
+            playNote (instance, header);
 
     // request_restart is [thread-safe], so the audio thread may ask directly.
     askForRestart (instance);
@@ -258,6 +329,7 @@ const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
     if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
     if (std::strcmp (id, CLAP_EXT_PARAMS) == 0) return &kParams;
     if (std::strcmp (id, CLAP_EXT_LATENCY) == 0) return &kLatency;
+    if (std::strcmp (id, CLAP_EXT_NOTE_PORTS) == 0) return &kNotePorts;
     return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}

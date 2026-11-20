@@ -34,16 +34,16 @@
   #include "../engine/multisample/NativeMultisampleSlot.h"
 #endif
 
+#include "CompStageAlign.h"
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  // Framework-free donor cores. The strip drives the full comp feature set
-  // (Opto/FET/VCA) with the core's internal oversampling left off because the
-  // strip wraps EQ+Comp in its own StereoOversampler - running both would
-  // double-OS. The EQ likewise runs 1x internally inside that same wrap (its
-  // console saturation is the only saturating stage and the wrap band-limits it).
+  // The EQ is the framework-free donor core, run 1x internally inside the
+  // strip's own StereoOversampler (its console saturation is the only
+  // saturating stage there and the wrap band-limits it). The compressor is
+  // Multi-Comp 2, which oversamples itself and runs after the wrap.
   #include <dsp/FourKEQDSP.hpp>
-  #include <core/UniversalCompressorDSP.hpp>
+  #include "MultiCompStage.h"
 #endif
 
 namespace duskstudio
@@ -85,12 +85,46 @@ public:
     PluginSlot&       getPluginSlot()       noexcept { return pluginSlot; }
     const PluginSlot& getPluginSlot() const noexcept { return pluginSlot; }
 
-    // How far the always-oversampled EQ/comp stage delays the strip's output
-    // at the prepared factor, rounded; 0 at 1x.
+    // How far the always-oversampled EQ stage delays the strip's output at the
+    // prepared factor, rounded; 0 at 1x. The compressor stage's latency is the
+    // engine's, the same on every strip (see setCompStage).
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
+    // The strips' compressor stage (see CompStageClock), which the engine
+    // rewrites before each block's strip pass; read only inside that pass.
+    // Unbound, the stage is off and the compressor never runs.
+    void setCompStage (const CompStageBlock* stage) noexcept { compStage = stage; }
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // The compressor a block of that width runs, for its editor. Message thread.
+    MultiCompStage& getCompressor (bool stereo) noexcept { return stereo ? stereoComp : monoComp; }
+
+    // The width the strip last ran its compressor stage at: 1 mono, 2 stereo,
+    // 0 when it has not run since prepare. The track's mode does not settle it:
+    // a stereo track whose live R input does not resolve, or whose capture
+    // takes one side, runs mono. Any thread.
+    int compressorRunWidth() const noexcept { return compRunWidth.load (std::memory_order_relaxed); }
+
+    // The compressor the strip's editor draws, so its meters read the instance
+    // the audio thread runs: the one it last ran, or, before it has run, the
+    // one the track's mode (trackStereo) calls for. Message thread.
+    MultiCompStage& getEditorCompressor (bool trackStereo) noexcept
+    {
+        const int ran = compressorRunWidth();
+        return getCompressor (ran != 0 ? ran == 2 : trackStereo);
+    }
+#endif
     // The latency of the plug-in the insert runs in plug-in mode: a loaded
     // native or built-in instance, otherwise the JUCE slot's.
     int getInsertPluginLatencySamples() const noexcept;
+
+    // How many samples getLastProcessedMono trails the strip's input: the
+    // running insert's latency, the delay compensation the strip applies, the
+    // oversampled EQ and the compressor stage's latency. The compensation is
+    // the applied one, not a target still waiting for a silence, which a live
+    // input may never give it. The stage's is where its 20 ms fade is heading.
+    // Audio thread, between blocks.
+    int getProcessedLatencySamples() const noexcept;
 
     // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
     // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.
@@ -425,18 +459,17 @@ private:
     // fault on missing filter / envelope state.
     dusk::audio::PlanarBuffer tempStereoBuffer;
 
-    // Per-strip Dusk Studio-side oversampler wrapping (EQ + Comp). The donor
-    // EQ's always-on console saturation and the comp's saturation alias hard at
-    // native rate; the wrap moves the whole per-channel DSP to the oversampled
-    // rate so the half-band FIRs band-limit it before downsampling. One
-    // StereoOversampler serves both track widths: mono feeds channel 0 with a
-    // silent channel 1 (osMonoScratchR) and processes only channel 0 - the
-    // wasted R half-band FIR runs on silence, but avoids doubling the expensive
-    // EQ + comp work a duplicate-mono approach would incur, and no mono-only
-    // primitive exists.
+    // Per-strip Dusk Studio-side oversampler wrapping the EQ. The donor EQ's
+    // always-on console saturation aliases hard at native rate; the wrap moves
+    // it to the oversampled rate so the half-band FIRs band-limit it before
+    // downsampling. One StereoOversampler serves both track widths: mono feeds
+    // channel 0 with a silent channel 1 (osMonoScratchR) and processes only
+    // channel 0 - the wasted R half-band FIR runs on silence, but avoids
+    // doubling the EQ work a duplicate-mono approach would incur, and no
+    // mono-only primitive exists.
     dusk::audio::StereoOversampler oversampler;
     std::vector<float> osMonoScratchR;
-    int oversampleFactor = 1;    // 1 / 2 / 4 - drives the comp sub-chunk size
+    int oversampleFactor = 1;    // 1 / 2 / 4
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
@@ -587,46 +620,53 @@ private:
     // struct (no padding) value-init to zero so memcmp is byte-reliable, and
     // so a bypassed EQ's flat defaults (all bands 0 dB, filters off) are the
     // literal zero image.
-    // A *Dial field above 0 is a format-7 dial the band or filter plays
-    // through the core's dial API instead of its Hz (LegacyEqDial).
+    // A filter's *Dial above 0 is a format-7 dial it plays through the core's
+    // dial API instead of its Hz (LegacyEqDial). A band's frequency is its
+    // marking, always played through the dial API.
     struct EqSnapshot
     {
         float hpfEnabled = 0, hpfFreq = 0, hpfDial = 0, lpfEnabled = 0, lpfFreq = 0, lpfDial = 0;
-        float lfGain = 0, lfFreq = 0, lfDial = 0, lfBell = 0;
-        float lmGain = 0, lmFreq = 0, lmDial = 0, lmQ = 0;
-        float hmGain = 0, hmFreq = 0, hmDial = 0, hmQ = 0;
-        float hfGain = 0, hfFreq = 0, hfDial = 0, hfBell = 0;
+        float lfGain = 0, lfFreq = 0, lfBell = 0;
+        float lmGain = 0, lmFreq = 0, lmQ = 0;
+        float hmGain = 0, hmFreq = 0, hmQ = 0;
+        float hfGain = 0, hfFreq = 0, hfBell = 0;
         float eqType = 0, saturation = 0, inputGain = 0, outputGain = 0;
     };
-    static_assert (sizeof (EqSnapshot) == 26 * sizeof (float), "EqSnapshot must stay padding-free for memcmp");
+    static_assert (sizeof (EqSnapshot) == 22 * sizeof (float), "EqSnapshot must stay padding-free for memcmp");
     EqSnapshot lastEqParams {};
     static EqSnapshot eqSnapshotFor (const ChannelStripParams& params) noexcept;
     static void applyEqSnapshot (duskaudio::FourKEQDSP& core, const EqSnapshot& p) noexcept;
 
-    duskaudio::UniversalCompressorDSP compressor;
-
-    // 20 ms ramps for continuous params so knob drags don't zipper.
-    // Discrete params (mode, bypass, LIMIT, FET ratio) bypass. Their per-chunk
-    // published values feed the core's atomic setters (no APVTS atoms to cache
-    // - the core does not port the donor's analog-hiss stage, so the old
-    // noise_enable force-off is unnecessary).
-    dusk::audio::SmoothedValue<float> smoothedOptoPeakRed;
-    dusk::audio::SmoothedValue<float> smoothedOptoGain;
-    dusk::audio::SmoothedValue<float> smoothedFetInput;
-    dusk::audio::SmoothedValue<float> smoothedFetOutput;
-    dusk::audio::SmoothedValue<float> smoothedFetAttack;
-    dusk::audio::SmoothedValue<float> smoothedFetRelease;
-    dusk::audio::SmoothedValue<float> smoothedFetThreshold;
-    dusk::audio::SmoothedValue<float> smoothedVcaThresh;
-    dusk::audio::SmoothedValue<float> smoothedVcaRatio;
-    dusk::audio::SmoothedValue<float> smoothedVcaAttack;
-    dusk::audio::SmoothedValue<float> smoothedVcaRelease;
-    dusk::audio::SmoothedValue<float> smoothedVcaOutput;
-
-    void publishSmoothedCompParams (int numSamples) noexcept;
+    // The strip's width can change from one block to the next (a track's mode
+    // or its R input moves without a re-prepare), so it holds a compressor for
+    // each and runs the one the block's width calls for: a mono track pays for
+    // one channel. The other keeps its settings and catches up on the
+    // parameters when it next runs.
+    MultiCompStage monoComp   { CompStage::Strip };
+    MultiCompStage stereoComp { CompStage::Strip };
+    // The compressor stage on L (and R on a stereo block) in place: this
+    // block's width's compressor when engaged, the stage's plain delay when
+    // not, nothing while the stage's latency is off. Kept out of line, as
+    // parkGainSmoothers is.
+#if defined(_MSC_VER)
+    __declspec(noinline)
+#elif defined(__GNUC__)
+    __attribute__((noinline))
 #endif
+    void runCompressor (float* L, float* R, int numSamples, bool engaged) noexcept;
+#endif
+    CompStageAlign compAlign;
+    const CompStageBlock* compStage = nullptr;
+    const CompStageBlock& compStageBlock() const noexcept;
+    // Input-silent samples the strip must still run before its output has
+    // settled: the PDC delay, the oversampler's full FIR support and the
+    // compressor stage's tail.
+    std::int64_t silentTailDrainSamples() const noexcept;
 
     std::atomic<float> currentGrDb { 0.0f };
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    std::atomic<int> compRunWidth { 0 };
+#endif
     std::atomic<float> currentOutLDb { -100.0f };
     std::atomic<float> currentOutRDb { -100.0f };
     const float* lastProcessedPtr = nullptr;
@@ -656,6 +696,5 @@ private:
 #endif
     void parkGainSmoothers (int numSamples) noexcept;
     void updateEqParameters() noexcept;
-    void updateCompParameters() noexcept;
 };
 } // namespace duskstudio

@@ -1,0 +1,118 @@
+{
+  "version": 11,
+  "session_sample_rate": 48000.0,
+  "tracks": [
+    {
+      "name": "Opto vocal",
+      "comp": {
+        "enabled": true,
+        "mode_picked": true,
+        "mode": 0,
+        "opto_peak_red": 62.5,
+        "opto_gain": 70.0,
+        "opto_limit": true,
+        "fet_input": 6.0,
+        "fet_output": -6.0,
+        "fet_attack": 0.05,
+        "fet_release": 200.0,
+        "fet_ratio": 1,
+        "fet_threshold_db": -24.0,
+        "vca_thresh_db": -20.0,
+        "vca_ratio": 8.0,
+        "vca_attack": 5.0,
+        "vca_release": 250.0,
+        "vca_output": 3.0,
+        "vca_overeasy": true,
+        "vca_detector_classic": true
+      }
+    },
+    {
+      "name": "FET drums",
+      "comp": {
+        "enabled": false,
+        "mode_picked": true,
+        "mode": 1,
+        "opto_peak_red": 20.0,
+        "opto_gain": 30.0,
+        "opto_limit": false,
+        "fet_input": 20.0,
+        "fet_output": 2.0,
+        "fet_attack": 0.2,
+        "fet_release": 900.0,
+        "fet_ratio": 4,
+        "fet_threshold_db": -18.0,
+        "vca_thresh_db": -30.0,
+        "vca_ratio": 2.0,
+        "vca_attack": 0.5,
+        "vca_release": 1000.0,
+        "vca_output": -4.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": true
+      }
+    },
+    {
+      "name": "VCA bass",
+      "comp": {
+        "enabled": true,
+        "mode_picked": false,
+        "mode": 2,
+        "opto_peak_red": 80.0,
+        "opto_gain": 45.0,
+        "opto_limit": true,
+        "fet_input": -10.0,
+        "fet_output": 10.0,
+        "fet_attack": 2.0,
+        "fet_release": 50.0,
+        "fet_ratio": 3,
+        "fet_threshold_db": -40.0,
+        "vca_thresh_db": -6.0,
+        "vca_ratio": 120.0,
+        "vca_attack": 20.0,
+        "vca_release": 3000.0,
+        "vca_output": -12.0,
+        "vca_overeasy": true,
+        "vca_detector_classic": false
+      }
+    }
+  ],
+  "buses": [
+    {
+      "name": "Drum bus",
+      "comp_enabled": true,
+      "comp_thresh_db": -18.0,
+      "comp_ratio": 10.0,
+      "comp_attack_ms": 3.0,
+      "comp_release_ms": 600.0,
+      "comp_release_auto": false,
+      "comp_makeup_db": 4.5
+    },
+    {
+      "name": "Vocal bus",
+      "comp_enabled": false,
+      "comp_thresh_db": -30.0,
+      "comp_ratio": 5.0,
+      "comp_attack_ms": 1.0,
+      "comp_release_ms": 300.0,
+      "comp_release_auto": true,
+      "comp_makeup_db": 2.0
+    }
+  ],
+  "master": {
+    "comp_enabled": true,
+    "comp_thresh_db": -45.0,
+    "comp_ratio": 2.0,
+    "comp_attack_ms": 25.0,
+    "comp_release_ms": 300.0,
+    "comp_release_auto": false,
+    "comp_makeup_db": -4.0
+  },
+  "mastering": {
+    "comp_enabled": true,
+    "comp_thresh_db": -12.0,
+    "comp_ratio": 3.0,
+    "comp_attack_ms": 20.0,
+    "comp_release_ms": 400.0,
+    "comp_release_auto": false,
+    "comp_makeup_db": 2.0
+  }
+}

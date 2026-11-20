@@ -23,20 +23,20 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
 
 // Track-bound convenience: builds the per-mode Source from a Track& so
 // the channel-strip call sites don't change. The threshold hooks go
-// through the comp map, so the THR triangle, the comp editor's THRESHOLD
-// rotary, the MCU encoder and a bound CC all write the same param over the
-// same range. Double-click resets to the top of the mode's domain, which
-// is genuine "no compression" - 0 dB would leave VCA compressing anything
-// above 0 dBFS.
+// through the comp map's threshold role, so the triangle, the MCU encoder
+// and a bound CC all move the same parameter over the same travel: VCA's
+// threshold in dB, Opto's peak reduction and FET's input drive down the
+// meter's 60 dB. Double-click returns it to the plug-in's default.
 CompMeterStrip::CompMeterStrip (Track& t)
     : CompMeterStrip (Source {
           /*getInputDb*/   [&t] { return t.meterInputDb.load (std::memory_order_relaxed); },
           /*getGrDb*/      [&t] { return t.meterGrDb   .load (std::memory_order_relaxed); },
-          /*getThresholdDb*/ [&t] { return comp::trackCompThresholdDb (t.strip); },
-          /*setThresholdDb*/ [&t] (float db) { comp::applyTrackCompThresholdDb (t.strip, db); },
-          /*resetThreshold*/ [&t] { comp::resetTrackCompThreshold (t.strip); },
+          /*getThresholdDb*/ [&t] { return comp::trackThresholdAxisValue (t.strip); },
+          /*setThresholdDb*/ [&t] (float db) { comp::applyTrackThresholdAxisValue (t.strip, db); },
+          /*resetThreshold*/ [&t] { comp::resetTrackRole (t.strip, comp::Role::Threshold); },
           /*isEngaged*/      [&t] { return t.strip.compEnabled.load (std::memory_order_relaxed); },
           /*autoEnable*/     [&t] { t.strip.armComp(); },
+          /*bypass*/         [&t] { t.strip.compEnabled.store (false, std::memory_order_relaxed); },
       })
 {
 }
@@ -479,7 +479,14 @@ void CompMeterStrip::paint (juce::Graphics& g)
 
 void CompMeterStrip::mouseDown (const juce::MouseEvent& e)
 {
-    if (! showHandle) return;   // pure-GR mode - no threshold drag
+    // A right-click is the owner's menu.
+    if (e.mods.isPopupMenu()) return;
+    // A double-click arrives on its second release, after both of its presses
+    // have engaged the comp, so it puts back the state from before the first.
+    if (e.getNumberOfClicks() == 1)
+        bypassedBeforeGesture = src.isEngaged && ! src.isEngaged();
+    // pure-GR mode has no threshold drag.
+    if (! showHandle) return;
     // Hit area = union of bar + handle column so clicks land whichever
     // side the triangle is on. Without this, flipping handleOnRight=true
     // (channel-strip fader-side layout) broke drag because the old test
@@ -517,9 +524,11 @@ void CompMeterStrip::mouseUp (const juce::MouseEvent&)
     draggingThreshold = false;
 }
 
-void CompMeterStrip::mouseDoubleClick (const juce::MouseEvent&)
+void CompMeterStrip::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu()) return;
     if (src.resetThreshold) src.resetThreshold();
+    if (bypassedBeforeGesture && src.bypass) src.bypass();
     sampleControls();
     lookChanged();
     repaint();

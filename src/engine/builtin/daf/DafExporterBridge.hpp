@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <initializer_list>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -102,6 +103,13 @@ public:
     uint32_t height() const noexcept override { return ui.getHeight(); }
     uintptr_t nativeWindow() const noexcept override { return ui.getNativeWindowHandle(); }
 
+   #if DAF_PLUGIN_WANT_STATE
+    void stateChanged (const char* const key, const char* const value)
+    {
+        ui.stateChanged (key, value);
+    }
+   #endif
+
 private:
     static void editParamCallback (void* const ptr, const uint32_t index, const bool started)
     {
@@ -151,7 +159,9 @@ private:
 class ExporterBridge final : public duskstudio::builtin::DafPlugin
 {
 public:
-    ExporterBridge()
+    // hiddenSymbols names parameters the plug-in shows a host but its own editor
+    // does not, which Dusk Studio's control lists then leave out as well.
+    explicit ExporterBridge (std::initializer_list<const char*> hiddenSymbols = {})
         : exporter (stageConstruction(), nullptr, nullptr, nullptr)
     {
         const uint32_t count = exporter.getParameterCount();
@@ -168,7 +178,9 @@ public:
             d.maxValue     = ranges.max;
             d.defaultValue = ranges.def;
             d.isOutput     = (hints & kParameterIsOutput) != 0;
-            d.isHidden     = (hints & kParameterIsHidden) != 0;
+            d.isHidden     = (hints & kParameterIsHidden) != 0
+                          || std::any_of (hiddenSymbols.begin(), hiddenSymbols.end(),
+                                          [&d] (const char* symbol) { return d.symbol == symbol; });
             d.isBoolean    = (hints & kParameterIsBoolean) != 0;
             d.isInteger    = (hints & kParameterIsInteger) != 0;
 
@@ -225,6 +237,36 @@ public:
         exporter.setParameterValue (index, value);
     }
 
+    bool getParameterValueText (uint32_t index, float value, char* text,
+                                uint32_t capacity) const noexcept override
+    {
+        if (index >= descs.size() || text == nullptr || capacity == 0)
+            return false;
+        try
+        {
+            return exporter.getParameterValueText (index, value, text, capacity);
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool getParameterValueFromText (uint32_t index, const char* text,
+                                    float& value) const noexcept override
+    {
+        if (index >= descs.size() || text == nullptr)
+            return false;
+        try
+        {
+            return exporter.getParameterValueFromText (index, text, value);
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
     uint32_t getStateCount() const noexcept override
     {
         return (uint32_t) stateKeys.size();
@@ -238,6 +280,16 @@ public:
     const std::string& getStateDefaultValue (uint32_t index) const noexcept override
     {
         return stateDefaults[index];
+    }
+
+    bool isParameterSnapshotState (const std::string& key) const noexcept override
+    {
+       #if DAF_PLUGIN_WANT_STATE && DAF_PLUGIN_WANT_FULL_STATE
+        return exporter.isParameterSnapshotState (key.c_str());
+       #else
+        (void) key;
+        return false;
+       #endif
     }
 
     std::string getStateValue (const std::string& key) const override
@@ -315,6 +367,10 @@ public:
     uint32_t editorWidth() const noexcept override  { return kEditorWidth; }
     uint32_t editorHeight() const noexcept override { return kEditorHeight; }
 
+    // The plug-in object itself, for a bridge that reaches the plug-in's own
+    // host access functions.
+    void* instancePointer() const noexcept { return exporter.getInstancePointer(); }
+
     std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
         const uintptr_t nativeParent, const uint32_t width, const uint32_t height,
         const double scaleFactor, duskstudio::builtin::DafEditorCallbacks callbacks,
@@ -323,10 +379,17 @@ public:
        #if DUSKSTUDIO_DAF_UNIT_EDITOR
         try
         {
-            return std::unique_ptr<duskstudio::builtin::DafEditor> (
-                new ExporterEditor (std::move (callbacks), nativeParent,
-                                    exporter.getSampleRate(), exporter.getInstancePointer(),
-                                    width, height, scaleFactor));
+            auto editor = std::make_unique<ExporterEditor> (
+                std::move (callbacks), nativeParent, exporter.getSampleRate(),
+                exporter.getInstancePointer(), width, height, scaleFactor);
+           #if DAF_PLUGIN_WANT_STATE && DAF_PLUGIN_WANT_FULL_STATE
+            // An editor keeps its own copy of some state, DuskVerb 2's MIX LOCK
+            // for one, and learns it only by being told: the plug-in's format
+            // wrappers hand a new editor every state value, and so does this.
+            for (const auto& key : stateKeys)
+                editor->stateChanged (key.c_str(), exporter.getStateValue (key.c_str()).buffer());
+           #endif
+            return editor;
         }
         catch (const std::exception& error)
         {

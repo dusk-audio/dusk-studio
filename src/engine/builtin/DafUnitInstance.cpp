@@ -375,7 +375,10 @@ void DafUnitInstance::applyEditorState (const std::string& key, const std::strin
         // Stateful built-in bridges publish editor state atomically; run() may
         // sample it concurrently and never waits for this message-thread writer.
         plugin->setState (key, value);
-        refreshParamMirrors();
+        // Reading back the DSP after a metadata edit would discard knob values
+        // that are already visible to the editor but still queued for audio.
+        if (plugin->isParameterSnapshotState (key))
+            refreshParamMirrors();
         return;
     }
 }

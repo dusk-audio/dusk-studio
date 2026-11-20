@@ -20,10 +20,13 @@
 #include <vector>
 
 // Format 7 stored a channel EQ band's or filter's frequency as a dial position
-// of the 4K EQ core; format 8 stores the Hz it plays and the strips drive the
-// core's Hz API. A v7 session loads into the Hz its dials played, for the
-// knobs, and keeps each dial, which the strip plays through the core's dial
-// API until the frequency moves, so it sounds exactly as it did.
+// of the 4K EQ core. Formats 8 to 11 stored the Hz each played and kept the
+// dial beside it. Format 12 stores a band's frequency marking, which the strip
+// plays through the core's dial law as 4K EQ 2 plays its parameter, and a
+// filter's Hz. A v7 band's dial is its marking. A v7 filter loads at the Hz its
+// dial played and keeps the dial, which the strip plays through the core's dial
+// API until the frequency moves, so it sounds exactly as it did. A format 8 to
+// 11 band takes the dial it kept, or the marking that plays its Hz.
 
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
@@ -46,8 +49,8 @@ struct Bands
     float hpf = 0.0f, lpf = 0.0f;
 };
 
-// Dial positions inside each band's and filter's measured table, where the Hz
-// API plays exactly what the dial API played.
+// Dial positions inside each band's and filter's measured table, where the
+// filters' Hz API plays exactly what their dial API played.
 constexpr Bands kDials { 100.0f, 600.0f, 3000.0f, 10000.0f, 80.0f, 9000.0f };
 
 Json v7Session (bool black, const Bands& dials)
@@ -79,15 +82,54 @@ void write (const std::filesystem::path& file, const Json& document)
     REQUIRE (stream.good());
 }
 
-// The format-7 dial a strip plays f through, or 0 when it follows its Hz.
-float dialOf (const ChannelStripParams& strip, EqFreq f)
+Json read (const std::filesystem::path& file)
 {
-    float hz = 0.0f;
-    return strip.legacyDial (f).dialFor (strip.eqFreq (f), strip.eqBlackMode.load(), hz);
+    std::ifstream stream (file);
+    return Json::parse (stream, nullptr, false);
 }
 
-// only: the one band boosted or cut, or -1 for all four.
-std::vector<float> render (bool black, const Bands& bands, bool hz, int only = -1)
+// The format-7 dial a strip plays a filter through, or 0 when it follows its Hz.
+float dialOf (const ChannelStripParams& strip, EqFreq filter)
+{
+    float hz = 0.0f;
+    const auto& dial = filter == EqFreq::Hpf ? strip.hpfDial : strip.lpfDial;
+    return dial.dialFor (strip.eqFreq (filter), strip.eqBlackMode.load(), hz);
+}
+
+Bands stored (const ChannelStripParams& strip)
+{
+    return { strip.lfFreq.load(), strip.lmFreq.load(), strip.hmFreq.load(), strip.hfFreq.load(),
+             strip.hpfFreq.load(), strip.lpfFreq.load() };
+}
+
+// The marking a band's dial loads as: the dial, held at the ends of the core's
+// anchor table.
+float heldMarking (EQ::Band band, float dial)
+{
+    const float* anchors = EQ::frequencyControlAnchors (band);
+    return std::clamp (dial, anchors[0], anchors[EQ::kControlAnchorCount - 1]);
+}
+
+bool bitIdentical (const std::vector<float>& a, const std::vector<float>& b)
+{
+    return a.size() == b.size() && std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0;
+}
+
+double worstDifference (const std::vector<float>& a, const std::vector<float>& b)
+{
+    double worst = 0.0;
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        if (! std::isfinite (a[i]) || ! std::isfinite (b[i]))
+            return std::numeric_limits<double>::infinity();
+        worst = std::max (worst, (double) std::abs (a[i] - b[i]));
+    }
+    return worst;
+}
+
+// Every band through the dial API, and every filter too or, with filtersInHz,
+// through the Hz API. only: the one band boosted or cut, or -1 for all four.
+std::vector<float> render (bool black, const Bands& bands, bool filtersInHz, int only = -1)
 {
     EQ eq;
     eq.setOversampling (0);
@@ -101,19 +143,11 @@ std::vector<float> render (bool black, const Bands& bands, bool hz, int only = -
     eq.setLmGain (gain (1, -4.0f)); eq.setLmQ (1.2f);
     eq.setHmGain (gain (2, 5.0f));  eq.setHmQ (0.8f);
     eq.setHfGain (gain (3, 4.0f));  eq.setHfBell (false);
-    if (hz)
-    {
-        eq.setLfFreqHz (bands.lf); eq.setLmFreqHz (bands.lm);
-        eq.setHmFreqHz (bands.hm); eq.setHfFreqHz (bands.hf);
-    }
-    else
-    {
-        eq.setLfFreq (bands.lf); eq.setLmFreq (bands.lm);
-        eq.setHmFreq (bands.hm); eq.setHfFreq (bands.hf);
-    }
+    eq.setLfFreq (bands.lf); eq.setLmFreq (bands.lm);
+    eq.setHmFreq (bands.hm); eq.setHfFreq (bands.hf);
     eq.setHpfEnabled (bands.hpf > 0.0f);
     eq.setLpfEnabled (bands.lpf > 0.0f);
-    if (hz)
+    if (filtersInHz)
     {
         eq.setHpfFreqHz (bands.hpf); eq.setLpfFreqHz (bands.lpf);
     }
@@ -141,7 +175,7 @@ std::vector<float> render (bool black, const Bands& bands, bool hz, int only = -
 }
 } // namespace
 
-TEST_CASE ("A v7 session's EQ dial positions load as the Hz they played",
+TEST_CASE ("A v7 session's band dials load as their markings and its filter dials as the Hz they played",
            "[session][serializer][migration][eq]")
 {
     using duskstudio::Session;
@@ -157,86 +191,55 @@ TEST_CASE ("A v7 session's EQ dial positions load as the Hz they played",
         auto session = std::make_unique<Session>();
         REQUIRE (SessionSerializer::load (*session, file));
         const auto& strip = session->track (0).strip;
-        const Bands loaded { strip.lfFreq.load(), strip.lmFreq.load(),
-                             strip.hmFreq.load(), strip.hfFreq.load(),
-                             strip.hpfFreq.load(), strip.lpfFreq.load() };
+        const auto loaded = stored (strip);
 
-        CHECK_THAT (loaded.lf, WithinRel (EQ::hzForCalibratedEqControl (kDials.lf, EQ::Band::LF, black, false), 1.0e-6f));
-        CHECK_THAT (loaded.lm, WithinRel (EQ::hzForCalibratedEqControl (kDials.lm, EQ::Band::LM, black, true),  1.0e-6f));
-        CHECK_THAT (loaded.hm, WithinRel (EQ::hzForCalibratedEqControl (kDials.hm, EQ::Band::HM, black, true),  1.0e-6f));
-        CHECK_THAT (loaded.hf, WithinRel (EQ::hzForCalibratedEqControl (kDials.hf, EQ::Band::HF, black, false), 1.0e-6f));
+        CHECK_THAT (loaded.lf, WithinAbs (kDials.lf, 0.0));
+        CHECK_THAT (loaded.lm, WithinAbs (kDials.lm, 0.0));
+        CHECK_THAT (loaded.hm, WithinAbs (kDials.hm, 0.0));
+        CHECK_THAT (loaded.hf, WithinAbs (kDials.hf, 0.0));
         CHECK_THAT (loaded.hpf, WithinRel (EQ::hzForCalibratedFilterControl (kDials.hpf, true, black), 1.0e-6f));
         CHECK_THAT (loaded.lpf, WithinRel (EQ::hzForCalibratedFilterControl (kDials.lpf, false, black), 1.0e-6f));
         CHECK (strip.hpfEnabled.load());
         CHECK (strip.lpfEnabled.load());
-        // A migration that stored the dial unchanged would pass the checks
-        // above only if the dial law were the identity, which it is not.
-        CHECK (std::abs (loaded.hf - kDials.hf) > 1000.0f);
+        // A migration that kept the filter dials as their frequencies would
+        // pass the checks above only if the dial law were the identity.
         CHECK (std::abs (loaded.hpf - kDials.hpf) > 30.0f);
         CHECK (std::abs (loaded.lpf - kDials.lpf) > 1500.0f);
+        CHECK_THAT (dialOf (strip, EqFreq::Hpf), WithinAbs (kDials.hpf, 0.0));
+        CHECK_THAT (dialOf (strip, EqFreq::Lpf), WithinAbs (kDials.lpf, 0.0));
 
         const auto before = render (black, kDials, false);
         const auto after  = render (black, loaded, true);
-        double worst = 0.0;
-        for (size_t i = 0; i < before.size(); ++i)
-            worst = std::max (worst, (double) std::abs (before[i] - after[i]));
-        CHECK_THAT (worst, WithinAbs (0.0, 1.0e-6));
+        CHECK_THAT (worstDifference (before, after), WithinAbs (0.0, 1.0e-6));
 
         REQUIRE (SessionSerializer::save (*session, file));
-        std::ifstream stream (file);
-        const auto saved = Json::parse (stream, nullptr, false);
+        const auto saved = read (file);
         REQUIRE (saved.is_object());
-        CHECK (saved["version"].get<int>() == 11);
-        CHECK_THAT (saved["tracks"][0]["eq"]["hf"]["freq"].get<float>(), WithinRel (loaded.hf, 1.0e-6f));
+        CHECK (saved["version"].get<int>() == 12);
+        CHECK_THAT (saved["tracks"][0]["eq"]["hf"]["freq"].get<float>(), WithinAbs (kDials.hf, 0.0));
+        for (const char* band : { "lf", "lm", "hm", "hf" })
+            CHECK_FALSE (saved["tracks"][0]["eq"][band].contains ("freq_dial"));
         CHECK_THAT (saved["tracks"][0]["hpf"]["freq"].get<float>(), WithinRel (loaded.hpf, 1.0e-6f));
+        CHECK_THAT (saved["tracks"][0]["hpf"]["freq_dial"].get<float>(), WithinAbs (kDials.hpf, 0.0));
 
-        // A v8 file is already in Hz: loading it again must not convert twice.
+        // A format 12 file is converted already: loading it again must not
+        // convert twice.
         auto reloaded = std::make_unique<Session>();
         REQUIRE (SessionSerializer::load (*reloaded, file));
-        CHECK_THAT (reloaded->track (0).strip.lfFreq.load(), WithinRel (loaded.lf, 1.0e-6f));
-        CHECK_THAT (reloaded->track (0).strip.lmFreq.load(), WithinRel (loaded.lm, 1.0e-6f));
-        CHECK_THAT (reloaded->track (0).strip.hmFreq.load(), WithinRel (loaded.hm, 1.0e-6f));
-        CHECK_THAT (reloaded->track (0).strip.hfFreq.load(), WithinRel (loaded.hf, 1.0e-6f));
-        CHECK_THAT (reloaded->track (0).strip.hpfFreq.load(), WithinRel (loaded.hpf, 1.0e-6f));
-        CHECK_THAT (reloaded->track (0).strip.lpfFreq.load(), WithinRel (loaded.lpf, 1.0e-6f));
+        const auto again = stored (reloaded->track (0).strip);
+        CHECK_THAT (again.lf, WithinAbs (loaded.lf, 0.0));
+        CHECK_THAT (again.lm, WithinAbs (loaded.lm, 0.0));
+        CHECK_THAT (again.hm, WithinAbs (loaded.hm, 0.0));
+        CHECK_THAT (again.hf, WithinAbs (loaded.hf, 0.0));
+        CHECK_THAT (again.hpf, WithinRel (loaded.hpf, 1.0e-6f));
+        CHECK_THAT (again.lpf, WithinRel (loaded.lpf, 1.0e-6f));
     }
 }
 
-// Every Hz a v7 dial could play, over v7's own ranges in either voicing, has
-// to fit what the loader holds, or a converted session would move on load.
-TEST_CASE ("The held EQ ranges take every Hz a v7 dial played", "[session][migration][eq]")
+// Every Hz a v7 HPF dial could play, over v7's range in either voicing, has to
+// fit what the loader holds, or a converted session would move on load.
+TEST_CASE ("The held HPF range takes every Hz a v7 filter dial played", "[session][migration][eq]")
 {
-    using duskstudio::ChannelStripParams;
-    struct Band { EQ::Band band; bool bell; float v7Lo, v7Hi, heldLo, heldHi, knobLo, knobHi; };
-    const Band bands[] {
-        { EQ::Band::LF, false,   20.0f,   400.0f, ChannelStripParams::kLfFreqHeldMin, ChannelStripParams::kLfFreqHeldMax,
-          ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax },
-        { EQ::Band::LM, true,   100.0f,  4000.0f, ChannelStripParams::kLmFreqHeldMin, ChannelStripParams::kLmFreqHeldMax,
-          ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax },
-        { EQ::Band::HM, true,   600.0f, 13000.0f, ChannelStripParams::kHmFreqHeldMin, ChannelStripParams::kHmFreqHeldMax,
-          ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax },
-        { EQ::Band::HF, false, 1000.0f, 20000.0f, ChannelStripParams::kHfFreqHeldMin, ChannelStripParams::kHfFreqHeldMax,
-          ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax },
-    };
-    for (const auto& b : bands)
-    {
-        float lo = b.knobLo, hi = b.knobHi;
-        for (const bool black : { false, true })
-            for (int i = 0; i <= 2000; ++i)
-            {
-                const float dial = b.v7Lo * std::pow (b.v7Hi / b.v7Lo, (float) i / 2000.0f);
-                const float hz = EQ::hzForCalibratedEqControl (dial, b.band, black, b.bell);
-                lo = std::min (lo, hz);
-                hi = std::max (hi, hz);
-            }
-        CAPTURE ((int) b.band, lo, hi);
-        CHECK (b.heldLo <= lo);
-        CHECK (b.heldHi >= hi);
-        // An envelope, not a free pass: within 3% of what v7 reached.
-        CHECK (b.heldLo > 0.97f * lo);
-        CHECK (b.heldHi < 1.03f * hi);
-    }
-
     // The HPF's on side reaches past its knob in Black; its low side and both
     // LPF ends are the OFF positions a filter that was on stops short of.
     float hpfHi = ChannelStripParams::kHpfMaxHz, lpfLo = ChannelStripParams::kLpfMinHz;
@@ -252,19 +255,18 @@ TEST_CASE ("The held EQ ranges take every Hz a v7 dial played", "[session][migra
     CHECK (ChannelStripParams::kLpfMinHz <= lpfLo);
 }
 
-TEST_CASE ("A v7 EQ dial that played outside today's band range keeps its exact Hz",
+TEST_CASE ("A v7 band dial past today's knob loads at the knob's end and plays as it did",
            "[session][serializer][migration][eq]")
 {
-    using duskstudio::ChannelStripParams;
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    // Black LF at the old 400 top played about 660 Hz, black LM at the old 100
-    // bottom about 139 Hz, black HM at 13000 about 8.8 kHz and black HF at the
-    // old 1 kHz bottom about 637 Hz, all past today's knobs. Each loads at that
-    // Hz and plays what it played; its knob rests on the end stop until moved.
-    // A dial past v7's own range was clamped by the v7 loader before it played,
-    // so it converts from that clamp.
+    // Black LM at the old 100 bottom, HM at the old 13000 top and HF at the old
+    // 1 kHz bottom sit past today's knobs, where the core's dial law has
+    // already gone flat, so each loads at its knob's end and plays exactly
+    // what it played. LF at the old 400 top is on its knob. A dial past v7's
+    // own range was clamped by the v7 loader before it played, so it converts
+    // from that clamp.
     duskstudio::test::TempDirectory dir ("dusk-eq-dial-edges-");
     const auto file = dir.path() / "session.json";
     const Bands edges { 400.0f, 100.0f, 13000.0f, 1000.0f };
@@ -277,61 +279,35 @@ TEST_CASE ("A v7 EQ dial that played outside today's band range keeps its exact 
     auto session = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*session, file));
 
-    const auto& black = session->track (0).strip;
-    const Bands played { EQ::hzForCalibratedEqControl (edges.lf, EQ::Band::LF, true, false),
-                         EQ::hzForCalibratedEqControl (edges.lm, EQ::Band::LM, true, true),
-                         EQ::hzForCalibratedEqControl (edges.hm, EQ::Band::HM, true, true),
-                         EQ::hzForCalibratedEqControl (edges.hf, EQ::Band::HF, true, false) };
-    CHECK (played.lf > ChannelStripParams::kLfFreqMax);
-    CHECK (played.lm < ChannelStripParams::kLmFreqMin);
-    CHECK (played.hm > ChannelStripParams::kHmFreqMax);
-    CHECK (played.hf < ChannelStripParams::kHfFreqMin);
-    const Bands loaded { black.lfFreq.load(), black.lmFreq.load(), black.hmFreq.load(), black.hfFreq.load() };
-    CHECK_THAT (loaded.lf, WithinRel (played.lf, 1.0e-6f));
-    CHECK_THAT (loaded.lm, WithinRel (played.lm, 1.0e-6f));
-    CHECK_THAT (loaded.hm, WithinRel (played.hm, 1.0e-6f));
-    CHECK_THAT (loaded.hf, WithinRel (played.hf, 1.0e-6f));
-
-    // Each band plays what its dial played. Past the ends of the core's
-    // measured tables the Hz API holds the LF/LM and HM/HF pair corrections
-    // where the table ends, so two such bands boosted together are not
-    // bit-identical to the dial API; FourKEQDSP.hpp setLfFreqHz.
-    for (int band = 0; band < 4; ++band)
+    const auto held = stored (session->track (0).strip);
+    const Bands loaded { held.lf, held.lm, held.hm, held.hf };
+    CHECK_THAT (loaded.lf, WithinAbs (400.0f, 0.0));
+    CHECK_THAT (loaded.lm, WithinAbs (ChannelStripParams::kLmFreqMin, 0.0));
+    CHECK_THAT (loaded.hm, WithinAbs (ChannelStripParams::kHmFreqMax, 0.0));
+    CHECK_THAT (loaded.hf, WithinAbs (ChannelStripParams::kHfFreqMin, 0.0));
+    for (int band = -1; band < 4; ++band)
     {
         CAPTURE (band);
-        const auto before = render (true, edges, false, band);
-        const auto after  = render (true, loaded, true, band);
-        double worst = 0.0;
-        for (size_t i = 0; i < before.size(); ++i)
-            worst = std::max (worst, (double) std::abs (before[i] - after[i]));
-        CHECK_THAT (worst, WithinAbs (0.0, 1.0e-6));
+        CHECK (bitIdentical (render (true, edges, false, band), render (true, loaded, false, band)));
     }
 
     const auto& brown = session->track (1).strip;
-    CHECK_THAT (brown.lfFreq.load(), WithinRel (EQ::hzForCalibratedEqControl (20.0f, EQ::Band::LF, false, false), 1.0e-6f));
-    CHECK_THAT (brown.hfFreq.load(), WithinRel (EQ::hzForCalibratedEqControl (20000.0f, EQ::Band::HF, false, false), 1.0e-6f));
+    CHECK_THAT (brown.lfFreq.load(), WithinAbs (ChannelStripParams::kLfFreqMin, 0.0));
+    CHECK_THAT (brown.hfFreq.load(), WithinAbs (ChannelStripParams::kHfFreqMax, 0.0));
 
-    // Saved as held, and a v8 reload holds it again, with its dial.
     REQUIRE (SessionSerializer::save (*session, file));
     auto reloaded = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*reloaded, file));
-    const auto& again = reloaded->track (0).strip;
-    CHECK_THAT (again.lfFreq.load(), WithinRel (played.lf, 1.0e-6f));
-    CHECK_THAT (again.lmFreq.load(), WithinRel (played.lm, 1.0e-6f));
-    CHECK_THAT (again.hmFreq.load(), WithinRel (played.hm, 1.0e-6f));
-    CHECK_THAT (again.hfFreq.load(), WithinRel (played.hf, 1.0e-6f));
-    CHECK_THAT (dialOf (again, EqFreq::Lf), WithinAbs (edges.lf, 0.0));
-    CHECK_THAT (dialOf (again, EqFreq::Lm), WithinAbs (edges.lm, 0.0));
-    CHECK_THAT (dialOf (again, EqFreq::Hm), WithinAbs (edges.hm, 0.0));
-    CHECK_THAT (dialOf (again, EqFreq::Hf), WithinAbs (edges.hf, 0.0));
-    CHECK_THAT (dialOf (reloaded->track (1).strip, EqFreq::Lf), WithinAbs (20.0, 0.0));
-    CHECK_THAT (dialOf (reloaded->track (1).strip, EqFreq::Hf), WithinAbs (20000.0, 0.0));
+    const auto again = stored (reloaded->track (0).strip);
+    CHECK_THAT (again.lf, WithinAbs (loaded.lf, 0.0));
+    CHECK_THAT (again.lm, WithinAbs (loaded.lm, 0.0));
+    CHECK_THAT (again.hm, WithinAbs (loaded.hm, 0.0));
+    CHECK_THAT (again.hf, WithinAbs (loaded.hf, 0.0));
 }
 
 TEST_CASE ("A v7 filter at OFF stays off and one past today's range keeps its sound",
            "[session][serializer][migration][eq]")
 {
-    using duskstudio::ChannelStripParams;
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
@@ -410,11 +386,11 @@ TEST_CASE ("A v7 filter at OFF stays off and one past today's range keeps its so
 
 namespace
 {
-// Dials on a flat stretch of each measured table, where the Hz API reads the
-// band's Q and the pair interaction at the table's edge rather than at the
-// dial, and dials off them. The filters differ between the two APIs anywhere.
-constexpr Bands kFlatDials    {   25.0f, 3000.0f, 10000.0f, 17653.0f,  28.0f, 17000.0f };
-constexpr Bands kInsideDials  {  100.0f,  600.0f,  3000.0f, 10000.0f, 300.0f,  9000.0f };
+// Band dials past or at the ends of each band's measured table, which load at
+// their knob's end, and dials inside them. The filters' two APIs differ
+// anywhere, so every filter keeps its dial.
+constexpr Bands kEdgeDials   {   25.0f, 3000.0f, 10000.0f, 17653.0f,  28.0f, 17000.0f };
+constexpr Bands kInsideDials {  100.0f,  600.0f,  3000.0f, 10000.0f, 300.0f,  9000.0f };
 
 // Every band boosted or cut hard, so both pair interactions are in play.
 Json v7Strip (bool black, const Bands& d)
@@ -434,7 +410,7 @@ Json v7Strip (bool black, const Bands& d)
 
 struct DialTrack { bool black; Bands dials; };
 constexpr DialTrack kDialTracks[] {
-    { false, kFlatDials }, { true, kFlatDials }, { false, kInsideDials }, { true, kInsideDials },
+    { false, kEdgeDials }, { true, kEdgeDials }, { false, kInsideDials }, { true, kInsideDials },
 };
 
 Json v7DialSession()
@@ -445,21 +421,8 @@ Json v7DialSession()
     return document;
 }
 
-float originalDial (const Bands& d, EqFreq f)
-{
-    switch (f)
-    {
-        case EqFreq::Hpf: return d.hpf;
-        case EqFreq::Lpf: return d.lpf;
-        case EqFreq::Lf:  return d.lf;
-        case EqFreq::Lm:  return d.lm;
-        case EqFreq::Hm:  return d.hm;
-        case EqFreq::Hf:  break;
-    }
-    return d.hf;
-}
-
 constexpr EqFreq kAllFreqs[] { EqFreq::Hpf, EqFreq::Lpf, EqFreq::Lf, EqFreq::Lm, EqFreq::Hm, EqFreq::Hf };
+constexpr EqFreq kFilters[] { EqFreq::Hpf, EqFreq::Lpf };
 
 // A core set up as ChannelStrip::prepare sets up its own, at the rate the strip
 // runs it (the base rate times the oversampling factor), and handed the strip's
@@ -511,23 +474,11 @@ void setDials (EQ& eq, const Bands& d, int skip = -1)
     if (skip != (int) EqFreq::Hf)  eq.setHfFreq (d.hf);
 }
 
-bool bitIdentical (const std::vector<float>& a, const std::vector<float>& b)
-{
-    return a.size() == b.size() && std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0;
-}
-
-double worstDifference (const std::vector<float>& a, const std::vector<float>& b)
-{
-    double worst = 0.0;
-    for (size_t i = 0; i < a.size(); ++i)
-        worst = std::max (worst, (double) std::abs (a[i] - b[i]));
-    return worst;
-}
-
 // The strip's rates at 48 kHz: 1x and 4x Effect oversampling.
 constexpr double kStripRates[] { 48000.0, 192000.0 };
 
-// Every strip of a session loaded from v7DialSession plays its original dials.
+// Every strip of a session loaded from v7DialSession plays its original dials:
+// each band holds its dial as its marking, and each filter keeps its dial.
 void checkPlaysOriginalDials (const duskstudio::Session& session, const char* what)
 {
     for (size_t t = 0; t < std::size (kDialTracks); ++t)
@@ -535,8 +486,12 @@ void checkPlaysOriginalDials (const duskstudio::Session& session, const char* wh
         const auto& track = kDialTracks[t];
         const auto& strip = session.track ((int) t).strip;
         CAPTURE (what, t, track.black);
-        for (const auto f : kAllFreqs)
-            CHECK_THAT (dialOf (strip, f), WithinAbs (originalDial (track.dials, f), 0.0));
+        CHECK_THAT (dialOf (strip, EqFreq::Hpf), WithinAbs (track.dials.hpf, 0.0));
+        CHECK_THAT (dialOf (strip, EqFreq::Lpf), WithinAbs (track.dials.lpf, 0.0));
+        CHECK_THAT (strip.lfFreq.load(), WithinAbs (heldMarking (EQ::Band::LF, track.dials.lf), 0.0));
+        CHECK_THAT (strip.lmFreq.load(), WithinAbs (heldMarking (EQ::Band::LM, track.dials.lm), 0.0));
+        CHECK_THAT (strip.hmFreq.load(), WithinAbs (heldMarking (EQ::Band::HM, track.dials.hm), 0.0));
+        CHECK_THAT (strip.hfFreq.load(), WithinAbs (heldMarking (EQ::Band::HF, track.dials.hf), 0.0));
         for (const double rate : kStripRates)
         {
             CAPTURE (rate);
@@ -561,44 +516,34 @@ TEST_CASE ("A v7 session plays every band and filter through its original dial b
     REQUIRE (SessionSerializer::load (*session, file));
     checkPlaysOriginalDials (*session, "loaded");
 
-    // The knobs still read the Hz each dial played.
-    const auto& flatBrown = session->track (0).strip;
-    CHECK_THAT (flatBrown.hmFreq.load(), WithinRel (EQ::hzForCalibratedEqControl (kFlatDials.hm, EQ::Band::HM, false, true), 1.0e-6f));
-    CHECK_THAT (flatBrown.hfFreq.load(), WithinRel (EQ::hzForCalibratedEqControl (kFlatDials.hf, EQ::Band::HF, false, false), 1.0e-6f));
+    // The filters' knobs read the Hz each dial played, or stop a hertz short
+    // of OFF where it played past it.
+    const auto& insideBrown = session->track (2).strip;
+    CHECK_THAT (insideBrown.hpfFreq.load(), WithinRel (EQ::hzForCalibratedFilterControl (kInsideDials.hpf, true, false), 1.0e-6f));
+    CHECK_THAT (insideBrown.lpfFreq.load(), WithinRel (EQ::hzForCalibratedFilterControl (kInsideDials.lpf, false, false), 1.0e-6f));
+    const auto& edgeBrown = session->track (0).strip;
+    CHECK_THAT (edgeBrown.hpfFreq.load(), WithinAbs (ChannelStripParams::kHpfOffHz + 1.0f, 0.0));
+    CHECK_THAT (edgeBrown.lpfFreq.load(), WithinAbs (ChannelStripParams::kLpfOffHz - 1.0f, 0.0));
 
-    // What the dials are kept for: with the bands on flat stretches, their Hz
-    // through the Hz API is not what the dials played, by a lot at these gains.
-    for (const size_t t : { size_t (0), size_t (1) })
-    {
-        CAPTURE (t);
-        const auto& strip = session->track ((int) t).strip;
-        const auto reference = renderAsStrip (strip, 48000.0, [t] (EQ& eq) { setDials (eq, kDialTracks[t].dials); });
-        const auto inHz = renderAsStrip (strip, 48000.0, [&strip] (EQ& eq)
-        {
-            eq.setLfFreqHz (strip.lfFreq.load());   eq.setLmFreqHz (strip.lmFreq.load());
-            eq.setHmFreqHz (strip.hmFreq.load());   eq.setHfFreqHz (strip.hfFreq.load());
-        });
-        CHECK (worstDifference (inHz, reference) > 1.0e-3);
-    }
-
-    // Saved beside each Hz, reloaded, and still bit for bit.
+    // Saved with each filter's dial beside its Hz and each band's marking
+    // alone, reloaded, and still bit for bit.
     REQUIRE (SessionSerializer::save (*session, file));
     {
-        std::ifstream stream (file);
-        const auto saved = Json::parse (stream, nullptr, false);
+        const auto saved = read (file);
         REQUIRE (saved.is_object());
-        const auto& flat = saved["tracks"][0];
-        CHECK_THAT (flat["eq"]["hm"]["freq_dial"].get<double>(), WithinAbs (kFlatDials.hm, 0.0));
-        CHECK_THAT (flat["hpf"]["freq_dial"].get<double>(), WithinAbs (kFlatDials.hpf, 0.0));
-        CHECK_THAT (flat["eq"]["hm"]["freq"].get<float>(), WithinRel (flatBrown.hmFreq.load(), 1.0e-6f));
-        CHECK_FALSE (saved["tracks"][4]["eq"]["lf"].contains ("freq_dial"));
+        const auto& edge = saved["tracks"][0];
+        CHECK_THAT (edge["eq"]["hm"]["freq"].get<float>(), WithinAbs (ChannelStripParams::kHmFreqMax, 0.0));
+        CHECK_FALSE (edge["eq"]["hm"].contains ("freq_dial"));
+        CHECK_THAT (edge["hpf"]["freq_dial"].get<double>(), WithinAbs (kEdgeDials.hpf, 0.0));
+        CHECK_THAT (edge["hpf"]["freq"].get<float>(), WithinRel (edgeBrown.hpfFreq.load(), 1.0e-6f));
+        CHECK_FALSE (saved["tracks"][4]["hpf"].contains ("freq_dial"));
     }
     auto reloaded = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*reloaded, file));
     checkPlaysOriginalDials (*reloaded, "reloaded");
 }
 
-TEST_CASE ("Moving a converted band's frequency hands only that band to its Hz",
+TEST_CASE ("Moving a band or a converted filter changes only what it plays",
            "[session][migration][eq]")
 {
     using duskstudio::Session;
@@ -610,48 +555,51 @@ TEST_CASE ("Moving a converted band's frequency hands only that band to its Hz",
     auto session = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*session, file));
 
+    // A moved filter leaves its dial for its Hz; a moved band plays its new
+    // marking through the dial law. Nothing else changes.
     for (const auto moved : kAllFreqs)
     {
         CAPTURE ((int) moved);
         auto& strip = session->track (1).strip;
         const auto& dials = kDialTracks[1].dials;
-        const auto word = strip.legacyDial (moved).raw();
+        const auto hpfWord = strip.hpfDial.raw(), lpfWord = strip.lpfDial.raw();
         const float held = strip.eqFreq (moved).load();
-        const float hz = moved == EqFreq::Hpf ? 150.0f : moved == EqFreq::Lpf ? 12000.0f
+        const float to = moved == EqFreq::Hpf ? 150.0f : moved == EqFreq::Lpf ? 12000.0f
                        : moved == EqFreq::Lf  ? 120.0f : moved == EqFreq::Lm  ? 800.0f
                        : moved == EqFreq::Hm  ? 4000.0f : 9000.0f;
-        strip.setEqFreq (moved, hz);
+        strip.setEqFreq (moved, to);
 
-        for (const auto f : kAllFreqs)
-            CHECK_THAT (dialOf (strip, f), WithinAbs (f == moved ? 0.0f : originalDial (dials, f), 0.0));
-        CHECK (strip.legacyDial (moved).raw() == 0);
+        for (const auto f : kFilters)
+            CHECK_THAT (dialOf (strip, f), WithinAbs (f == moved ? 0.0f : f == EqFreq::Hpf ? dials.hpf : dials.lpf, 0.0));
         for (const double rate : kStripRates)
         {
             CAPTURE (rate);
-            const auto reference = renderAsStrip (strip, rate, [&dials, moved, hz] (EQ& eq)
+            const auto reference = renderAsStrip (strip, rate, [&dials, moved, to] (EQ& eq)
             {
                 setDials (eq, dials, (int) moved);
                 switch (moved)
                 {
-                    case EqFreq::Hpf: eq.setHpfFreqHz (hz); break;
-                    case EqFreq::Lpf: eq.setLpfFreqHz (hz); break;
-                    case EqFreq::Lf:  eq.setLfFreqHz (hz); break;
-                    case EqFreq::Lm:  eq.setLmFreqHz (hz); break;
-                    case EqFreq::Hm:  eq.setHmFreqHz (hz); break;
-                    case EqFreq::Hf:  eq.setHfFreqHz (hz); break;
+                    case EqFreq::Hpf: eq.setHpfFreqHz (to); break;
+                    case EqFreq::Lpf: eq.setLpfFreqHz (to); break;
+                    case EqFreq::Lf:  eq.setLfFreq (to); break;
+                    case EqFreq::Lm:  eq.setLmFreq (to); break;
+                    case EqFreq::Hm:  eq.setHmFreq (to); break;
+                    case EqFreq::Hf:  eq.setHfFreq (to); break;
                 }
             });
             CHECK (bitIdentical (renderAsStrip (strip, rate), reference));
         }
 
-        // Moved back onto the converted Hz, it stays on its Hz.
+        // A filter moved back onto its converted Hz stays on its Hz.
         strip.setEqFreq (moved, held);
-        CHECK_THAT (dialOf (strip, moved), WithinAbs (0.0, 0.0));
-        strip.legacyDial (moved).setRaw (word);
+        if (moved == EqFreq::Hpf || moved == EqFreq::Lpf)
+            CHECK_THAT (dialOf (strip, moved), WithinAbs (0.0, 0.0));
+        strip.hpfDial.setRaw (hpfWord);
+        strip.lpfDial.setRaw (lpfWord);
     }
 }
 
-TEST_CASE ("A converted dial plays only in the voicing it was converted in",
+TEST_CASE ("A converted filter dial plays only in the voicing it was converted in, and a band keeps its marking",
            "[session][migration][eq]")
 {
     using duskstudio::Session;
@@ -663,45 +611,67 @@ TEST_CASE ("A converted dial plays only in the voicing it was converted in",
     auto session = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*session, file));
 
-    // Brown's dial through Black would play neither the old sound nor what the
-    // knob shows; the switch plays the knob's Hz, and switching back the dial.
+    // A Brown filter dial through Black would play neither the old sound nor
+    // what the knob shows; the switch plays the knob's Hz, and switching back
+    // the dial. A band keeps its marking, which plays where Black's dial law
+    // puts it, as 4K EQ 2's knob does.
     auto& strip = session->track (0).strip;
+    const auto markings = stored (strip);
     strip.eqBlackMode.store (true);
-    for (const auto f : kAllFreqs)
+    for (const auto f : kFilters)
         CHECK_THAT (dialOf (strip, f), WithinAbs (0.0, 0.0));
+    const auto switched = stored (strip);
+    CHECK_THAT (switched.lf, WithinAbs (markings.lf, 0.0));
+    CHECK_THAT (switched.lm, WithinAbs (markings.lm, 0.0));
+    CHECK_THAT (switched.hm, WithinAbs (markings.hm, 0.0));
+    CHECK_THAT (switched.hf, WithinAbs (markings.hf, 0.0));
+    const auto black = renderAsStrip (strip, 48000.0);
+    const auto blackReference = renderAsStrip (strip, 48000.0, [&markings] (EQ& eq)
+    {
+        eq.setLfFreq (markings.lf); eq.setLmFreq (markings.lm);
+        eq.setHmFreq (markings.hm); eq.setHfFreq (markings.hf);
+        eq.setHpfFreqHz (markings.hpf); eq.setLpfFreqHz (markings.lpf);
+    });
+    CHECK (bitIdentical (black, blackReference));
     strip.eqBlackMode.store (false);
-    for (const auto f : kAllFreqs)
-        CHECK_THAT (dialOf (strip, f), WithinAbs (originalDial (kFlatDials, f), 0.0));
+    CHECK_THAT (dialOf (strip, EqFreq::Hpf), WithinAbs (kEdgeDials.hpf, 0.0));
+    CHECK_THAT (dialOf (strip, EqFreq::Lpf), WithinAbs (kEdgeDials.lpf, 0.0));
 
-    // A save while switched keeps each dial with the voicing it plays in: the
-    // reopened track plays its knobs' Hz in Black, and switched back to Brown
-    // plays its original dials bit for bit.
+    // A save while switched keeps each filter dial with the voicing it plays
+    // in: the reopened track plays its filters' Hz in Black, and switched back
+    // to Brown plays its original dials bit for bit.
     strip.eqBlackMode.store (true);
     REQUIRE (SessionSerializer::save (*session, file));
     {
-        std::ifstream stream (file);
-        const auto saved = Json::parse (stream, nullptr, false);
+        const auto saved = read (file);
         REQUIRE (saved.is_object());
         CHECK (saved["tracks"][0]["eq"]["type"] == "black");
-        CHECK (saved["tracks"][0]["eq"]["hm"]["freq_dial_type"] == "brown");
         CHECK (saved["tracks"][0]["hpf"]["freq_dial_type"] == "brown");
-        CHECK (saved["tracks"][1]["eq"]["hm"]["freq_dial_type"] == "black");
+        CHECK (saved["tracks"][1]["hpf"]["freq_dial_type"] == "black");
+        CHECK_FALSE (saved["tracks"][0]["eq"]["hm"].contains ("freq_dial_type"));
     }
     auto reloaded = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*reloaded, file));
     auto& reopened = reloaded->track (0).strip;
     REQUIRE (reopened.eqBlackMode.load());
-    for (const auto f : kAllFreqs)
+    for (const auto f : kFilters)
     {
         CAPTURE ((int) f);
         CHECK_THAT (dialOf (reopened, f), WithinAbs (0.0, 0.0));
-        CHECK (reopened.legacyDial (f).raw() != 0);
+        CHECK ((f == EqFreq::Hpf ? reopened.hpfDial : reopened.lpfDial).raw() != 0);
     }
     reopened.eqBlackMode.store (false);
     checkPlaysOriginalDials (*reloaded, "saved switched, reopened and switched back");
 }
 
-TEST_CASE ("A v8 file's EQ dial plays only beside the frequency the migrator kept it for",
+// Formats 8 to 11 stored each band's Hz, with the dial the v7 -> v8 step kept
+// beside it while the band still played it. A band carrying a dial the
+// migrator kept for its Hz in the track's voicing takes that dial as its
+// marking. Any other band, one whose dial a voicing switch suspended
+// included, takes the marking whose band the dial law plays where the Hz API
+// played the Hz in the track's voicing, held at the ends of the table. A filter keeps its Hz, and a dial only beside the
+// frequency the migrator kept it for.
+TEST_CASE ("A format 8 to 11 band takes its kept dial as its marking, or the marking that plays its Hz",
            "[session][serializer][migration][eq]")
 {
     using duskstudio::Session;
@@ -712,7 +682,7 @@ TEST_CASE ("A v8 file's EQ dial plays only beside the frequency the migrator kep
     write (legacy, v7DialSession());
     auto session = std::make_unique<Session>();
     REQUIRE (SessionSerializer::load (*session, legacy));
-    REQUIRE (dialOf (session->track (3).strip, EqFreq::Lf) > 0.0f);
+    REQUIRE (dialOf (session->track (3).strip, EqFreq::Hpf) > 0.0f);
 
     // What the migrator writes beside a Brown LF dial at 100, a Brown LM dial
     // at 600, a Black HM dial at 3000 and a Black HPF dial at 80.
@@ -739,6 +709,7 @@ TEST_CASE ("A v8 file's EQ dial plays only beside the frequency the migrator kep
               { "lpf", { { "enabled", true }, { "freq", 19999.6 }, { "freq_dial", 19999.6 } } } },
             // Dials no migrator kept: past v7's range, negative, zero, too
             // big for a float, unreadable, and missing (NaN is written null).
+            // HF at 9 kHz is past where Brown's dial law reaches.
             { { "eq", { { "type", "brown" },
                         { "lf", { { "freq", 300.0 }, { "freq_dial", 99999.0 } } },
                         { "lm", { { "freq", 700.0 }, { "freq_dial", -5.0 } } },
@@ -747,11 +718,12 @@ TEST_CASE ("A v8 file's EQ dial plays only beside the frequency the migrator kep
               { "hpf", { { "enabled", true }, { "freq", 90.0 }, { "freq_dial", 0.0 } } },
               { "lpf", { { "enabled", true }, { "freq", 9000.0 }, { "freq_dial", nullptr } } } },
             // Dials in range beside a frequency they did not play: 600 under
-            // a 700 Hz knob, which would play about 412 Hz; Black's HM dial
+            // a 700 Hz LM, which it would play near 412 Hz; Black's HM dial
             // beside Brown's Hz; a dial in neither voicing; an HPF dial at OFF
             // beside another OFF frequency; an LPF dial beside another's Hz.
-            { { "eq", { { "type", "brown" },
-                        { "lf", { { "freq", lf }, { "freq_dial", 100.0 }, { "freq_dial_type", "grey" } } },
+            // In Black, as the track's own voicing.
+            { { "eq", { { "type", "black" },
+                        { "lf", { { "freq", 150.0 }, { "freq_dial", 100.0 }, { "freq_dial_type", "grey" } } },
                         { "lm", { { "freq", 700.0 }, { "freq_dial", 600.0 } } },
                         { "hm", { { "freq", hmBrown }, { "freq_dial", 3000.0 }, { "freq_dial_type", "black" } } } } },
               { "hpf", { { "enabled", true }, { "freq", 20.0 }, { "freq_dial", 20.4 } } },
@@ -762,48 +734,81 @@ TEST_CASE ("A v8 file's EQ dial plays only beside the frequency the migrator kep
     write (file, document);
     REQUIRE (SessionSerializer::load (*session, file));
 
-    const auto keptDial = [] (const ChannelStripParams& strip, EqFreq f, bool& black)
-    {
-        float hz = 0.0f;
-        return strip.legacyDial (f).kept (strip.eqFreq (f), hz, black);
-    };
     const auto& kept = session->track (0).strip;
-    CHECK_THAT (dialOf (kept, EqFreq::Lf), WithinAbs (100.0, 0.0));
-    CHECK_THAT (dialOf (kept, EqFreq::Lm), WithinAbs (600.0, 0.0));
+    CHECK_THAT (kept.lfFreq.load(), WithinAbs (100.0, 0.0));
+    CHECK_THAT (kept.lmFreq.load(), WithinAbs (600.0, 0.0));
+    CHECK (kept.hmFreq.load() != 3000.0f);
+    CHECK_THAT (kept.hfFreq.load(), WithinAbs (ChannelStripParams::kHfFreqDefault, 0.0));
     CHECK_THAT (dialOf (kept, EqFreq::Lpf), WithinAbs (19999.6f, 0.0));
-    for (const auto f : { EqFreq::Hm, EqFreq::Hpf })
     {
-        CAPTURE ((int) f);
+        // Kept for Black on a Brown track: suspended until it switches.
+        float hz = 0.0f;
         bool black = false;
-        CHECK_THAT (dialOf (kept, f), WithinAbs (0.0, 0.0));
-        CHECK_THAT (keptDial (kept, f, black), WithinAbs (f == EqFreq::Hm ? 3000.0 : 80.0, 0.0));
+        CHECK_THAT (dialOf (kept, EqFreq::Hpf), WithinAbs (0.0, 0.0));
+        CHECK_THAT (kept.hpfDial.kept (kept.hpfFreq, hz, black), WithinAbs (80.0, 0.0));
         CHECK (black);
     }
 
-    for (const int t : { 1, 2 })
-        for (const auto f : kAllFreqs)
-        {
-            CAPTURE (t, (int) f);
-            CHECK (session->track (t).strip.legacyDial (f).raw() == 0);
-        }
-    CHECK_THAT (session->track (1).strip.lfFreq.load(), WithinAbs (300.0, 0.0));
-    CHECK_THAT (session->track (2).strip.lmFreq.load(), WithinAbs (700.0, 0.0));
-
-    // A track the file does not describe, and a band without the key, follow
-    // their Hz: nothing survives from the session loaded before.
-    for (const auto f : kAllFreqs)
+    // The marking whose band sits where the Hz API put a band asked for hz: a
+    // bell's design frequency is hz, and a shelf's the one the Hz API derives
+    // from its corner. Gain moves both alike, so the reference gain stands for
+    // all.
+    const auto playsHz = [] (float marking, float hz, EQ::Band band, bool black)
     {
-        CAPTURE ((int) f);
-        CHECK (session->track (3).strip.legacyDial (f).raw() == 0);
+        const bool bell = band == EQ::Band::LM || band == EQ::Band::HM;
+        const float played = EQ::calibratedEqFrequency (marking, EQ::kEqReferenceGainDb, band, black, bell);
+        const float asked = EQ::calibratedEqFrequencyForHz (hz, EQ::kEqReferenceGainDb, band, black, bell);
+        return std::abs (played - asked) <= 1.0e-4f * asked;
+    };
+    CHECK (playsHz (kept.hmFreq.load(), hmBlack, EQ::Band::HM, false));
+    const auto& unkept = session->track (1).strip;
+    CHECK (playsHz (unkept.lfFreq.load(), 300.0f, EQ::Band::LF, false));
+    CHECK (playsHz (unkept.lmFreq.load(), 700.0f, EQ::Band::LM, false));
+    CHECK (playsHz (unkept.hmFreq.load(), 3000.0f, EQ::Band::HM, false));
+    CHECK (EQ::hzForCalibratedEqControl (ChannelStripParams::kHfFreqMax, EQ::Band::HF, false, false) < 9000.0f);
+    CHECK_THAT (unkept.hfFreq.load(), WithinAbs (ChannelStripParams::kHfFreqMax, 0.0));
+    // Not the Hz kept as a marking: the law is not the identity.
+    CHECK (std::abs (unkept.lmFreq.load() - 700.0f) > 50.0f);
+
+    const auto& mismatched = session->track (2).strip;
+    CHECK (playsHz (mismatched.lfFreq.load(), 150.0f, EQ::Band::LF, true));
+    CHECK (playsHz (mismatched.lmFreq.load(), 700.0f, EQ::Band::LM, true));
+    CHECK (playsHz (mismatched.hmFreq.load(), hmBrown, EQ::Band::HM, true));
+    CHECK (std::abs (mismatched.lmFreq.load() - 600.0f) > 50.0f);
+
+    for (const int t : { 1, 2 })
+    {
+        CAPTURE (t);
+        CHECK (session->track (t).strip.hpfDial.raw() == 0);
+        CHECK (session->track (t).strip.lpfDial.raw() == 0);
     }
-    CHECK (kept.legacyDial (EqFreq::Hf).raw() == 0);
+    CHECK_THAT (session->track (1).strip.hpfFreq.load(), WithinAbs (90.0, 0.0));
+
+    // A track the file does not describe follows its Hz: nothing survives from
+    // the session loaded before.
+    CHECK (session->track (3).strip.hpfDial.raw() == 0);
+    CHECK (session->track (3).strip.lpfDial.raw() == 0);
+
+    // Saved as format 12: markings alone, with no dial beside any band.
+    REQUIRE (SessionSerializer::save (*session, file));
+    const auto saved = read (file);
+    REQUIRE (saved.is_object());
+    for (std::size_t t = 0; t < 3; ++t)
+        for (const char* band : { "lf", "lm", "hm", "hf" })
+        {
+            CAPTURE (t, band);
+            CHECK_FALSE (saved["tracks"][t]["eq"][band].contains ("freq_dial"));
+            CHECK_FALSE (saved["tracks"][t]["eq"][band].contains ("freq_dial_type"));
+        }
+    CHECK_THAT (saved["tracks"][0]["eq"]["lm"]["freq"].get<float>(), WithinAbs (600.0, 0.0));
 }
 
 // Every move of a band or filter, from its knob, a MIDI binding or a control
-// surface, goes through ChannelStripParams' move helpers: it drops the dial as
-// setEqFreq does and engages a bypassed EQ. A filter engages it once it leaves
-// OFF, and turned back to OFF it switches off and leaves the EQ as it is. A
-// load stores its values directly, so a session saved bypassed stays bypassed.
+// surface, goes through ChannelStripParams' move helpers: it drops a filter's
+// dial as setEqFreq does and engages a bypassed EQ. A filter engages it once
+// it leaves OFF, and turned back to OFF it switches off and leaves the EQ as
+// it is. A load stores its values directly, so a session saved bypassed stays
+// bypassed.
 TEST_CASE ("Moving a band or filter engages the channel EQ, and loading a session does not",
            "[session][eq]")
 {
@@ -814,13 +819,15 @@ TEST_CASE ("Moving a band or filter engages the channel EQ, and loading a sessio
     {
         CAPTURE ((int) f);
         ChannelStripParams strip;
-        strip.legacyDial (f).set (100.0f, strip.eqFreq (f).load(), false);
-        const float hz = f == EqFreq::Hpf ? 150.0f : f == EqFreq::Lpf ? 12000.0f
+        strip.hpfDial.set (100.0f, strip.hpfFreq.load(), false);
+        strip.lpfDial.set (9000.0f, strip.lpfFreq.load(), false);
+        const float to = f == EqFreq::Hpf ? 150.0f : f == EqFreq::Lpf ? 12000.0f
                        : f == EqFreq::Lf  ? 120.0f : f == EqFreq::Lm  ? 800.0f
                        : f == EqFreq::Hm  ? 4000.0f : 9000.0f;
-        CHECK (strip.moveEqFreq (f, hz));
-        CHECK_THAT (strip.eqFreq (f).load(), WithinAbs (hz, 0.0f));
-        CHECK (strip.legacyDial (f).raw() == 0);
+        CHECK (strip.moveEqFreq (f, to));
+        CHECK_THAT (strip.eqFreq (f).load(), WithinAbs (to, 0.0f));
+        CHECK ((strip.hpfDial.raw() == 0) == (f == EqFreq::Hpf));
+        CHECK ((strip.lpfDial.raw() == 0) == (f == EqFreq::Lpf));
         CHECK (strip.eqEnabled.load());
     }
 

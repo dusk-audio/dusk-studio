@@ -18,11 +18,15 @@ stable background.
 
 Remove **all** JUCE from Dusk Studio by 1.0, incrementally, tower by tower.
 The north-star metric is **JUCE modules unlinked from CMake**, not
-files-off-allowlist. Currently linked (11):
+files-off-allowlist. Currently linked into the app (10):
 
 `juce_audio_basics, juce_audio_devices, juce_audio_formats,
-juce_audio_processors, juce_core, juce_data_structures, juce_dsp,
+juce_audio_processors, juce_core, juce_data_structures,
 juce_events, juce_graphics, juce_gui_basics, juce_gui_extra`
+
+`juce_dsp` unlinked from the app when the mastering multiband moved to
+Multi-Comp 2 (H2, `feat/017-multi-comp-2`); the test binary still links it
+for the A/B parity tests against JUCE.
 
 `juce_audio_utils` unlinked on every platform once nothing used it (no
 production AudioThumbnail, device selector, keyboard or player consumer was
@@ -30,7 +34,7 @@ left). The app links `juce_audio_devices` on macOS and Windows only.
 
 A module leaves the link line only when its whole subsystem is reimplemented
 and every call site is flipped. `juce_core` unlinks last. The
-`tools/juce-gate.sh` ratchet (allowlist 155 files) is the file-level
+`tools/juce-gate.sh` ratchet (allowlist 152 files) is the file-level
 backstop, not the goal.
 
 Metric caveat: JUCE module declarations pull dependencies transitively —
@@ -122,8 +126,8 @@ count until the mac/win path is also reimplemented.
   prediction missed this). Mastering and region waveforms now use the native
   `WaveformSource`; no production AudioThumbnail consumer remains.
   `juce_audio_utils` has since unlinked from the app and the test binary.
-  `juce_audio_formats` still compiles into the app through `juce_dsp`'s
-  module dependency.
+  `juce_audio_formats` stays on the app's own link line; `juce_dsp`, whose
+  module declaration depended on it, no longer links into the app.
   Bench debts at spec §Owed. Spec:
   [audiofile-plan.md](audiofile-plan.md).
 
@@ -135,10 +139,11 @@ count until the mac/win path is also reimplemented.
    (Windows LV2 pending the H5 suil decision recorded in
    [hosting-plan.md](hosting-plan.md)); the whole JUCE
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
-   both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
-   Multiband UniversalCompressor -> framework-free donor port) are deleted. Unlinks
-   `juce_audio_processors` globally. `juce_audio_utils` is already gone;
-   `juce_audio_formats` stays until `juce_dsp` unlinks.
+   both remaining in-app JUCE donor processors (TapeMachine -> Tape Machine 2,
+   Multiband UniversalCompressor -> Multi-Comp 2, both DAF built-ins) are
+   deleted; both are done. Unlinks `juce_audio_processors` globally.
+   `juce_audio_utils` is already gone and `juce_dsp` has unlinked from the
+   app; `juce_audio_formats` is still on the app's link line.
    Multi-PR tower, phases H1-H6 in
    [hosting-plan.md](hosting-plan.md).
 2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on

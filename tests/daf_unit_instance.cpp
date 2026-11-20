@@ -126,6 +126,10 @@ public:
     {
         return stateDefaults[index];
     }
+    bool isParameterSnapshotState (const std::string& key) const noexcept override
+    {
+        return key == "engine";
+    }
     std::string getStateValue (const std::string& key) const override
     {
         for (std::size_t i = 0; i < stateKeys.size(); ++i)
@@ -544,10 +548,16 @@ TEST_CASE ("an editor state write reaches the plug-in and is saved with the unit
     REQUIRE (rig.fake->stateLog[0].key == "engine");
     REQUIRE (rig.fake->stateLog[0].value == "wide");
 
+    rig.unit->setParamValue (kGain, 0.4f);
+    editor.setState ("brightness", "0.875");
     std::vector<std::uint8_t> state;
     REQUIRE (rig.unit->saveState (state));
     const std::string text (state.begin(), state.end());
     REQUIRE (text.find (R"("engine":"wide")") != std::string::npos);
+    Rig reopened (true);
+    REQUIRE (reopened.unit->loadState (state));
+    REQUIRE (reopened.fake->getStateValue ("brightness") == "0.875");
+    REQUIRE_THAT (reopened.unit->getParamValue (kGain), WithinAbs (0.4, 1e-6));
 }
 
 TEST_CASE ("an editor state write refreshes the parameter mirrors",
