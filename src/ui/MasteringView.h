@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <memory>
+#include <optional>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -14,9 +15,6 @@
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 #include "../dsp/PhaseAnalyzer.h"
-#if DUSKSTUDIO_HAS_NATIVE_UI
- #include "imgui/CompEditorHost.h"
-#endif
 
 namespace duskstudio
 {
@@ -80,35 +78,40 @@ public:
         return waveform != nullptr ? waveform->shownFileForScenario() : std::filesystem::path();
     }
     auto targetPointForScenario() const { return masteringTargetCombo.getBounds().getCentre(); }
-    // The multiband preset picker sits inside the comp panel, so its centre is
-    // reported in this view's coordinates like every other scenario point.
-    auto compPresetPointForScenario() const
-    {
-        return getLocalPoint (&compPresetCombo, compPresetCombo.getLocalBounds().getCentre());
-    }
-    bool compPresetShownForScenario() const { return compPresetCombo.isShowing(); }
-    // Pixels of the multiband comp panel that nothing painted; -1 while the
-    // page is not on screen.
-    int unpaintedCompPanelPixelsForScenario();
-
-    // Multi-Comp 2's own Multiband face, over a dimmed window, as the strip,
-    // bus and master COMP labels open theirs: the slot is too narrow to show
-    // it at a readable size. Its BYPASS is the header's engage switch.
-    void openCompEditorPopup();
-    void closeCompEditorPopup();
-    bool isCompEditorOpen() const noexcept;
-    juce::Component* compHeaderForScenario() noexcept;
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
-    // Where the open editor sits in the window, in its logical pixels:
-    // x, y, width, height; empty while none is open.
-    std::vector<int> compEditorBoundsForScenario() const;
-   #endif
-    // How many of the three framework children are up, or -1 when this build has
+    // Another session was loaded or started: the multiband picker reads
+    // "Select preset..." again.
+    void sessionReplaced();
+    bool compDoubleClickForScenario (const std::string& control);
+    // The panel with this log tag ("mastering-eq", "mastering-comp",
+    // "mastering-limiter", "mastering-phase"), worked as the pointer works it.
+    bool panelPointerForScenario (const std::string& panel, const std::string& control, float position,
+                                  bool pressed, int modifiers);
+    bool panelCapturesKeyboardForScenario (const std::string& panel) const;
+    // Where the panel with this log tag sits, in `relativeTo`'s coordinates,
+    // whether or not it shows: x, y, width, height; empty for an unknown tag.
+    std::vector<int> panelAreaForScenario (const std::string& panel, const juce::Component& relativeTo) const;
+    int compPresetForScenario() const noexcept { return compPresetChoice; }
+    void restoreCompPresetForScenario (int choice) { compPresetChoice = choice; }
+    // x and y of the control in the last frame of the panel with this log tag,
+    // while it drew all of it clear of the others and the panel is shown; empty
+    // otherwise.
+    std::optional<std::array<float, 2>> controlForScenario (const std::string& panel, const std::string& control,
+                                                            float position) const;
+    bool compTypeForScenario (const std::string& text);
+    bool compCapturesKeyboardForScenario() const;
+    // How many of the four framework children are up, or -1 when this build has
     // no native panels to open.
     int nativePanelsOpenForScenario() const;
-    bool offerPhaseKey (const std::string& description, std::uint32_t character);
-    bool phaseKeyForScenario (const std::string& description);
+    // How many the page shows side by side in this build, or -1 without any.
+    static int nativePanelsExpectedForScenario();
+    // The narrowest window, in the top-level window's width, that shows every module
+    // side by side rather than one at a time.
+    int sideBySideWindowWidthForScenario() const;
+    // A key the shell received, for whichever native panel captures the keyboard.
+    bool offerPanelKey (const std::string& description, std::uint32_t character);
+    // A key as the display server would hand it to whichever native panel holds
+    // the keyboard; false when none does.
+    bool panelKeyForScenario (const std::string& description);
     bool phaseCapturesKeyboardForScenario() const;
     bool phaseHasKeyboardForScenario() const;
     bool phaseTypeForScenario (const std::string& text);
@@ -131,7 +134,7 @@ public:
         return label.findColour (decltype (lufsI)::backgroundColourId).getARGB();
     }
 
-    // Screenshot harness only. The stage's EQ, limiter and Phase panels are framework children,
+    // Screenshot harness only. The stage's EQ, compressor, limiter and Phase panels are framework children,
     // which the JUCE snapshot path cannot reach, so each reads its own steady frame back
     // into `dir` and reports where it belongs inside this view for the caller to paste
     // it into the snapshot.
@@ -150,6 +153,15 @@ private:
     void updateLabels (const std::string& rejectedPick = {});
     std::uint64_t labelSourceGeneration = 0;
 
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The panel with this log tag while its proxy shows and its window is open.
+    imgui::DuskPanelWindow* shownPanel (const std::string& panel) const;
+   #endif
+    // A press anywhere on the page, or in another panel, closes a list left open in
+    // a native panel, which would otherwise keep the keyboard from the shell.
+    struct PagePress;
+    void closePanelLists (const imgui::DuskPanelWindow* pressed = nullptr);
+
     // Open or close the native panels to match the stage. Coalesced onto the next
     // message-loop tick, because the visibility change that asks for one arrives from
     // inside an EmbeddedModal teardown, which is no place to build a GL context.
@@ -161,10 +173,6 @@ private:
     void doLoadLatestMixdown();
     void doExport();
     void openExportBrowser (int preset);
-
-    // The band overview under the preset picker, rebuilt when a multiband
-    // value changes; true when it did.
-    bool refreshCompOverview();
 
     Session& session;
     AudioEngine& engine;
@@ -187,10 +195,6 @@ private:
     DuskComboBox masteringTargetCombo;
     juce::Label    targetCaption;
 
-    // Multiband-comp preset picker in the comp panel header (donor DSP only).
-    juce::Label  compPresetCaption;
-    DuskComboBox compPresetCombo;
-
     juce::TextButton exportButton { "Export master..." };
 
     std::unique_ptr<WaveformDisplay>   waveform;
@@ -200,33 +204,25 @@ private:
     std::uint64_t phaseSourceGeneration = 0, phaseFeedGeneration = 0, phaseNextSequence = 0;
     bool phaseActive = false, phaseStreamValid = false;
 
-    // EQ = curve + band controls, Limiter = Waves L4-style; both are native framework
-    // children over the shell, placed on their proxy's rectangle. Each panel has its
-    // own ON toggle.
+    // The EQ, the compressor's controls, the limiter and Phase are native framework
+    // children over the shell, placed on their proxy's rectangle. Each module has its
+    // own engage switch.
    #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<imgui::DuskPanelWindow> eqWindow;
+    std::unique_ptr<imgui::DuskPanelWindow> compWindow;
     std::unique_ptr<imgui::DuskPanelWindow> limiterWindow;
     std::unique_ptr<imgui::DuskPanelWindow> phaseWindow;
     NativePanelProxy eqProxy;
+    NativePanelProxy compProxy;
     NativePanelProxy limiterProxy;
     NativePanelProxy phaseProxy;
     bool nativeSyncPending = false;
    #endif
 
-    // The comp slot: the split header (status light = engage, label = the
-    // editor), the preset picker and a read-only overview of the bands.
-    std::unique_ptr<juce::Component>              compPanelWrapper;
-    std::unique_ptr<class SplitModuleButton>      compHeaderBtn;
-    std::vector<std::string> compOverview;
-    std::uint64_t compOverviewSignature = 0;
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    imgui::DafEditorHost::Geometry compEditorGeometry();
-    void finishCompEditorClose();
-    std::unique_ptr<imgui::CompEditorHost> compEditor;
-    std::unique_ptr<class DimOverlay> compEditorDim;
-    PluginEditorHider compEditorHider;
-    std::vector<int> compEditorBounds;
-   #endif
+    // The multiband preset last picked, 0 for none: the picker keeps showing its
+    // name until another session loads, however often the panel's window reopens.
+    int compPresetChoice = 0;
+    std::unique_ptr<PagePress> pagePress;
 
     EmbeddedModal exportModal;
 };

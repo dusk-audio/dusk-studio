@@ -71,7 +71,7 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-The C++ suite declares 2292 Catch2 test cases across 330 test source files.
+The C++ suite declares 2307 Catch2 test cases across 331 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -139,10 +139,10 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 - **DSP** comes from the Dusk Audio plugin suite (4K EQ 2, Multi-Comp 2,
   Multi-Q, Tape Machine 2, shared AnalogEmulation), so the mixer and the
   standalone plugins share one DSP source of truth. The channel EQ runs the 4K
-  EQ 2 engine. Every compressor runs Multi-Comp 2 with the plugin's own editor:
-  Opto, FET and VCA on the strips, Bus on the buses and the master, Multiband
-  in mastering. The master tape runs Tape Machine 2 with the plugin's own
-  editor.
+  EQ 2 engine. Every compressor runs Multi-Comp 2: Opto, FET and VCA on the
+  strips and Bus on the buses and the master, each with the plugin's own
+  editor, and Multiband in mastering, with every control on the MASTERING page.
+  The master tape runs Tape Machine 2 with the plugin's own editor.
 - **Built-in units** are compiled into the application, so they need no scan and
   work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and
   Sunset. DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset show the plugin's
@@ -187,7 +187,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 2292 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 2307 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec

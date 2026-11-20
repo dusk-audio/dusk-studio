@@ -511,7 +511,7 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
     ctx.waitUntil ([&host]
                    {
                        const int open = host.masteringPanelsOpen();
-                       return open < 0 || open == 3;
+                       return open < 0 || open == host.masteringPanelsExpected();
                    }, 15000,
                    [&host, &ctx]
     {
@@ -520,42 +520,39 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
             ctx.complete (ScenarioResult::skip ("this build has no native mastering panels"));
             return;
         }
+        // The preset list opens inside the compressor's own panel: nothing on the
+        // page steps aside for it, Escape closes it, and it opens again.
         auto steps = std::make_shared<std::vector<Step>>();
+        const auto click = [&host, &ctx, steps] (const char* what)
+        {
+            steps->push_back ({ 100, [&host, &ctx, what]
+            { ctx.expect (host.masteringPanelPointer ("mastering-comp", "comp_preset", 0.5f, true), std::string ("no preset picker to ") + what); } });
+            steps->push_back ({ 60, [&host, &ctx, what]
+            { ctx.expect (host.masteringPanelPointer ("mastering-comp", "comp_preset", 0.5f, false), std::string ("no preset picker to ") + what); } });
+        };
+        const auto listOpen = [&host] { return host.masteringCompCapturesKeyboard(); };
+        // The panels settle into the widened window before the first click.
+        steps->push_back ({ 300, [] {}, [&host]
+        { return host.masteringControl ("mastering-comp", "comp_preset").has_value(); },
+           "the multiband panel never drew its preset picker" });
+        click ("open");
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (host.masteringPanelsOpen() == host.masteringPanelsExpected() && host.panelFrames ("mastering-comp").has_value(),
+                        "the open preset list took a native mastering panel down");
+            ctx.expect (host.pressPeerKey ("escape"), "the preset list did not handle Escape");
+        }, listOpen, "the preset picker did not open its list" });
+        steps->push_back ({ 0, [] {}, [listOpen] { return ! listOpen(); }, "Escape left the preset list open" });
+        click ("reopen");
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (host.masteringPanelsOpen() == host.masteringPanelsExpected(), "reopening the preset list took a native panel down");
+            ctx.expect (host.pressPeerKey ("escape"), "the reopened preset list did not handle Escape");
+        }, [&host, listOpen] { return listOpen() && host.masteringPanelsOpen() == host.masteringPanelsExpected(); },
+           "the preset list did not reopen" });
         steps->push_back ({ 100, [&host, &ctx]
-        {
-            if (! host.clickMasteringCompPreset())
-                ctx.complete (ScenarioResult::skip ("this build lays out no multiband preset picker"));
-        } });
-        // A hidden panel goes down on the next tick after the popup opens, so
-        // the checks sit far enough behind each click to catch it.
-        steps->push_back ({ 400, [&host, &ctx]
-        {
-            ctx.expect (host.masteringPanelsOpen() == 3,
-                        "the open preset popup took a native mastering panel down");
-            ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not handle Escape");
-        }, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
-                           "the preset picker did not receive keyboard focus" });
-        steps->push_back ({ 400, [&host, &ctx]
-        {
-            ctx.expect (host.masteringPanelsOpen() == 3,
-                        "a native mastering panel did not survive the preset popup");
-            ctx.expect (host.clickMasteringCompPreset(), "the preset picker could not reopen after Escape");
-        }, [&host] { return host.modalStackEmpty(); }, "Escape left the preset popup open" });
-        steps->push_back ({ 100, [&host] { host.closeTopModal(); },
-                           [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
-                           "the preset picker did not reopen after Escape" });
-        steps->push_back ({ 100, [&host, &ctx]
-        {
-            ctx.expect (host.clickMasteringCompPreset(), "the generically closed preset picker is unavailable");
-        }, [&host] { return host.modalStackEmpty(); }, "generic close left the preset picker open" });
-        steps->push_back ({ 100, [&host, &ctx]
-        {
-            ctx.expect (host.masteringPanelsOpen() == 3, "reopening the preset picker closed a native panel");
-            ctx.expect (host.pressPeerKey ("escape"), "the reopened preset picker did not handle Escape");
-        }, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
-                           "the generically closed preset picker did not reopen" });
-        steps->push_back ({ 100, [] {}, [&host] { return host.modalStackEmpty(); },
-                           "Escape left the reopened preset picker open" });
+        { ctx.expect (host.masteringPanelsOpen() == host.masteringPanelsExpected(), "closing the preset list took a native panel down"); },
+            [listOpen] { return ! listOpen(); }, "Escape left the reopened preset list open" });
         runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     },
     "the native mastering panels never opened");
@@ -601,12 +598,14 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
     ctx.keep (params.phase.bands);
     ctx.keep (params.phase.q);
     ctx.keep (params.phase.averagingMs);
+    ctx.keep (params.phase.enabled);
     ctx.keep (params.eqEnabled);
     ctx.keep (params.compEnabled);
     ctx.keep (params.limiterEnabled);
     params.phase.bands.store (4);
     params.phase.q.store (0.25f);
     params.phase.averagingMs.store (50.0f);
+    params.phase.enabled.store (true);
     params.eqEnabled.store (false);
     params.compEnabled.store (false);
     params.limiterEnabled.store (false);
@@ -634,7 +633,7 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
     {
         if (host.masteringPanelsOpen() < 0) return true;
         const auto* report = host.masteringPhaseReport();
-        return host.masteringPanelsOpen() == 3 && report != nullptr && report->settings.bands == 4
+        return host.masteringPanelsOpen() == host.masteringPanelsExpected() && report != nullptr && report->settings.bands == 4
             && std::abs (report->settings.q - 0.25f) < 1.0e-5f
             && std::abs (report->settings.averagingMs - 50.0f) < 1.0e-3f
             && ! report->broadband.minimumValid && ! report->broadband.flagged;
@@ -670,7 +669,7 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
                 ctx.expect (report != nullptr && report->broadband.minimumValid && report->broadband.flagged
                             && report->broadband.minimumCorrelation < -0.99,
                             "native child recreation lost held phase evidence");
-            }, [&host] { return host.masteringPanelsOpen() == 3; }, "mastering children did not reopen" });
+            }, [&host] { return host.masteringPanelsOpen() == host.masteringPanelsExpected(); }, "mastering children did not reopen" });
             const auto click = [&] (std::string control, float position = 0.5f, int modifiers = 0)
             {
                 steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
@@ -693,6 +692,39 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
             click ("mono");
             steps->push_back ({ 100, [&ctx]
             { ctx.expect (ctx.engine().getMasteringMonoMonitor(), "Mono control did not change the live monitor"); } });
+            // The header's light switches the module: off, nothing is analysed and
+            // the Mono fold lets go and cannot be ticked; held results stay. On
+            // again, a fresh analysis starts and Mono stays off.
+            auto analysed = std::make_shared<std::uint64_t> (0);
+            click ("header");
+            steps->push_back ({ 100, [&host, &ctx, analysed]
+            {
+                ctx.expect (! ctx.session().mastering().phase.enabled.load(), "the PHASE light did not switch the module off");
+                ctx.expect (! ctx.engine().getMasteringMonoMonitor(), "switching PHASE off left the Mono fold on");
+                const auto* report = host.masteringPhaseReport();
+                ctx.expect (report != nullptr && report->broadband.minimumValid && report->broadband.flagged,
+                            "switching PHASE off dropped the held phase evidence");
+                *analysed = report != nullptr ? (std::uint64_t) report->frames : 0;
+            } });
+            steps->push_back ({ 600, [&host, &ctx, analysed]
+            {
+                const auto* report = host.masteringPhaseReport();
+                ctx.expect (report != nullptr && (std::uint64_t) report->frames == *analysed,
+                            "the analysis went on with PHASE switched off");
+            } });
+            click ("mono");
+            steps->push_back ({ 100, [&ctx]
+            { ctx.expect (! ctx.engine().getMasteringMonoMonitor(), "Mono folded the monitor with PHASE off"); } });
+            click ("header");
+            steps->push_back ({ 100, [&ctx]
+            {
+                ctx.expect (ctx.session().mastering().phase.enabled.load(), "the PHASE light did not switch the module back on");
+                ctx.expect (! ctx.engine().getMasteringMonoMonitor(), "switching PHASE on folded the monitor");
+            }, [&host, analysed]
+            {
+                const auto* report = host.masteringPhaseReport();
+                return report != nullptr && (std::uint64_t) report->frames > *analysed;
+            }, "the analysis did not start again with PHASE switched on" });
             click ("reset");
             steps->push_back ({ 100, [&host, &ctx]
             {
@@ -719,7 +751,7 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
                 ctx.expect (settings.bands.load() == 64 && std::abs (settings.q.load() - 8.0f) < 1.0e-5f
                             && std::abs (settings.averagingMs.load() - 5000.0f) < 1.0e-3f,
                             "native Phase controls did not reach their documented upper bounds");
-                ctx.expect (host.masteringPanelsOpen() == 3, "Phase interaction closed a native module");
+                ctx.expect (host.masteringPanelsOpen() == host.masteringPanelsExpected(), "Phase interaction closed a native module");
             }, [&host]
             {
                 const auto* report = host.masteringPhaseReport();
@@ -749,7 +781,7 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
             {
                 ctx.expect (std::abs (ctx.session().mastering().phase.q.load() - 3.5f) < 1.0e-5f,
                             "parent-routed Select All and Return did not commit Q text");
-                ctx.expect (host.masteringPanelsOpen() == 3, "Q entry closed a native module");
+                ctx.expect (host.masteringPanelsOpen() == host.masteringPanelsExpected(), "Q entry closed a native module");
             }, [&host] { return ! host.masteringPhaseCapturesKeyboard(); }, "Q entry kept the keyboard after Return" });
             runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
         }, "live mastering never produced a valid negative correlation and sticky warning");
@@ -809,12 +841,12 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (host.pressPeerKey ("return", '\r'), "compact module Return was unavailable");
     }, [&host]
     {
-        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 0;
-    }, "compact module choices never received focus after native teardown" });
+        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 1;
+    }, "compact module choices never received focus with the shown module still drawn" });
     steps->push_back ({ 300, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix was unavailable"); },
-                       [&host] { return host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0; },
-                       "compact compressor selection left native children up" });
+                       [&host] { return host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 1; },
+                       "the compact compressor selection did not open its panel alone" });
     steps->push_back ({ 100, [&host, &ctx, wide, height]
     { ctx.expect (host.resizeMainWindow (wide, height), "could not widen beneath the file browser"); },
                        [&host] { return ! host.modalStackEmpty(); }, "the file browser never opened" });
@@ -829,7 +861,7 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     }, "wide layout did not settle beneath the file browser" });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load mix..."), "second Load mix was unavailable"); },
-                       [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 3; },
+                       [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == host.masteringPanelsExpected(); },
                        "native children did not appear after the cover closed" });
     steps->push_back ({ 100, [&host, &ctx, height]
     { ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the file browser"); },
@@ -846,12 +878,12 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     }, "compact layout did not settle beneath the file browser" });
     steps->push_back ({ 400, [&host, &ctx]
     {
-        ctx.expect (host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0,
+        ctx.expect (host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 1,
                     "closing the cover re-showed unselected compact modules");
         ctx.expect (host.clickMasteringModulePicker(), "module picker did not return");
     }, [&host]
     {
-        return host.modalStackEmpty() && host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+        return host.modalStackEmpty() && host.masteringModulePickerShown() && host.masteringPanelsOpen() == 1;
     }, "the second cover never closed in the compact layout" });
     steps->push_back ({ 100, [&host, &ctx]
     {
@@ -859,32 +891,32 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (host.pressPeerKey ("return", '\r'), "compact Phase Return was unavailable");
     }, [&host]
     {
-        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 0;
-    }, "compact module choices never regained keyboard focus" });
+        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 1;
+    }, "compact module choices never regained keyboard focus with the shown module still drawn" });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.masteringModuleIndex() == 3, "Phase was not selected"); },
                        [&host] { return host.masteringPanelsOpen() == 1; }, "compact Phase child did not open" });
     steps->push_back ({ 100, [&host, &ctx, wide, height]
     { ctx.expect (host.resizeMainWindow (wide, height), "could not restore the wide workspace"); } });
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickMasteringCompPreset(), "wide compressor preset picker is unavailable"); },
-                       [&host] { return host.masteringPanelsOpen() == 3; }, "wide native children did not return" });
+    { ctx.expect (host.clickMasteringTarget(), "wide loudness target picker is unavailable"); },
+                       [&host] { return host.masteringPanelsOpen() == host.masteringPanelsExpected(); }, "wide native children did not return" });
     steps->push_back ({ 300, [&host, &ctx, height]
     {
-        ctx.expect (host.masteringPanelsOpen() == 3, "opening the preset popup closed an uncovered panel");
-        ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the preset popup");
-    }, [&host] { return ! host.modalStackEmpty(); }, "the compressor preset popup never opened" });
+        ctx.expect (host.masteringPanelsOpen() == host.masteringPanelsExpected(), "opening the target popup closed a panel it does not cover");
+        ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the target popup");
+    }, [&host] { return ! host.modalStackEmpty(); }, "the loudness target popup never opened" });
     steps->push_back ({ 400, [&host, &ctx]
     {
-        ctx.expect (! host.modalStackEmpty(), "narrowing dismissed the preset popup");
+        ctx.expect (! host.modalStackEmpty(), "narrowing dismissed the target popup");
         ctx.expect (host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0,
-                    "a resized native panel covered the open preset popup");
-        ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not accept Escape");
+                    "a resized native panel covered the open target popup");
+        ctx.expect (host.pressPeerKey ("escape"), "the target popup did not accept Escape");
     } });
     steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.masteringModuleIndex() == 3, "the preset popup changed the compact selection"); },
+    { ctx.expect (host.masteringModuleIndex() == 3, "the target popup changed the compact selection"); },
                        [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 1; },
-                       "the compact Phase child did not return after closing the preset popup" });
+                       "the compact Phase child did not return after closing the target popup" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -896,37 +928,6 @@ const ScenarioRegistrar masteringPhasePanel { Scenario {
 const ScenarioRegistrar masteringCompactCover { Scenario {
     "gui.mastering_compact_cover", { "gui", "mastering", "phase" }, Needs::Engine | Needs::Gui,
     {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompactCover (host, ctx); }
-} };
-
-// Linux leaves an unpainted area dark and macOS leaves it white, so the check
-// reads the page's own render rather than the screen.
-std::optional<ScenarioResult> runMasteringCompPanelPainted (GuiHost& host, ScenarioContext& ctx)
-{
-    auto& engine = ctx.engine();
-    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying())
-        return ScenarioResult::skip ("requires stopped transport and mastering player");
-    if (! widenMasteringWindow (host, ctx))
-        return ScenarioResult::fail ("could not widen the mastering workspace");
-    const auto originalStage = engine.getStage();
-    host.switchToStage (GuiHost::Stage::Mastering);
-    ctx.cleanup ([&host, originalStage] { host.switchToStage (guiStage (originalStage)); });
-
-    ctx.waitUntil ([&host] { return host.masteringCompPanelUnpaintedPixels() >= 0; }, 10000,
-                   [&host, &ctx]
-    {
-        const int unpainted = host.masteringCompPanelUnpaintedPixels();
-        ctx.expect (unpainted == 0, "the multiband comp panel left " + std::to_string (unpainted)
-                                        + " pixels around its editor unpainted");
-        ctx.complete (ctx.verdict());
-    },
-    "the mastering page never came on screen");
-    return std::nullopt;
-}
-
-const ScenarioRegistrar masteringCompPanelPainted { Scenario {
-    "gui.mastering_comp_panel_painted", { "gui", "mastering" }, Needs::Engine | Needs::Gui,
-    {}, {}, 20000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompPanelPainted (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runMasteringLoad (GuiHost& host, ScenarioContext& ctx)

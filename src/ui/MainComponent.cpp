@@ -1419,7 +1419,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             static_cast<std::uint32_t> (key.getTextCharacter())))
         return true;
     if (! modalUp && masteringView != nullptr && masteringView->isShowing()
-        && masteringView->offerPhaseKey (key.getTextDescription().toStdString(),
+        && masteringView->offerPanelKey (key.getTextDescription().toStdString(),
                                         static_cast<std::uint32_t> (key.getTextCharacter())))
         return true;
     if (! modalUp && consoleView != nullptr)
@@ -1523,11 +1523,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (audioEditorShowing())
         {
             closeAudioEditor();
-            return true;
-        }
-        if (masteringView != nullptr && masteringView->isCompEditorOpen())
-        {
-            masteringView->closeCompEditorPopup();
             return true;
         }
         if (consoleView != nullptr)
@@ -5245,7 +5240,11 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // leaves the player empty, the page reports it as failing to load, and
     // the load above already listed it with the missing audio files.
     MasteringView::loadSessionSource (engine, session);
-    if (masteringView != nullptr) masteringView->followSource();
+    if (masteringView != nullptr)
+    {
+        masteringView->sessionReplaced();
+        masteringView->followSource();
+    }
     refreshSnapUi();   // snap on/off + resolution are serialized - reflect the loaded values
     resized();
     // resized()'s indirect refresh of the tape strip (setConsoleVisibleRange /
@@ -6824,7 +6823,6 @@ void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
     closeAudioSettings();
     closeAudioEditor();
     if (! keepPianoRoll) closePianoRoll();
-    if (masteringView != nullptr) masteringView->closeCompEditorPopup();
     if (consoleView != nullptr)
     {
         for (int t = 0; t < Session::kNumTracks; ++t)

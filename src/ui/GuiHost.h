@@ -495,9 +495,9 @@ public:
     // The compressor stage the open editor draws; null while none is open.
     virtual const MultiCompStage* compEditorStage (StripKind kind, int index) const = 0;
     virtual void closeCompEditor (StripKind kind, int index) = 0;
-    // A press on the dim behind whichever compressor editor is up, the mastering
-    // page's included, in the window's corner, which the centred editor never
-    // covers. False when none is up.
+    // A press on the dim behind whichever compressor editor is up, in the
+    // window's corner, which the centred editor never covers. False when none
+    // is up.
     virtual bool clickCompEditorDim() = 0;
     // The COMP header's label on a channel strip, as the strip shows it.
     virtual std::string stripCompLabel (int track) const = 0;
@@ -522,8 +522,6 @@ public:
     virtual bool wheelPicker (float delta, bool smooth) = 0;
     virtual bool clickMasteringButton (const std::string& label) = 0;
     virtual bool clickMasteringTarget() = 0;
-    // The multiband comp's preset picker; false when this build lays out none.
-    virtual bool clickMasteringCompPreset() = 0;
     virtual bool masteringPhasePointer (const std::string& control, float position, bool pressed, int modifiers = 0) = 0;
     virtual void resetMasteringPhasePanel() = 0;
     virtual bool masteringPhaseCapturesKeyboard() const = 0;
@@ -534,34 +532,54 @@ public:
     virtual bool masteringModulePickerShown() const = 0;
     virtual int masteringModuleIndex() const = 0;
     virtual void restoreMasteringModule (int index) = 0;
-    // How many of the mastering stage's three native panels are open, or -1 when
+    // How many of the mastering stage's four native panels are open, or -1 when
     // this build has none. Zero while the stage is not up.
     virtual int masteringPanelsOpen() const = 0;
-    // Pixels of the multiband comp's slot that nothing painted, or -1 while the
-    // stage is not up.
-    virtual int masteringCompPanelUnpaintedPixels() = 0;
-    // The multiband comp's header: its status light (the engage switch) or
-    // its label, which opens Multi-Comp 2's Multiband face over a dimmed
-    // window. False while the stage is not up.
-    virtual bool clickMasteringCompHeader (bool label) = 0;
-    virtual bool masteringCompEditorOpen() const = 0;
-    virtual bool masteringCompEditorDrawn() const = 0;
-    // Works one control of the open face, by its parameter symbol, through the
-    // callbacks a drag in it calls.
-    virtual bool masteringCompEditorEdit (const std::string& paramSymbol, float value) = 0;
-    // What the open face was last given for that parameter; empty while none is open.
-    virtual std::optional<float> masteringCompEditorShows (const std::string& paramSymbol) const = 0;
-    // The compressor stage the open face draws; null while none is open.
-    virtual const MultiCompStage* masteringCompEditorStage() const = 0;
-    // Where the open face sits, in the window's logical pixels: x, y, width,
-    // height; empty while none is open.
-    virtual std::vector<int> masteringCompEditorBounds() const = 0;
-    virtual void closeMasteringCompEditor() = 0;
+    // How many the stage shows side by side in this build: four, three in a build
+    // without the Dusk DSP, -1 in one without native panels.
+    virtual int masteringPanelsExpected() const = 0;
+    // The narrowest main window width at which the stage shows every module side by
+    // side rather than one at a time; 0 before the stage is built.
+    virtual int masteringSideBySideWidth() const = 0;
+    // A press or release at a control of the mastering panel with this log tag, as
+    // masteringControl names and places it; false while that control is not
+    // wholly on screen. Whether that panel holds the keyboard for an open list or
+    // field.
+    virtual bool masteringPanelPointer (const std::string& panel, const std::string& control, float position,
+                                        bool pressed, int modifiers = 0) = 0;
+    virtual bool masteringPanelCapturesKeyboard (const std::string& panel) const = 0;
+    // Where clickMasteringTarget (true) or clickMasteringModulePicker (false) presses,
+    // in modalLayout's coordinates: x, y; empty while that picker is not shown.
+    virtual std::vector<int> masteringPickerPoint (bool target) const = 0;
+    // Where that panel sits, shown or not, in modalLayout's coordinates: x, y,
+    // width, height; empty for an unknown panel or a build without them.
+    virtual std::vector<int> masteringPanelArea (const std::string& panel) const = 0;
+    // The multiband preset the picker shows: 0 for "Select preset...", n for the
+    // n-th preset.
+    virtual int masteringCompPreset() const = 0;
+    virtual void restoreMasteringCompPreset (int choice) = 0;
+    // A double-click at a control of the multiband comp's native panel, named as
+    // masteringControl names it.
+    virtual bool doubleClickMasteringComp (const std::string& control) = 0;
+    // Where the last frame of the mastering panel with this log tag
+    // ("mastering-eq", "mastering-comp", "mastering-limiter", "mastering-phase")
+    // drew that control, in the panel's pixels, while it drew all of it inside the
+    // panel clear of every other control; empty otherwise, and while that panel is
+    // not shown. The multiband's controls are its parameter symbols and the EQ's,
+    // the limiter's and Phase's their session keys; each view's
+    // controlPointForScenario lists the rest. The multiband's "meter_<band>" (0 to
+    // 3) is that band's gain-reduction bar, from the display's top at position 0 to
+    // the bar's foot at 1, while the band plays.
+    virtual std::optional<std::array<float, 2>> masteringControl (const std::string& panel,
+                                                                  const std::string& control,
+                                                                  float position = 0.5f) const = 0;
+    virtual bool typeInMasteringComp (const std::string& text) = 0;
+    virtual bool masteringCompCapturesKeyboard() const = 0;
     // An open compressor editor's own window as the display server holds it:
-    // on a channel strip, a bus or the master (whose index is ignored), or the
-    // mastering page's Multiband face. RGB, row by row, width * height * 3
-    // bytes; `ppm` is a file it may write. Only noCapture means the platform
-    // cannot read the editor back (anything but an X11 window on Linux).
+    // on a channel strip, a bus or the master (whose index is ignored). RGB, row
+    // by row, width * height * 3 bytes; `ppm` is a file it may write. Only
+    // noCapture means the platform cannot read the editor back (anything but an
+    // X11 window on Linux).
     struct FacePixels
     {
         enum class Status { noCapture, notShown, captureFailed, read };
@@ -570,14 +588,12 @@ public:
         std::vector<unsigned char> rgb;
     };
     virtual FacePixels compEditorPixels (StripKind kind, int index, const std::filesystem::path& ppm) = 0;
-    virtual FacePixels masteringCompEditorPixels (const std::filesystem::path& ppm) = 0;
     // The left button in the same editor, through the display server as the
     // user's pointer reaches it: the pointer moves to x, y in the editor
     // window's own pixels, then the button goes down (button 1), comes up (-1)
     // or stays as it is (0), so a move between a press and a release drags.
     // False where the editor cannot be read back, or none is open.
     virtual bool compEditorPointer (StripKind kind, int index, float x, float y, int button) = 0;
-    virtual bool masteringCompEditorPointer (float x, float y, int button) = 0;
     virtual std::string masteringTargetText() const = 0;
     // The Mastering page's source line, and the file its waveform was last
     // pointed at (empty once cleared). Both empty before the page is built.

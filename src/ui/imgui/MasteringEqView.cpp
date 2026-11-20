@@ -1,5 +1,6 @@
 #include "MasteringEqView.h"
 #include "DuskTheme.h"
+#include "ScenarioControlMap.h"
 #include "../../dsp/MasteringChain.h"
 #include "../../foundation/Decibels.h"
 #include "../../foundation/Fft.h"
@@ -7,8 +8,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -123,12 +126,34 @@ public:
         specDb.fill (kSpecFloorDb);
         dusk::audio::Fft::fillHannWindow (fftWindow.data(), kFftSize);
         rebuildBandCache();
+        for (int b = 0; b < 5; ++b)
+        {
+            const auto band = "eq_band_" + std::to_string (b);
+            freqNames[b] = band + "_freq";
+            gainNames[b] = band + "_gain_db";
+            qNames[b] = band + "_q";
+        }
     }
 
     ImVec2 preferredSize() const override { return ImVec2 (kMinPanelW, kMinPanelH); }
     bool wantsPlate() const override { return false; }
 
+    // "eq_enabled", "eq_band_<n>_freq", "eq_band_<n>_gain_db", "eq_band_<n>_q" (the
+    // session's names) and "fft", while the last frame drew the control whole and
+    // apart from the others.
+    bool controlPointForScenario (const std::string& name, ImVec2& point, float fraction) const override
+    {
+        return scenarioControls.point (name, fraction, point.x, point.y);
+    }
+
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
+    {
+        scenarioControls.begin ({ origin.x, origin.y, origin.x + size.x, origin.y + size.y });
+        drawPanel (ctx, origin, size);
+        scenarioControls.settle();
+    }
+
+    void drawPanel (dw::Context& ctx, ImVec2 origin, ImVec2 size)
     {
         const ImVec2 br (origin.x + size.x, origin.y + size.y);
         ctx.dl->AddRectFilled (origin, br, rgba (kPanelFill));
@@ -429,6 +454,7 @@ private:
         const auto pill = dw::modulePill (ctx, "##mastering-eq-header", at,
                                           ImVec2 (at.x + width, at.y + ctx.s (kHeaderH)),
                                           "MASTERING EQ", enabled, rgba (kHeaderAccent));
+        scenarioControls.note ("eq_enabled", { at.x, at.y, at.x + width, at.y + ctx.s (kHeaderH) });
         if (pill.toggled || pill.labelClicked)
         {
             enabled = ! enabled;
@@ -695,11 +721,11 @@ private:
         style.onText = rgba (kSpecOnText);
         style.fontSize = 9.0f;
         style.rounding = 2.0f;
-        if (dw::textButton (ctx, "##mastering-eq-fft",
-                            ImVec2 (plot.x0 + ctx.s (5.0f), plot.y0 + ctx.s (4.0f)),
-                            ImVec2 (plot.x0 + ctx.s (39.0f), plot.y0 + ctx.s (19.0f)),
-                            "FFT", showSpectrum, style).clicked)
+        const ImVec2 tl (plot.x0 + ctx.s (5.0f), plot.y0 + ctx.s (4.0f));
+        const ImVec2 br (plot.x0 + ctx.s (39.0f), plot.y0 + ctx.s (19.0f));
+        if (dw::textButton (ctx, "##mastering-eq-fft", tl, br, "FFT", showSpectrum, style).clicked)
             showSpectrum = ! showSpectrum;
+        scenarioControls.note ("fft", { tl.x, tl.y, br.x, br.y });
     }
 
     void drawBandControls (dw::Context& ctx, ImVec2 tl, ImVec2 br)
@@ -737,6 +763,7 @@ private:
                                                         kBandRanges[b].defaultHz);
             auto result = dw::knob (ctx, id, ImVec2 (centreX, knobTop), knobRadius,
                                     freqHz[b], range, kBandRanges[b].defaultHz, style);
+            noteKnob (ctx, freqNames[b], centreX, knobTop, knobRadius, readout);
             if (result.changed)
             {
                 freqHz[b] = clampf (kBandRanges[b].minHz, kBandRanges[b].maxHz, result.value);
@@ -749,6 +776,7 @@ private:
             std::snprintf (id, sizeof id, "##eq-gain%d", b);
             result = dw::knob (ctx, id, ImVec2 (centreX, knobTop + rowH), knobRadius,
                                gainDb[b], dw::Range (-12.0f, 12.0f), 0.0f, style);
+            noteKnob (ctx, gainNames[b], centreX, knobTop + rowH, knobRadius, readout);
             if (result.changed)
             {
                 gainDb[b] = clampf (-12.0f, 12.0f, result.value);
@@ -765,6 +793,7 @@ private:
             std::snprintf (id, sizeof id, "##eq-q%d", b);
             result = dw::knob (ctx, id, ImVec2 (centreX, knobTop + rowH * 2.0f), knobRadius,
                                q[b], dw::Range::withMidPoint (0.3f, 6.0f, 1.0f), 1.0f, style);
+            noteKnob (ctx, qNames[b], centreX, knobTop + rowH * 2.0f, knobRadius, readout);
             if (result.changed)
             {
                 q[b] = clampf (0.3f, 6.0f, result.value);
@@ -774,8 +803,25 @@ private:
         }
     }
 
+    // A dial and the readout under it, as dw::knob draws them.
+    void noteKnob (const dw::Context& ctx, const std::string& name, float centreX, float centreY,
+                   float radius, const char* readout)
+    {
+        const float size = ctx.s (10.5f);
+        const float width = std::max (ctx.fonts->label != nullptr
+                                          ? ctx.fonts->label->CalcTextSizeA (size, FLT_MAX, 0.0f, readout).x
+                                          : 0.0f,
+                                      radius * 2.0f);
+        const ScenarioControlMap::Box dial { centreX - radius, centreY - radius, centreX + radius, centreY + radius };
+        const ScenarioControlMap::Box value { centreX - width * 0.5f, centreY + radius + ctx.s (1.0f),
+                                              centreX + width * 0.5f, centreY + radius + ctx.s (1.0f) + size };
+        scenarioControls.note (name.c_str(), dial.unite (value));
+    }
+
     MasteringParams& params;
     MasteringChain* chain = nullptr;
+    ScenarioControlMap scenarioControls;
+    std::string freqNames[5], gainNames[5], qNames[5];
 
     dusk::audio::Fft fft { kFftOrder };
     std::array<float, kFftSize> fftWindow {};

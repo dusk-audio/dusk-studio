@@ -1,27 +1,24 @@
 #include "MasteringView.h"
 #include "BounceDialog.h"
-#include "DimOverlay.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
 #include "EmbeddedModal.h"
 #include "SaveTargetChecks.h"
-#include "SplitModuleButton.h"
-#include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
 #include "../engine/audiofile/FileReader.h"
-#include "../session/CompParams.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/DuskPanelWindow.h"
+ #include "imgui/MasteringCompView.h"
  #include "imgui/MasteringEqView.h"
  #include "imgui/MasteringLimiterView.h"
  #include "imgui/MasteringPhaseView.h"
 #endif
 #include <algorithm>
 #include <cmath>
-#include <cstring>
+#include <cstdio>
 #include <utility>
 
 namespace duskstudio
@@ -30,6 +27,14 @@ namespace
 {
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+// Each minimum is what that module's panel needs to show all of its controls (the
+// EQ's and the compressor's are their views' own); a page too narrow for all four
+// side by side shows one at a time, chosen above them.
+constexpr int kPageInset = 12;
+constexpr int kPanelGap = 8;
+constexpr int kEqMin = 300, kCompMin = 400, kLimiterMin = 230, kPhaseMin = 200;
+constexpr int kSideBySideMin = kEqMin + kCompMin + kLimiterMin + kPhaseMin + 3 * kPanelGap;
 
 #if DUSKSTUDIO_HAS_NATIVE_UI
 // Where a panel's framework child belongs, from the rectangle its proxy occupies in the
@@ -204,9 +209,19 @@ static_assert (kNumMasteringTargets == MasteringParams::kNumTargetPresets,
                "kMasteringTargets and MasteringParams::kNumTargetPresets must agree");
 } // namespace
 
+struct MasteringView::PagePress final : public juce::MouseListener
+{
+    explicit PagePress (MasteringView& owner) : view (owner) {}
+    void mouseDown (const juce::MouseEvent&) override { view.closePanelLists(); }
+    MasteringView& view;
+};
+
 MasteringView::MasteringView (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
+    pagePress = std::make_unique<PagePress> (*this);
+    addMouseListener (pagePress.get(), true);
+
     // A clicked button would otherwise take keyboard focus and eat Space
     // (juce::Button triggers on it), so the global play/stop toggle in
     // MainComponent::keyPressed would go dead after any click in here.
@@ -324,9 +339,11 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     eqProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
+    compProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
     limiterProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
     phaseProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
     addChildComponent (eqProxy);
+    addChildComponent (compProxy);
     addChildComponent (limiterProxy);
     addChildComponent (phaseProxy);
    #endif
@@ -337,59 +354,6 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     compactPanelCombo.setTooltip ("Select a mastering module in a compact window.");
     compactPanelCombo.onChange = [this] { resized(); };
     addChildComponent (compactPanelCombo);
-
-    // The multiband compressor's slot: its split header, whose status light
-    // engages it and whose label opens Multi-Comp 2's Multiband face, as the
-    // console's COMP headers do; the preset picker; and an overview of the
-    // bands the face holds.
-    compPanelWrapper = std::make_unique<juce::Component>();
-    addAndMakeVisible (compPanelWrapper.get());
-
-    compHeaderBtn = std::make_unique<SplitModuleButton> ("MULTIBAND COMP");
-    compHeaderBtn->setCallbacks (
-        [this] { return ! session.mastering().compEnabled.load (std::memory_order_relaxed); },
-        [this]
-        {
-            auto& mp = session.mastering();
-            mp.compEnabled.store (! mp.compEnabled.load (std::memory_order_relaxed), std::memory_order_relaxed);
-            if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
-        },
-        [this] { openCompEditorPopup(); },
-        {});
-    compHeaderBtn->setTooltip ("Click the status light to engage or bypass the multiband compressor; "
-                               "click MULTIBAND COMP to open its editor.");
-    compPanelWrapper->addAndMakeVisible (compHeaderBtn.get());
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // DP-24-style 3-band preset picker in the comp header. A muted caption to
-    // its left (matching the Mode / Target / Release caption style elsewhere in
-    // this view) reads as a deliberate labelled control rather than a lone combo.
-    compPresetCaption.setText ("PRESET", juce::dontSendNotification);
-    compPresetCaption.setJustificationType (juce::Justification::centredRight);
-    compPresetCaption.setColour (juce::Label::textColourId, juce::Colour (0xff808088));
-    compPresetCaption.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-    compPanelWrapper->addAndMakeVisible (compPresetCaption);
-
-    compPresetCombo.addItem ("Select preset...", 1);
-    for (int i = 0; i < mbpresets::kNumPresets; ++i)
-        compPresetCombo.addItem (mbpresets::kPresets[(size_t) i].name, i + 2);
-    compPresetCombo.setSelectedId (1, juce::dontSendNotification);
-    compPresetCombo.setTooltip ("Apply a DP-24-style 3-band mastering compressor preset. "
-                                  "Maps onto the multiband comp with the high-mid band disabled.");
-    compPresetCombo.onChange = [this]
-    {
-        // The preset goes into the session, which the compressor and its
-        // face both read. The picked name stays showing: a starting point,
-        // not live state.
-        const int id = compPresetCombo.getSelectedId();
-        if (id >= 2)
-            mbpresets::apply (id - 2, engine.getMasteringChain().getCompressor(), session.mastering().comp);
-        if (refreshCompOverview() && compPanelWrapper != nullptr)
-            repaint (compPanelWrapper->getBounds());
-    };
-    compPanelWrapper->addAndMakeVisible (compPresetCombo);
-#endif
-    refreshCompOverview();
 
     // The session's source is already in the player: every session switch
     // loads it, whether or not this page exists yet.
@@ -402,23 +366,19 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
 MasteringView::~MasteringView()
 {
     stopTimer();   // before derived members destruct
+    removeMouseListener (pagePress.get());
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The framework children reach back into this view through their callbacks, so they
     // go down while it is still whole.
     eqWindow.reset();
+    compWindow.reset();
     limiterWindow.reset();
     phaseWindow.reset();
-    if (compEditor != nullptr)
-        compEditor->shutdown();
-    compEditorDim.reset();
    #endif
 }
 
 void MasteringView::visibilityChanged()
 {
-    // The compressor editor belongs to this page and goes with it.
-    if (! isShowing())
-        closeCompEditorPopup();
     scheduleNativePanelSync();
 }
 
@@ -451,8 +411,8 @@ void MasteringView::syncNativePanelVisibility()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     const int selected = compactPanelCombo.getSelectedId() - 1;
-    const std::array<std::pair<NativePanelProxy*, int>, 3> panels { {
-        { &eqProxy, 0 }, { &limiterProxy, 2 }, { &phaseProxy, 3 }
+    const std::array<std::pair<NativePanelProxy*, int>, 4> panels { {
+        { &eqProxy, 0 }, { &compProxy, 1 }, { &limiterProxy, 2 }, { &phaseProxy, 3 }
     } };
     for (const auto& panel : panels)
     {
@@ -489,6 +449,15 @@ void MasteringView::applyNativePanelSync()
               return imgui::makeMasteringEqView (self.session.mastering(),
                                                  &self.engine.getMasteringChain());
           } },
+#if DUSKSTUDIO_HAS_DUSK_DSP
+        { compWindow, compProxy, "dusk-studio-mastering-comp", "mastering-comp", "Mastering multiband compressor",
+          [] (MasteringView& self)
+          {
+              return imgui::makeMasteringCompView (self.session.mastering(),
+                                                   self.engine.getMasteringChain().getCompressor(),
+                                                   self.compPresetChoice);
+          } },
+#endif
         { limiterWindow, limiterProxy, "dusk-studio-mastering-limiter", "mastering-limiter",
           "Mastering limiter",
           [] (MasteringView& self)
@@ -556,6 +525,11 @@ void MasteringView::applyNativePanelSync()
                     }
             }
         };
+        callbacks.pressed = [safeThis, window = panel.window.get()]
+        {
+            if (auto* const self = safeThis.getComponent())
+                self->closePanelLists (window);
+        };
         callbacks.geometry = [safeThis, proxy]
         {
             auto* const self = safeThis.getComponent();
@@ -577,7 +551,7 @@ int MasteringView::nativePanelsOpenForScenario() const
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     int open = 0;
-    for (const auto* window : { eqWindow.get(), limiterWindow.get(), phaseWindow.get() })
+    for (const auto* window : { eqWindow.get(), compWindow.get(), limiterWindow.get(), phaseWindow.get() })
         if (window != nullptr && window->isOpen())
             ++open;
     return open;
@@ -586,11 +560,51 @@ int MasteringView::nativePanelsOpenForScenario() const
    #endif
 }
 
-bool MasteringView::offerPhaseKey (const std::string& description, std::uint32_t character)
+int MasteringView::nativePanelsExpectedForScenario()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI && DUSKSTUDIO_HAS_DUSK_DSP
+    return 4;
+   #elif DUSKSTUDIO_HAS_NATIVE_UI
+    return 3;
+   #else
+    return -1;
+   #endif
+}
+
+int MasteringView::sideBySideWindowWidthForScenario() const
+{
+    const auto* topLevel = getTopLevelComponent();
+    const int around = topLevel != nullptr ? topLevel->getWidth() - getWidth() : 0;
+    return around + 2 * kPageInset + kSideBySideMin;
+}
+
+void MasteringView::closePanelLists (const imgui::DuskPanelWindow* pressed)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    return phaseProxy.isShowing() && phaseWindow != nullptr
-        && phaseWindow->offerShellKey (description, character);
+    for (auto* window : { eqWindow.get(), compWindow.get(), limiterWindow.get(), phaseWindow.get() })
+        if (window != nullptr && window != pressed)
+            window->pointerPressedOutside();
+   #else
+    (void) pressed;
+   #endif
+}
+
+void MasteringView::sessionReplaced()
+{
+    compPresetChoice = 0;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compWindow != nullptr)
+        compWindow->wake();
+   #endif
+}
+
+bool MasteringView::offerPanelKey (const std::string& description, std::uint32_t character)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    for (const auto* tag : { "mastering-eq", "mastering-comp", "mastering-limiter", "mastering-phase" })
+        if (auto* window = shownPanel (tag); window != nullptr && window->offerShellKey (description, character))
+            return true;
+    return false;
    #else
     (void) description;
     (void) character;
@@ -598,11 +612,14 @@ bool MasteringView::offerPhaseKey (const std::string& description, std::uint32_t
    #endif
 }
 
-bool MasteringView::phaseKeyForScenario (const std::string& description)
+bool MasteringView::panelKeyForScenario (const std::string& description)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI && ! defined (__APPLE__)
-    return phaseWindow != nullptr && phaseWindow->hasKeyboardForScenario()
-        && phaseCapturesKeyboardForScenario() && phaseWindow->inputForScenario (description);
+    for (const auto* tag : { "mastering-eq", "mastering-comp", "mastering-limiter", "mastering-phase" })
+        if (auto* window = shownPanel (tag);
+            window != nullptr && window->hasKeyboardForScenario() && window->capturesKeyboardForScenario())
+            return window->inputForScenario (description);
+    return false;
    #else
     (void) description;
     return false;
@@ -645,6 +662,116 @@ void MasteringView::resetPhasePanelForScenario()
    #endif
 }
 
+bool MasteringView::compDoubleClickForScenario (const std::string& control)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compProxy.isShowing() && compWindow != nullptr && compWindow->doubleClickControlForScenario (control);
+   #else
+    (void) control;
+    return false;
+   #endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DuskPanelWindow* MasteringView::shownPanel (const std::string& panel) const
+{
+    const std::array<std::pair<imgui::DuskPanelWindow*, const NativePanelProxy*>, 4> panels { {
+        { eqWindow.get(), &eqProxy }, { compWindow.get(), &compProxy },
+        { limiterWindow.get(), &limiterProxy }, { phaseWindow.get(), &phaseProxy }
+    } };
+    static constexpr const char* tags[] = { "mastering-eq", "mastering-comp", "mastering-limiter", "mastering-phase" };
+    for (std::size_t i = 0; i < panels.size(); ++i)
+        if (panel == tags[i])
+            return panels[i].second->isShowing() && panels[i].first != nullptr && panels[i].first->isOpen()
+                 ? panels[i].first : nullptr;
+    return nullptr;
+}
+#endif
+
+bool MasteringView::panelPointerForScenario (const std::string& panel, const std::string& control, float position,
+                                             bool pressed, int modifiers)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    auto* window = shownPanel (panel);
+    return window != nullptr && window->pointerControlForScenario (control, position, pressed, modifiers);
+   #else
+    (void) panel;
+    (void) control;
+    (void) position;
+    (void) pressed;
+    (void) modifiers;
+    return false;
+   #endif
+}
+
+std::vector<int> MasteringView::panelAreaForScenario (const std::string& panel, const juce::Component& relativeTo) const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const std::array<std::pair<const char*, const NativePanelProxy*>, 4> proxies { {
+        { "mastering-eq", &eqProxy }, { "mastering-comp", &compProxy },
+        { "mastering-limiter", &limiterProxy }, { "mastering-phase", &phaseProxy }
+    } };
+    for (const auto& entry : proxies)
+        if (panel == entry.first)
+        {
+            const auto area = relativeTo.getLocalArea (this, entry.second->getBounds());
+            return { area.getX(), area.getY(), area.getWidth(), area.getHeight() };
+        }
+   #else
+    (void) panel;
+    (void) relativeTo;
+   #endif
+    return {};
+}
+
+bool MasteringView::panelCapturesKeyboardForScenario (const std::string& panel) const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto* window = shownPanel (panel);
+    return window != nullptr && window->capturesKeyboardForScenario();
+   #else
+    (void) panel;
+    return false;
+   #endif
+}
+
+std::optional<std::array<float, 2>> MasteringView::controlForScenario (const std::string& panel,
+                                                                       const std::string& control,
+                                                                       float position) const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto* window = shownPanel (panel);
+    if (window == nullptr) return std::nullopt;
+    const auto point = window->controlAtForScenario (control, position);
+    if (! point) return std::nullopt;
+    return std::array<float, 2> { point->x, point->y };
+   #else
+    (void) panel;
+    (void) control;
+    (void) position;
+    return std::nullopt;
+   #endif
+}
+
+bool MasteringView::compTypeForScenario (const std::string& text)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compProxy.isShowing() && compWindow != nullptr && compWindow->typeForScenario (text);
+   #else
+    (void) text;
+    return false;
+   #endif
+}
+
+bool MasteringView::compCapturesKeyboardForScenario() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compProxy.isShowing() && compWindow != nullptr && compWindow->capturesKeyboardForScenario();
+   #else
+    return false;
+   #endif
+}
+
 bool MasteringView::phasePointerForScenario (const std::string& control, float position, bool pressed, int modifiers)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -677,10 +804,11 @@ MasteringView::captureNativePanels (const juce::File& dir)
         captures.push_back ({ proxy.getBounds(), file });
     };
     ask (eqWindow, eqProxy, "_mastering-eq.ppm");
+    ask (compWindow, compProxy, "_mastering-comp.ppm");
     ask (limiterWindow, limiterProxy, "_mastering-limiter.ppm");
     ask (phaseWindow, phaseProxy, "_mastering-phase.ppm");
    #else
-    juce::ignoreUnused (dir);
+    (void) dir;
    #endif
     return captures;
 }
@@ -692,183 +820,10 @@ bool MasteringView::nativePanelsOpenForCapture() const
     {
         return ! proxy.isShowing() || (window != nullptr && window->isOpen());
     };
-    return open (eqWindow, eqProxy) && open (limiterWindow, limiterProxy) && open (phaseWindow, phaseProxy);
+    return open (eqWindow, eqProxy) && open (compWindow, compProxy) && open (limiterWindow, limiterProxy)
+        && open (phaseWindow, phaseProxy);
    #else
     return true;
-   #endif
-}
-
-// Each overview row is its label and, after a tab, what it reads, in the
-// plug-in's own text.
-bool MasteringView::refreshCompOverview()
-{
-   #if DUSKSTUDIO_HAS_DUSK_DSP
-    static constexpr const char* kBandNames[kCompBandCount] = { "LOW", "LOW-MID", "HIGH-MID", "HIGH" };
-    const auto& comp = session.mastering().comp;
-    std::uint64_t signature = 1469598103934665603ull;
-    for (const auto id : compStageParams (CompStage::Multiband))
-    {
-        const float value = comp.get (id);
-        std::uint32_t bits = 0;
-        std::memcpy (&bits, &value, sizeof bits);
-        signature = (signature ^ bits) * 1099511628211ull;
-    }
-    if (signature == compOverviewSignature && ! compOverview.empty())
-        return false;
-    compOverviewSignature = signature;
-
-    const auto& stage = engine.getMasteringChain().getCompressor();
-    const auto text = [&stage, &comp] (CompParamId id) { return stage.valueText (id, comp.get (id)); };
-    compOverview.clear();
-    compOverview.push_back ("XOVER\t" + text (CompParamId::MbCrossover1) + "  " + text (CompParamId::MbCrossover2)
-                            + "  " + text (CompParamId::MbCrossover3));
-    for (int b = 0; b < kCompBandCount; ++b)
-    {
-        std::string row = std::string (kBandNames[b]) + "\t";
-        if (comp.get (compBandParam (b, CompBandField::Enabled)) < 0.5f)
-            row += "off";
-        else
-        {
-            row += text (compBandParam (b, CompBandField::Threshold)) + "  "
-                 + text (compBandParam (b, CompBandField::Ratio));
-            if (comp.get (compBandParam (b, CompBandField::Bypass)) >= 0.5f) row += "  BYP";
-            if (comp.get (compBandParam (b, CompBandField::Solo)) >= 0.5f)   row += "  SOLO";
-        }
-        compOverview.push_back (std::move (row));
-    }
-    compOverview.push_back ("OUTPUT\t" + text (CompParamId::MbOutput));
-    return true;
-   #else
-    return false;
-   #endif
-}
-
-juce::Component* MasteringView::compHeaderForScenario() noexcept
-{
-    return compHeaderBtn.get();
-}
-
-#if DUSKSTUDIO_HAS_NATIVE_UI
-imgui::DafEditorHost::Geometry MasteringView::compEditorGeometry()
-{
-    auto* const topLevel = getTopLevelComponent();
-    if (topLevel == nullptr || compEditor == nullptr)
-        return {};
-    const auto fitted = embedscale::fittedChildGeometry (*topLevel, (int) compEditor->designWidth(),
-                                                         (int) compEditor->designHeight());
-    if (compEditorDim != nullptr)
-    {
-        compEditorDim->setBounds (topLevel->getLocalBounds());
-        compEditorDim->setNativeChildArea (fitted.logical.expanded (1));
-    }
-    compEditorBounds = { fitted.logical.getX(), fitted.logical.getY(),
-                         fitted.logical.getWidth(), fitted.logical.getHeight() };
-    const auto& g = fitted.geometry;
-    return { g.x, g.y, g.width, g.height, g.scale };
-}
-
-void MasteringView::finishCompEditorClose()
-{
-    compEditorDim.reset();
-    compEditorHider.restore();
-    compEditorBounds.clear();
-    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
-        target->grabKeyboardFocus();
-}
-
-std::vector<int> MasteringView::compEditorBoundsForScenario() const
-{
-    return isCompEditorOpen() ? compEditorBounds : std::vector<int> {};
-}
-#endif
-
-void MasteringView::openCompEditorPopup()
-{
-   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
-    showDuskAlert (*this, "Multiband compressor",
-                   "The compressor editor needs the native UI and the Dusk DSP, which this build was made without.");
-   #else
-    if (isCompEditorOpen())
-    {
-        closeCompEditorPopup();
-        return;
-    }
-
-    auto* topLevel = getTopLevelComponent();
-    if (topLevel == nullptr) topLevel = this;
-    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
-    if (parentHandle == 0)
-    {
-        showDuskAlert (*topLevel, "Multiband compressor",
-                       "The compressor editor cannot open: the main window is not ready.");
-        return;
-    }
-
-    // Closes the notepad and any other native editor before this one takes
-    // the window.
-    if (auto hook = EmbeddedModal::beforeModalShown())
-        hook();
-
-    if (compEditor == nullptr)
-    {
-        // BYPASS is the header's engage switch; no other control of the face
-        // engages the compressor, as none on this page does.
-        imgui::CompEditorTarget binding;
-        binding.comp = &session.mastering().comp;
-        binding.engaged = &session.mastering().compEnabled;
-        binding.editsEngage = false;
-        compEditor = std::make_unique<imgui::CompEditorHost> (
-            [this]() -> MultiCompStage& { return engine.getMasteringChain().getCompressor(); }, binding);
-
-        // Raw `this`: the view owns the host and shuts it down before its own
-        // teardown, so none of these outlives it.
-        imgui::DafEditorHost::Callbacks callbacks;
-        callbacks.closed = [this] { finishCompEditorClose(); };
-        callbacks.gestureEnded = []
-        {
-            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
-                target->grabKeyboardFocus();
-        };
-        callbacks.geometry = [this] { return compEditorGeometry(); };
-        compEditor->setCallbacks (std::move (callbacks));
-    }
-
-    // The page's native panels paint above any framework child, so they hide
-    // for the editor's lifetime exactly as under an embedded modal.
-    compEditorDim = std::make_unique<DimOverlay> (kEditorDimAlpha);
-    compEditorDim->setBounds (topLevel->getLocalBounds());
-    compEditorDim->onClick = [this] { closeCompEditorPopup(); };
-    topLevel->addAndMakeVisible (compEditorDim.get());
-    compEditorHider.hideUnder (*topLevel, { compEditorDim.get() });
-
-    const auto geometry = compEditorGeometry();
-    if (geometry.width >= 2 && geometry.height >= 2 && compEditor->open (parentHandle, geometry))
-        return;
-
-    compEditorDim.reset();
-    compEditorHider.restore();
-    compEditorBounds.clear();
-    const auto& why = compEditor->lastOpenFailure();
-    showDuskAlert (*topLevel, "Multiband compressor",
-                   why.empty() ? "The compressor editor cannot open on this display backend."
-                               : why.c_str());
-   #endif
-}
-
-void MasteringView::closeCompEditorPopup()
-{
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (compEditor != nullptr && compEditor->isOpen())
-        compEditor->close();
-   #endif
-}
-
-bool MasteringView::isCompEditorOpen() const noexcept
-{
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    return compEditor != nullptr && compEditor->isOpen();
-   #else
-    return false;
    #endif
 }
 
@@ -888,60 +843,11 @@ void MasteringView::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff44485a));
         g.drawRoundedRectangle (box, 4.0f, 1.2f);
     }
-
-    // The comp wrapper paints nothing itself, so its margin, header row and
-    // overview show this fill; the colours are the ones the EQ and limiter
-    // panels draw.
-    if (compPanelWrapper != nullptr && compPanelWrapper->isVisible())
-    {
-        const auto panel = compPanelWrapper->getBounds();
-        g.setColour (juce::Colour (0xff20202a));
-        g.fillRect (panel);
-        g.setColour (juce::Colour (0xff3a3a46));
-        g.drawRect (panel, 1);
-
-        // The overview, under the preset picker: a dim label, the values on
-        // the right.
-        const int top = panel.getY() + (compPresetCombo.isVisible() ? compPresetCombo.getBottom()
-                                                                    : compHeaderBtn->getBottom()) + 14;
-        auto rows = panel.reduced (12, 0).withTop (top).withBottom (panel.getBottom() - 8);
-        g.setFont (11.0f);
-        for (const auto& line : compOverview)
-        {
-            if (rows.getHeight() < 16) break;
-            auto row = rows.removeFromTop (18);
-            const auto tab = line.find ('\t');
-            g.setColour (juce::Colour (0xff808088));
-            g.drawText (line.substr (0, tab), row, juce::Justification::centredLeft, true);
-            g.setColour (juce::Colour (0xffd0d0d6));
-            g.drawText (tab == std::string::npos ? std::string() : line.substr (tab + 1),
-                        row.withTrimmedLeft (64), juce::Justification::centredRight, true);
-        }
-    }
-}
-
-int MasteringView::unpaintedCompPanelPixelsForScenario()
-{
-    if (compPanelWrapper == nullptr || ! isShowing())
-        return -1;
-    // A snapshot starts transparent, or black when the view is opaque, and the
-    // page never paints pure black.
-    const auto image = createComponentSnapshot (getLocalBounds());
-    const auto panel = compPanelWrapper->getBounds();
-    int unpainted = 0;
-    for (int y = panel.getY(); y < panel.getBottom(); ++y)
-        for (int x = panel.getX(); x < panel.getRight(); ++x)
-        {
-            const auto argb = image.getPixelAt (x, y).getARGB();
-            if ((argb >> 24) != 0xff || argb == 0xff000000)
-                ++unpainted;
-        }
-    return unpainted;
 }
 
 void MasteringView::resized()
 {
-    auto area = getLocalBounds().reduced (12);
+    auto area = getLocalBounds().reduced (kPageInset);
 
     // Header (load buttons + filename label)
     auto header = area.removeFromTop (28);
@@ -1010,11 +916,7 @@ void MasteringView::resized()
         waveform->setBounds (area.removeFromTop (kWaveH));
     area.removeFromTop (6);
 
-    // The compressor's face opens over the page, so its slot holds the header,
-    // the presets and the band overview, and the EQ takes the width it gave up.
-    constexpr int kPanelGap = 8;
-    static constexpr int kEqMin = 480, kCompMin = 200, kLimiterMin = 200, kPhaseMin = 200;
-    const bool compact = area.getWidth() < kEqMin + kCompMin + kLimiterMin + kPhaseMin + 3 * kPanelGap;
+    const bool compact = area.getWidth() < kSideBySideMin;
     compactPanelCombo.setVisible (compact);
     if (compact)
     {
@@ -1024,9 +926,9 @@ void MasteringView::resized()
     auto panelsRow = area;
     const int totalW    = std::max (0, panelsRow.getWidth() - 3 * kPanelGap);
     const int spare    = std::max (0, totalW - kEqMin - kCompMin - kLimiterMin - kPhaseMin);
-    const int eqW      = kEqMin + (int) std::round (spare * 0.40);
-    const int compW    = kCompMin + (int) std::round (spare * 0.06);
-    const int limW     = kLimiterMin + (int) std::round (spare * 0.22);
+    const int eqW      = kEqMin + (int) std::round (spare * 0.32);
+    const int compW    = kCompMin + (int) std::round (spare * 0.30);
+    const int limW     = kLimiterMin + (int) std::round (spare * 0.14);
 
     auto eqPanel = panelsRow, compPanel = panelsRow, limPanel = panelsRow;
     auto phasePanel = panelsRow;
@@ -1040,8 +942,6 @@ void MasteringView::resized()
         panelsRow.removeFromLeft (kPanelGap);
         phasePanel = panelsRow;
     }
-    const int selected = std::clamp (compactPanelCombo.getSelectedId() - 1, 0, 3);
-
    #if DUSKSTUDIO_HAS_NATIVE_UI
     const auto placeNativePanel = [] (auto& proxy, const auto& bounds)
     {
@@ -1052,43 +952,7 @@ void MasteringView::resized()
     };
     syncNativePanelVisibility();
     placeNativePanel (eqProxy, eqPanel);
-   #endif
-
-    // Multiband Comp panel: the split header on top, the preset picker under
-    // it; paint() draws the band overview below.
-    if (compPanelWrapper != nullptr)
-    {
-        compPanelWrapper->setVisible (! compact || selected == 1);
-        compPanelWrapper->setBounds (compPanel);
-        auto inner = compPanelWrapper->getLocalBounds().reduced (8);
-        // Title bar (full width), then a centred preset picker row beneath it.
-        auto headerRow = inner.removeFromTop (22);
-        if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (headerRow);
-#if DUSKSTUDIO_HAS_DUSK_DSP
-        inner.removeFromTop (8);
-        auto presetRow = inner.removeFromTop (24);
-        const int capW    = 52;
-        const int dropW   = std::min (190, presetRow.getWidth() - capW - 6);
-        if (dropW <= 0)
-        {
-            // Too narrow for caption + combo - hide rather than lay out negative
-            // widths (mirrors the transport row's width-clamped placement above).
-            compPresetCaption.setVisible (false);
-            compPresetCombo.setVisible (false);
-        }
-        else
-        {
-            compPresetCaption.setVisible (true);
-            compPresetCombo.setVisible (true);
-            auto cluster = presetRow.withSizeKeepingCentre (capW + 6 + dropW, 24);
-            compPresetCaption.setBounds (cluster.removeFromLeft (capW));
-            cluster.removeFromLeft (6);
-            compPresetCombo.setBounds (cluster);
-        }
-#endif
-    }
-
-   #if DUSKSTUDIO_HAS_NATIVE_UI
+    placeNativePanel (compProxy, compPanel);
     placeNativePanel (limiterProxy, limPanel);
     placeNativePanel (phaseProxy, phasePanel);
     scheduleNativePanelSync();
@@ -1109,7 +973,8 @@ void MasteringView::updatePhaseAnalysis()
     }
     const double deviceRate = engine.getCurrentSampleRate();
     const bool active = isShowing() && engine.getStage() == AudioEngine::Stage::Mastering
-                        && ! exportModal.isOpen() && deviceRate > 0.0;
+                        && ! exportModal.isOpen() && deviceRate > 0.0
+                        && session.mastering().phase.enabled.load (std::memory_order_relaxed);
     if (! active)
     {
         feed.discardPending();
@@ -1153,6 +1018,10 @@ void MasteringView::updatePhaseAnalysis()
 void MasteringView::timerCallback()
 {
     syncNativePanelVisibility();
+    // The switch also changes with a session load, which knows nothing of the
+    // monitor fold.
+    if (! session.mastering().phase.enabled.load (std::memory_order_relaxed) && engine.getMasteringMonoMonitor())
+        engine.setMasteringMonoMonitor (false);
     updatePhaseAnalysis();
     auto& player = engine.getMasteringPlayer();
     auto& m = session.mastering();
@@ -1160,26 +1029,19 @@ void MasteringView::timerCallback()
     if (player.getSourceGeneration() != labelSourceGeneration)
         updateLabels();
 
-    // The engage switch and the band values change from the editor's BYPASS
-    // and controls, a session load, MIDI or a preset; each repaints only on a
-    // change.
-    if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
-    if (refreshCompOverview() && compPanelWrapper != nullptr && compPanelWrapper->isVisible())
-        repaint (compPanelWrapper->getBounds());
-
     // Clock from the player playhead.
     const double sr = player.getSourceSampleRate();
     const double sec = (sr > 0.0) ? (double) player.getPlayhead() / sr : 0.0;
     const int mins = (int) (sec / 60.0);
     const int secs = (int) sec % 60;
     const int ms   = (int) ((sec - std::floor (sec)) * 1000.0);
-    clockLabel.setText (juce::String::formatted ("%02d:%02d.%03d", mins, secs, ms),
-                         juce::dontSendNotification);
+    char text[64];
+    std::snprintf (text, sizeof text, "%02d:%02d.%03d", mins, secs, ms);
+    clockLabel.setText (text, juce::dontSendNotification);
 
-    grLabel.setText (juce::String::formatted ("Comp GR %5.1f dB    Lim GR %5.1f dB",
-                                                 m.meterCompGrDb.load(),
-                                                 m.meterLimiterGrDb.load()),
-                      juce::dontSendNotification);
+    std::snprintf (text, sizeof text, "Comp GR %5.1f dB    Lim GR %5.1f dB",
+                   (double) m.meterCompGrDb.load(), (double) m.meterLimiterGrDb.load());
+    grLabel.setText (text, juce::dontSendNotification);
 
     auto fmtLufs = [] (float v)
     {

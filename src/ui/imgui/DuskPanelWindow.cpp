@@ -674,6 +674,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         bool onMouse (const MouseEvent& event) override
         {
             noteActivity();
+            if (event.press && owner.callbacks.pressed)
+                owner.callbacks.pressed();
             return DGL::ImGuiTopLevelWidget::onMouse (event);
         }
 
@@ -1339,6 +1341,13 @@ bool DuskPanelWindow::clickControlForScenario (const std::string& control)
     impl->panelWidget->clickForScenario (point);
     return true;
 }
+std::optional<ImVec2> DuskPanelWindow::controlAtForScenario (const std::string& control, float position) const
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || ! impl->view->controlPointForScenario (control, point, position))
+        return std::nullopt;
+    return point;
+}
 bool DuskPanelWindow::doubleClickControlForScenario (const std::string& control)
 {
     ImVec2 point;
@@ -1435,6 +1444,12 @@ void DuskPanelWindow::wake()
 {
     if (isOpen() && impl->panelWidget != nullptr)
         impl->panelWidget->noteActivity();
+}
+void DuskPanelWindow::pointerPressedOutside()
+{
+    if (! isOpen() || impl->view == nullptr) return;
+    impl->view->focusLost();
+    wake();
 }
 bool DuskPanelWindow::inputSeenForScenario() noexcept
 {

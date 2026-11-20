@@ -1,12 +1,17 @@
 #include "MasteringLimiterView.h"
 #include "DuskTheme.h"
 #include "PanelControls.h"
+#include "ScenarioControlMap.h"
 #include "../../dsp/BrickwallLimiter.h"
 #include "../../session/Session.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace duskstudio::imgui
 {
@@ -96,7 +101,41 @@ public:
     ImVec2 preferredSize() const override { return ImVec2 (kMinPanelW, kMinPanelH); }
     bool wantsPlate() const override { return false; }
 
+    // The session's names: "limiter_enabled", "limiter_drive_db" (the Threshold
+    // column), "limiter_ceiling_db", "limiter_mode", "limiter_release_ms",
+    // "limiter_lookahead_ms" and "limiter_stereo_link", while the last frame drew
+    // the control whole and apart from the others.
+    // "list:<n>" is entry n of the open Mode list.
+    bool controlPointForScenario (const std::string& name, ImVec2& point, float fraction) const override
+    {
+        if (const auto entry = formListEntry (name, modeList.size()))
+        {
+            const auto& item = modeList[*entry];
+            point = { 0.5f * (item.x + item.z), 0.5f * (item.y + item.w) };
+            return true;
+        }
+        return scenarioControls.point (name, fraction, point.x, point.y);
+    }
+
+    // An open Mode list holds the keyboard, as the other panels' lists do, so its
+    // arrows, Return and Escape reach it.
+    bool capturesKeyboard() const override { return listOpen; }
+    bool escapeDismisses() const override { return ! listWasOpen; }
+    void focusLost() override { listToClose = true; }
+
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
+    {
+        listWasOpen = listOpen;
+        if (std::exchange (listToClose, false))
+            formCloseLists();
+        modeList.clear();
+        scenarioControls.begin ({ origin.x, origin.y, origin.x + size.x, origin.y + size.y });
+        drawPanel (ctx, origin, size);
+        scenarioControls.settle();
+        listOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    }
+
+    void drawPanel (dw::Context& ctx, ImVec2 origin, ImVec2 size)
     {
         const ImVec2 br (origin.x + size.x, origin.y + size.y);
         ctx.dl->AddRectFilled (origin, br, rgba (kPanelFill));
@@ -219,6 +258,7 @@ private:
         const auto pill = dw::modulePill (ctx, "##limiter-header", at,
                                           ImVec2 (at.x + width, at.y + ctx.s (kHeaderH)),
                                           "LIMITER", engaged, rgba (kHeaderAccent));
+        scenarioControls.note ("limiter_enabled", { at.x, at.y, at.x + width, at.y + ctx.s (kHeaderH) });
         if (pill.toggled || pill.labelClicked)
             params.limiterEnabled.store (! engaged, std::memory_order_relaxed);
     }
@@ -247,8 +287,9 @@ private:
             mode = std::clamp (params.limiterMode.load (std::memory_order_relaxed), 0, 2);
             const ScopedFormStyle style (ctx);
             if (formCombo (ctx, "##limiter-mode", ImVec2 (left, y),
-                           ImVec2 (right, y + ctx.s (kComboH)), kModeItems, 3, mode))
+                           ImVec2 (right, y + ctx.s (kComboH)), kModeItems, 3, mode, true, &modeList))
                 params.limiterMode.store (mode, std::memory_order_relaxed);
+            scenarioControls.note ("limiter_mode", { left, y, right, y + ctx.s (kComboH) });
         }
         y += ctx.s (kComboH) + ctx.s (12.0f);
 
@@ -259,13 +300,13 @@ private:
         const float centreX = (left + right) * 0.5f;
 
         caption ("Release");
-        y += drawKnobRow (ctx, "##limiter-release", centreX, y, knobRadius,
+        y += drawKnobRow (ctx, "##limiter-release", "limiter_release_ms", centreX, y, knobRadius,
                           params.limiterReleaseMs,
                           dw::Range::withMidPoint (10.0f, 1000.0f, 100.0f), 100.0f, "%.0f ms");
         y += ctx.s (8.0f);
 
         caption ("Lookahead");
-        y += drawKnobRow (ctx, "##limiter-lookahead", centreX, y, knobRadius,
+        y += drawKnobRow (ctx, "##limiter-lookahead", "limiter_lookahead_ms", centreX, y, knobRadius,
                           params.limiterLookaheadMs, dw::Range (0.1f, 10.0f), 2.0f, "%.1f ms");
         formTooltip ("More lookahead catches transients more cleanly but adds latency.");
         y += ctx.s (8.0f);
@@ -276,12 +317,14 @@ private:
             if (formCheckbox (ctx, "##limiter-link", ImVec2 (left, y), ctx.s (kToggleH),
                               "Stereo link", stereoLink))
                 params.limiterStereoLink.store (stereoLink, std::memory_order_relaxed);
+            const auto linkMin = ImGui::GetItemRectMin(), linkMax = ImGui::GetItemRectMax();
+            scenarioControls.note ("limiter_stereo_link", { linkMin.x, linkMin.y, linkMax.x, linkMax.y });
             formTooltip ("When on, gain reduction is matched across L/R to preserve the "
                          "stereo image. Off limits each channel independently.");
         }
     }
 
-    float drawKnobRow (dw::Context& ctx, const char* id, float centreX, float top,
+    float drawKnobRow (dw::Context& ctx, const char* id, const char* name, float centreX, float top,
                        float radius, std::atomic<float>& parameter, const dw::Range& range,
                        float defaultValue, const char* format)
     {
@@ -293,8 +336,18 @@ private:
         style.fill = rgba (kKnobAccent);
         style.value = readout;
 
-        const auto result = dw::knob (ctx, id, ImVec2 (centreX, top + radius + ctx.s (2.0f)),
+        const float centreY = top + radius + ctx.s (2.0f);
+        const auto result = dw::knob (ctx, id, ImVec2 (centreX, centreY),
                                       radius, value, range, defaultValue, style);
+        const float valueSize = ctx.s (10.5f);
+        const float valueW = std::max (ctx.fonts->label != nullptr
+                                           ? ctx.fonts->label->CalcTextSizeA (valueSize, FLT_MAX, 0.0f, readout).x
+                                           : 0.0f,
+                                       radius * 2.0f);
+        const ScenarioControlMap::Box dial { centreX - radius, centreY - radius, centreX + radius, centreY + radius };
+        scenarioControls.note (name, dial.unite ({ centreX - valueW * 0.5f, centreY + radius + ctx.s (1.0f),
+                                                   centreX + valueW * 0.5f,
+                                                   centreY + radius + ctx.s (1.0f) + valueSize }));
         if (result.changed)
             parameter.store (clampf (range.start, range.end, result.value),
                              std::memory_order_relaxed);
@@ -385,6 +438,18 @@ private:
                   (bar.x1 - bar.x0) + ctx.s (28.0f), rgba (kCaptionText), label);
     }
 
+    // A drag column as the pointer finds it: the well and the caption over it.
+    void noteColumn (const dw::Context& ctx, const char* name, const Rect& bar, const char* caption)
+    {
+        const float size = ctx.s (10.5f);
+        const float captionW = ctx.fonts->pill != nullptr
+                             ? ctx.fonts->pill->CalcTextSizeA (size, FLT_MAX, 0.0f, caption).x : 0.0f;
+        const float centreX = 0.5f * (bar.x0 + bar.x1);
+        const ScenarioControlMap::Box well { bar.x0, bar.y0, bar.x1, bar.y1 };
+        scenarioControls.note (name, well.unite ({ centreX - captionW * 0.5f, bar.y0 - ctx.s (18.0f),
+                                                   centreX + captionW * 0.5f, bar.y0 - ctx.s (18.0f) + size }));
+    }
+
     void drawLevelFill (dw::Context& ctx, const Rect& bar, float frac, unsigned int top,
                         unsigned int bottom)
     {
@@ -429,6 +494,7 @@ private:
         ctx.dl->AddLine (ImVec2 (bar.x0, handleY), ImVec2 (bar.x1, handleY),
                          rgba (kThreshLine), ctx.s (1.4f));
         drawCaption (ctx, bar, "Threshold");
+        noteColumn (ctx, "limiter_drive_db", bar, "Threshold");
 
         char value[16];
         std::snprintf (value, sizeof value, "%.2f", static_cast<double> (-drive));
@@ -457,6 +523,7 @@ private:
         ctx.dl->AddLine (ImVec2 (bar.x0, handleY), ImVec2 (bar.x1, handleY),
                          rgba (kCeilingLine), ctx.s (1.4f));
         drawCaption (ctx, bar, "Ceiling");
+        noteColumn (ctx, "limiter_ceiling_db", bar, "Ceiling");
 
         char value[16];
         std::snprintf (value, sizeof value, "%.2f", static_cast<double> (ceiling));
@@ -596,6 +663,7 @@ private:
 
     MasteringParams& params;
     BrickwallLimiter& limiter;
+    ScenarioControlMap scenarioControls;
 
     float displayedInDb = -100.0f;
     float displayedOutDb = -100.0f;
@@ -606,6 +674,8 @@ private:
     int mode = 0;
     bool stereoLink = false;
     bool threshResetHeld = false;
+    bool listOpen = false, listWasOpen = false, listToClose = false;
+    std::vector<ImVec4> modeList;
     bool ceilingResetHeld = false;
 };
 } // namespace

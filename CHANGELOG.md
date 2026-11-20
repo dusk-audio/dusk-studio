@@ -58,6 +58,26 @@ canonical source.
   was still running after about 3 seconds. A terminal line says which. The
   count turns the readout amber, and the double-click that resets the other
   counters resets it.
+- **The multiband compressor's panel.** On the MASTERING page every control of
+  the multiband compressor is on the page, with nothing to open. A band
+  display from 20 Hz to 20 kHz shows each band's stretch in its colour, its
+  gain reduction on a 0 to -20 dB scale and the three crossovers, which drag
+  sideways and sit where the compressor plays them. Below it the four bands
+  sit side by side, each with **ON**, **S** and **BYP** and its **THRESH**,
+  **RATIO**, **ATTACK**, **RELEASE** and **MAKEUP** dials, and **MIX**,
+  **OUTPUT** and **AUTO MAKEUP** run along the bottom. The last two bands
+  that are on stay on, and switching a band off clears its solo. A
+  double-click resets a dial or a crossover, and Cmd-click on macOS or
+  Ctrl-click elsewhere types a value. Only the **MULTIBAND COMP** header
+  engages the compressor. The **PRESET** picker sits under the header, and
+  its list opens inside the panel with every preset showing. Picking the
+  name it shows applies that preset again, and it reads **Select
+  preset...** again once another session opens.
+- **PHASE switches off.** The **PHASE** header's status light is a switch,
+  on by default and saved with the session. Off, nothing is analysed, the
+  readings blank and **Mono** is released and greyed out; held minima and
+  warnings are kept. Switched on again it starts a fresh analysis window. Lit,
+  the light is green with a reading and amber while it waits for one.
 - **Experimental native Wayland for source builds.** A source build with
   shared Wayland embedding support can run its main window without Xwayland
   when started with `DUSKSTUDIO_NATIVE_WAYLAND=1`. X11 plug-in editors still
@@ -71,8 +91,9 @@ canonical source.
   in, so a setting sounds as it does in the plug-in. A channel strip offers
   its Opto, FET and VCA modes, the buses and the master its Bus mode, and
   the mastering chain its Multiband mode. **COMP** on a strip, a bus or the
-  master and **MULTIBAND COMP** on the mastering page open the plug-in's
-  own editor, which replaces Dusk Studio's old compressor panels. The strip
+  master opens the plug-in's own editor, which replaces Dusk Studio's old
+  compressor panels. The mastering page's multiband compressor keeps every
+  control on the page in a panel of its own. The strip
   faces keep the controls that fit: the threshold handle moves Opto's peak
   reduction, FET's input or VCA's threshold, and the knobs are the mode's
   own, with the plug-in's ranges, readouts and defaults. On a bus and the
@@ -196,6 +217,19 @@ canonical source.
 
 ### Fixed
 
+- **A drop-down on the MASTERING page leaves every module up.** The loudness
+  target list took the limiter and Phase off the screen while it was open,
+  and in a compact window the module picker's list took the shown module off,
+  though each list covered only a sliver of them. Both lists now open above
+  their picker, or over it, where a list below it would lie over a module.
+  Over its picker a list puts the current choice on the picker, so a second
+  click there keeps that choice. The rule holds for every drop-down in the
+  app whose list would lie over a native panel or an open plug-in editor:
+  an aux lane panel, the MIXING page's mini timeline or a plug-in editor.
+  A list left open in the multiband, limiter or Phase panel now closes at a
+  click anywhere else on the page. It used to keep the keyboard, so
+  **Space** did nothing and Down and Return could pick an entry out of
+  sight.
 - **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
   SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
   stayed silent until the audio device restarted, for example after a buffer

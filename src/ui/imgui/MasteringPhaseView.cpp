@@ -1,5 +1,6 @@
 #include "MasteringPhaseView.h"
 #include "PanelControls.h"
+#include "ScenarioControlMap.h"
 #include "../../dsp/PhaseAnalyzer.h"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace duskstudio::imgui
 {
@@ -17,6 +19,7 @@ namespace dw = DuskWidgets;
 constexpr ImU32 kWarning = IM_COL32 (240, 112, 96, 255);
 constexpr ImU32 kHealthy = IM_COL32 (112, 194, 112, 255);
 constexpr ImU32 kAccent = IM_COL32 (90, 138, 208, 255);
+constexpr ImU32 kWaiting = IM_COL32 (224, 176, 64, 255);
 constexpr ImU32 kBright = IM_COL32 (224, 224, 230, 255);
 constexpr ImU32 kMuted = IM_COL32 (150, 150, 160, 255);
 
@@ -36,11 +39,26 @@ public:
     bool wantsPlate() const override { return false; }
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! popupWasOpen && ! keyboardWasActive; }
+    void focusLost() override { listToClose = true; }
 
+    // The session's names, "phase_enabled", "phase_bands", "phase_q" and
+    // "phase_averaging_ms", and "phase_display", "phase_reset" and "phase_mono", are
+    // reported only while the last frame drew that control whole and apart from the
+    // others; the short names below only while its point is on screen.
+    // "phase_display:<n>" is the display picker while it shows choice n.
     bool controlPointForScenario (const std::string& name, ImVec2& point, float fraction) const override
     {
+        if (scenarioControls.point (name, fraction, point.x, point.y)) return true;
+        if (name == "phase_display:" + std::to_string (mode))
+            return scenarioControls.point ("phase_display", fraction, point.x, point.y);
+        if (const auto entry = formListEntry (name, displayList.size()))
+        {
+            const auto& item = displayList[*entry];
+            point = { 0.5f * (item.x + item.z), 0.5f * (item.y + item.w) };
+            return true;
+        }
         static constexpr const char* names[] = { "reset", "mono", "mode", "bands", "q", "averaging", "band",
-                                                "bands-knob", "q-knob", "averaging-knob" };
+                                                "bands-knob", "q-knob", "averaging-knob", "header" };
         for (size_t i = 0; i < controls.size(); ++i)
             if (name == names[i] && controls[i].last.x > controls[i].first.x)
             {
@@ -58,20 +76,27 @@ public:
     {
         popupWasOpen = popupOpen;
         keyboardWasActive = keyboardActive;
+        if (std::exchange (listToClose, false))
+            formCloseLists();
+        displayList.clear();
         controls = {};
         viewport = {};
+        header = {};
         const ImVec2 bottomRight { origin.x + size.x, origin.y + size.y };
         ctx.dl->AddRectFilled (origin, bottomRight, IM_COL32 (32, 32, 42, 255));
         ctx.dl->AddRect (origin, bottomRight, IM_COL32 (58, 58, 70, 255));
         const ScopedFormStyle style (ctx);
         ImGui::SetCursorScreenPos (origin);
+        scenarioControls.begin ({});
         if (ImGui::BeginChild ("##phase-body", size, ImGuiChildFlags_None,
                                ImGuiWindowFlags_NoBackground))
         {
             auto* outer = ctx.dl;
             ctx.dl = ImGui::GetWindowDrawList();
             viewport = { ctx.dl->GetClipRectMin(), ctx.dl->GetClipRectMax() };
+            scenarioControls.begin ({ viewport.first.x, viewport.first.y, viewport.last.x, viewport.last.y });
             drawBody (ctx, ImGui::GetCursorScreenPos(), { ImGui::GetContentRegionAvail().x, size.y });
+            noteControls();
             ctx.dl = outer;
         }
         ImGui::EndChild();
@@ -88,7 +113,8 @@ public:
         const auto& report = analyzer.report();
         const auto settings = params.snapshot();
         StampHash hash;
-        hash.add (settings.bands).add (settings.q).add (settings.averagingMs).add (getMono())
+        hash.add (params.enabled.load (std::memory_order_relaxed))
+            .add (settings.bands).add (settings.q).add (settings.averagingMs).add (getMono())
             .add (report.settings.bands).add (report.warming).add (shown (report.windowSeconds, 1.0e-5))
             .add (shown (report.coherenceTimeSeconds, 0.1));
         addReading (hash, report.broadband);
@@ -126,31 +152,42 @@ private:
         const float width = right - left;
         if (width < ctx.s (100.0f)) return;
         const auto& report = analyzer.report();
+        const bool on = params.enabled.load (std::memory_order_relaxed);
         float y = origin.y + inset;
-        ctx.dl->AddRectFilled ({ left, y }, { right, y + ctx.s (22.0f) }, ctx.theme->pillFill, ctx.s (4.0f));
-        ctx.dl->AddRect ({ left, y }, { right, y + ctx.s (22.0f) }, ctx.theme->pillBorder, ctx.s (4.0f));
-        ctx.dl->AddCircleFilled ({ left + ctx.s (10.0f), y + ctx.s (11.0f) }, ctx.s (4.0f),
-                                report.broadband.correlationValid ? kHealthy : ctx.theme->ledOff);
-        dw::text (ctx, ctx.fonts->pill, ctx.s (10.5f), { left, y + ctx.s (5.0f) }, width, kBright, "PHASE");
+        // Lit, the light also says whether there is a reading yet: green with
+        // one, amber while it waits.
+        controls[10] = { { left, y }, { left + width * 0.2f, y + ctx.s (22.0f) } };
+        header = { left, y, right, y + ctx.s (22.0f) };
+        const auto pill = dw::modulePill (ctx, "##phase-header", { left, y }, { right, y + ctx.s (22.0f) }, "PHASE",
+                                          on, report.broadband.correlationValid ? kHealthy : kWaiting);
+        formTooltip ("Switch the analysis on or off. Lit: green with a reading, amber while it waits.");
+        if (pill.toggled || pill.labelClicked)
+        {
+            params.enabled.store (! on, std::memory_order_relaxed);
+            if (on) setMono (false);
+        }
         y += ctx.s (22.0f) + gap;
         controls[2] = { { left, y }, { right, y + row } };
         static constexpr const char* modes[] = { "Correlation", "Coherence / time" };
-        formCombo (ctx, "##phase-mode", controls[2].first, controls[2].last, modes, 2, mode);
+        formCombo (ctx, "##phase-mode", controls[2].first, controls[2].last, modes, 2, mode, true, &displayList);
         y += row + gap;
 
         const float graphHeight = std::max (ctx.s (152.0f), size.y - (y - origin.y) - ctx.s (304.0f));
-        drawBands (ctx, { left, y }, { right, y + graphHeight }, report);
+        drawBands (ctx, { left, y }, { right, y + graphHeight }, report, on);
         y += graphHeight + gap;
-        drawBroadband (ctx, { left, y }, width, report.broadband);
+        drawBroadband (ctx, { left, y }, width, on ? report.broadband : PhaseAnalyzer::Reading {});
         y += ctx.s (44.0f) + gap;
 
         controls[0] = { { left, y }, { left + ctx.s (62.0f), y + row } };
         if (formButton (ctx, "##phase-reset", controls[0].first, controls[0].last, "Reset")) analyzer.resetHeld();
         formTooltip ("Clear held correlation minima and sticky warnings.");
-        bool mono = getMono();
+        bool mono = on && getMono();
         controls[1] = { { right - ctx.s (78.0f), y }, { right, y + row } };
+        ImGui::BeginDisabled (! on);
         if (formCheckbox (ctx, "##phase-mono", controls[1].first, row, "Mono", mono)) setMono (mono);
-        formTooltip ("Fold live monitoring to (L+R)/2. Analysis and export stay stereo.");
+        ImGui::EndDisabled();
+        formTooltip (on ? "Fold live monitoring to (L+R)/2. Analysis and export stay stereo."
+                        : "Switch PHASE on to fold live monitoring to mono.");
         y += row + gap;
 
         auto settings = params.snapshot();
@@ -169,11 +206,12 @@ private:
         formTooltip ("Correlation time constant. Coherence averages at least eight FFT windows and needs sustained audio to settle.");
         y += ctx.s (88.0f) + gap;
 
-        const auto& band = report.bands[(size_t) selectedBand];
+        const auto& selected = report.bands[(size_t) selectedBand];
+        const auto band = on ? selected : PhaseAnalyzer::Reading {};
         ctx.dl->AddLine ({ left, y }, { right, y }, ctx.theme->pillDivider);
         y += ctx.s (8.0f);
         char range[64];
-        std::snprintf (range, sizeof range, "%.0f to %.0f Hz", band.lowHz, band.highHz);
+        std::snprintf (range, sizeof range, "%.0f to %.0f Hz", selected.lowHz, selected.highHz);
         dw::text (ctx, ctx.fonts->pill, ctx.s (11.0f), { left, y }, width, kBright, range, dw::Align::left);
         y += ctx.s (17.0f);
         ImGui::SetCursorScreenPos ({ left, y });
@@ -190,6 +228,7 @@ private:
             if (band.coherenceValid) ImGui::Text ("Coherence %.2f", band.coherence);
             else ImGui::TextUnformatted ("Coherence --");
         }
+        ImGui::SetCursorScreenPos ({ left, ImGui::GetCursorScreenPos().y });
         if (band.monoValid) ImGui::Text ("Mono loss %.1f dB", band.monoLossDb);
         else ImGui::TextUnformatted ("Mono loss --");
         y = ImGui::GetCursorScreenPos().y + ctx.s (4.0f);
@@ -205,8 +244,29 @@ private:
         }
         else ImGui::TextDisabled ("No held phase warnings");
         ImGui::SetCursorScreenPos ({ left, ImGui::GetCursorScreenPos().y + ctx.s (4.0f) });
-        if (ImGui::CollapsingHeader ("Details")) drawReadings (report);
+        if (ImGui::CollapsingHeader ("Details"))
+        {
+            if (on) drawReadings (report);
+            else ImGui::TextWrapped ("PHASE is off: nothing is analysed until it is switched on.");
+        }
         ImGui::Dummy ({ 0.0f, inset });
+    }
+
+    void noteControls()
+    {
+        const auto box = [this] (size_t i)
+        {
+            return ScenarioControlMap::Box { controls[i].first.x, controls[i].first.y,
+                                             controls[i].last.x, controls[i].last.y };
+        };
+        scenarioControls.note ("phase_enabled", header);
+        scenarioControls.note ("phase_display", box (2));
+        scenarioControls.note ("phase_reset", box (0));
+        scenarioControls.note ("phase_mono", box (1));
+        scenarioControls.note ("phase_bands", box (3).unite (box (7)));
+        scenarioControls.note ("phase_q", box (4).unite (box (8)));
+        scenarioControls.note ("phase_averaging_ms", box (5).unite (box (9)));
+        scenarioControls.settle();
     }
 
     bool drawControl (dw::Context& ctx, size_t index, const char* label, const char* id, ImVec2 at,
@@ -236,7 +296,7 @@ private:
         return knob.changed || edited;
     }
 
-    void drawBands (dw::Context& ctx, ImVec2 tl, ImVec2 br, const PhaseAnalyzer::Report& report)
+    void drawBands (dw::Context& ctx, ImVec2 tl, ImVec2 br, const PhaseAnalyzer::Report& report, bool on)
     {
         const ImVec2 plot { tl.x + ctx.s (27.0f), tl.y + ctx.s (10.0f) };
         const ImVec2 end { br.x - ctx.s (8.0f), br.y - ctx.s (23.0f) };
@@ -264,7 +324,8 @@ private:
         static constexpr const char* labels[] = { "20", "100", "1k", "10k", "20k Hz" };
         for (size_t i = 0; i < std::size (frequencies); ++i)
         {
-            if (i == 3 && width < ctx.s (300.0f)) continue;
+            // 10k clears the right-hand "20k Hz" only on a plot this wide.
+            if (i == 3 && width < ctx.s (520.0f)) continue;
             const float x = plot.x + std::log10 (frequencies[i] / 20.0f) / 3.0f * width;
             ctx.dl->AddLine ({ x, plot.y }, { x, end.y }, IM_COL32 (38, 42, 49, 255));
             const float labelWidth = ctx.s (i == 4 ? 44.0f : 30.0f);
@@ -281,7 +342,7 @@ private:
             const float inset = std::min (ctx.s (1.5f), step * 0.15f);
             if (i == selectedBand)
                 ctx.dl->AddRectFilled ({ x, plot.y }, { x + step, end.y }, IM_COL32 (90, 138, 208, 24));
-            const bool valid = mode == 0 ? band.correlationValid : band.coherenceValid;
+            const bool valid = on && (mode == 0 ? band.correlationValid : band.coherenceValid);
             if (valid)
             {
                 validReading = true;
@@ -299,19 +360,19 @@ private:
                         ctx.dl->AddLine ({ x + inset, y }, { x + step - inset, y },
                                          IM_COL32 (15, 17, 23, 150), ctx.s (1.0f));
             }
-            if (mode == 0 && band.minimumValid)
+            if (on && mode == 0 && band.minimumValid)
             {
                 const float at = zero - (float) band.minimumCorrelation * scale;
                 ctx.dl->AddLine ({ x + inset, at }, { x + step - inset, at }, kBright, ctx.s (1.5f));
             }
-            if (band.flagged)
+            if (on && band.flagged)
                 ctx.dl->AddRectFilled ({ x + inset, end.y + ctx.s (2.0f) },
                                        { x + step - inset, end.y + ctx.s (4.0f) }, kWarning);
         }
         ctx.dl->AddLine ({ plot.x, zero }, { end.x, zero }, IM_COL32 (160, 166, 176, 255), ctx.s (1.0f));
         if (! validReading)
             dw::text (ctx, ctx.fonts->caption, ctx.s (11.0f), { plot.x, plot.y + height * 0.25f }, width,
-                      kMuted, report.warming ? "Warming up" : "No stereo reading");
+                      kMuted, ! on ? "PHASE is off" : report.warming ? "Warming up" : "No stereo reading");
         controls[6] = { plot, end };
         dw::hitArea (ctx, "##phase-band", plot, end);
         if (ImGui::IsItemHovered() || ImGui::IsItemActive())
@@ -401,10 +462,13 @@ private:
     PhaseAnalyzer& analyzer;
     std::function<bool()> getMono;
     std::function<void (bool)> setMono;
-    std::array<Rect, 10> controls {};
+    std::array<Rect, 11> controls {};
     Rect viewport;
+    ScenarioControlMap::Box header;
+    ScenarioControlMap scenarioControls;
+    std::vector<ImVec4> displayList;
     int mode = 0, selectedBand = 0;
-    bool popupOpen = false, popupWasOpen = false;
+    bool popupOpen = false, popupWasOpen = false, listToClose = false;
     bool keyboardActive = false, keyboardWasActive = false;
 };
 }

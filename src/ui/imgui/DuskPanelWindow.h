@@ -198,6 +198,10 @@ public:
         // frame: whatever it does must not run before that frame is out.
         std::function<void (ShellShortcut)> shortcut;
 
+        // The pointer went down inside the panel. Panels beside it never hear of
+        // the press, so the caller tells them (pointerPressedOutside).
+        std::function<void()> pressed;
+
         // Where the child belongs now. Polled while the window is open so a host
         // resized underneath it follows without every caller having to listen for
         // one; leaving it empty pins the child to the geometry open() was given.
@@ -249,6 +253,11 @@ public:
     // key it passed on, a commit, a take swap. The window draws as it does after input.
     void wake();
 
+    // The pointer went down in the host window outside this child, which the child
+    // never hears of; on Windows, where the child never holds the keyboard, no focus
+    // change says so either. The view is told as it is of a lost focus.
+    void pointerPressedOutside();
+
     void close();
     bool isOpen() const noexcept;
 
@@ -273,6 +282,9 @@ public:
     };
 
     bool clickControlForScenario (const std::string& control);
+    // Where the view's last frame put the control, in the window's pixels; empty
+    // where the view reports none.
+    std::optional<ImVec2> controlAtForScenario (const std::string& control, float position = 0.5f) const;
     // Two clicks the view reads as a double-click at any frame rate.
     bool doubleClickControlForScenario (const std::string& control);
     // "scroll-down", "focus-out", "hover" or "shift + hover" (the pointer moving over the
