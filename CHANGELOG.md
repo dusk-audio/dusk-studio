@@ -217,6 +217,12 @@ canonical source.
 
 ### Fixed
 
+- **Auto makeup gives back heavy compression.** A compressor's **AUTO
+  MAKEUP** now makes up as much as 24 dB. It stopped at 12 dB, so a track,
+  bus or master compressed by more than that came out quieter than it went
+  in, by everything past 12 dB. It also reaches its level within a second
+  of playback starting, where it took 10 seconds and more under heavy
+  compression, so a bounce no longer fades in.
 - **A drop-down on the MASTERING page leaves every module up.** The loudness
   target list took the limiter and Phase off the screen while it was open,
   and in a compact window the module picker's list took the shown module off,

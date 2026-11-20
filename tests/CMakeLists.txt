@@ -1204,6 +1204,7 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         multi_comp_stage.cpp
+        multi_comp_auto_makeup.cpp
         comp_editor_host.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/CompEditorHost.cpp
         comp_stage_strips.cpp
