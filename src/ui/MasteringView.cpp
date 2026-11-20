@@ -212,7 +212,12 @@ static_assert (kNumMasteringTargets == MasteringParams::kNumTargetPresets,
 struct MasteringView::PagePress final : public juce::MouseListener
 {
     explicit PagePress (MasteringView& owner) : view (owner) {}
-    void mouseDown (const juce::MouseEvent&) override { view.closePanelLists(); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const auto r = e.getEventRelativeTo (&view);
+        if (! view.onNativePanel (r.x, r.y))
+            view.closePanelLists();
+    }
     MasteringView& view;
 };
 
@@ -578,12 +583,30 @@ int MasteringView::sideBySideWindowWidthForScenario() const
     return around + 2 * kPageInset + kSideBySideMin;
 }
 
+bool MasteringView::onNativePanel (int x, int y) const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const std::array<std::pair<const imgui::DuskPanelWindow*, const NativePanelProxy*>, 4> panels { {
+        { eqWindow.get(), &eqProxy }, { compWindow.get(), &compProxy },
+        { limiterWindow.get(), &limiterProxy }, { phaseWindow.get(), &phaseProxy }
+    } };
+    for (const auto& panel : panels)
+        if (panel.first != nullptr && panel.first->isOpen() && panel.second->isVisible()
+            && panel.second->getBounds().contains (x, y))
+            return true;
+   #else
+    (void) x;
+    (void) y;
+   #endif
+    return false;
+}
+
 void MasteringView::closePanelLists (const imgui::DuskPanelWindow* pressed)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     for (auto* window : { eqWindow.get(), compWindow.get(), limiterWindow.get(), phaseWindow.get() })
         if (window != nullptr && window != pressed)
-            window->pointerPressedOutside();
+            window->closeLists();
    #else
     (void) pressed;
    #endif
@@ -1018,6 +1041,13 @@ void MasteringView::updatePhaseAnalysis()
 void MasteringView::timerCallback()
 {
     syncNativePanelVisibility();
+    // The window losing the keyboard is the user leaving it, where a native child's
+    // own focus is not: a window manager moves that on a press inside the child.
+    auto* const peer = getPeer();
+    const bool focused = peer != nullptr && peer->isFocused();
+    if (windowFocused && ! focused)
+        closePanelLists();
+    windowFocused = focused;
     // The switch also changes with a session load, which knows nothing of the
     // monitor fold.
     if (! session.mastering().phase.enabled.load (std::memory_order_relaxed) && engine.getMasteringMonoMonitor())

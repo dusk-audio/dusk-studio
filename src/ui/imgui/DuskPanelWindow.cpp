@@ -1445,10 +1445,10 @@ void DuskPanelWindow::wake()
     if (isOpen() && impl->panelWidget != nullptr)
         impl->panelWidget->noteActivity();
 }
-void DuskPanelWindow::pointerPressedOutside()
+void DuskPanelWindow::closeLists()
 {
     if (! isOpen() || impl->view == nullptr) return;
-    impl->view->focusLost();
+    impl->view->closeLists();
     wake();
 }
 bool DuskPanelWindow::inputSeenForScenario() noexcept

@@ -39,7 +39,7 @@ public:
     bool wantsPlate() const override { return false; }
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! popupWasOpen && ! keyboardWasActive; }
-    void focusLost() override { listToClose = true; }
+    void closeLists() override { listToClose = true; }
 
     // The session's names, "phase_enabled", "phase_bands", "phase_q" and
     // "phase_averaging_ms", and "phase_display", "phase_reset" and "phase_mono", are

@@ -2030,6 +2030,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto bounds = peer->getBounds();
         return { bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), peer->isFullScreen() ? 1 : 0 };
     }
+    std::vector<int> pointerInMainWindow() const override
+    {
+        const auto at = owner.getMouseXYRelative();
+        return { at.x, at.y };
+    }
     void restoreMainWindowBounds (const std::vector<int>& saved) override
     {
         auto* window = owner.getTopLevelComponent();

@@ -197,6 +197,10 @@ std::optional<std::size_t> formListEntry (const std::string& name, std::size_t c
 
 void formCloseLists()
 {
+    // A button held in the panel is the user working in it, whatever focus change
+    // a window manager made of the press.
+    if (ImGui::IsAnyMouseDown())
+        return;
     ImGui::ClosePopupsOverWindow (nullptr, false);
 }
 

@@ -98,7 +98,7 @@ try {
             "The snapshot passed over a folder it could not list: $refused"
     }
     $allowed = Get-RegressWindowsGuiSkips
-    Assert-Snapshot ($allowed.Count -eq 25) 'The Windows skip policy must name exactly 25 unsupported paths'
+    Assert-Snapshot ($allowed.Count -eq 26) 'The Windows skip policy must name exactly 26 unsupported paths'
     $skips = $allowed.Count
     $supported = (Get-RegressWindowsGuiCatalogCount) - $skips
     function Format-SuiteFooter([int]$pass, [int]$fail, [int]$skip) { return "=== scenarios: $pass pass, $fail fail, $skip skip ===" }

@@ -121,7 +121,7 @@ public:
     // arrows, Return and Escape reach it.
     bool capturesKeyboard() const override { return listOpen; }
     bool escapeDismisses() const override { return ! listWasOpen; }
-    void focusLost() override { listToClose = true; }
+    void closeLists() override { listToClose = true; }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
     {

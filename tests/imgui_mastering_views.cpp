@@ -1426,7 +1426,8 @@ TEST_CASE ("the mastering multiband header engages the compressor", "[mastering]
     REQUIRE_FALSE (params.compEnabled.load());
 }
 
-TEST_CASE ("a list open in a mastering panel closes when the panel loses the keyboard", "[mastering][imgui]")
+TEST_CASE ("a list open in a mastering panel closes when the user turns away, not when its child loses the keyboard",
+           "[mastering][imgui]")
 {
     Session session;
     auto& params = session.mastering();
@@ -1443,7 +1444,13 @@ TEST_CASE ("a list open in a mastering panel closes when the panel loses the key
         REQUIRE (view.capturesKeyboard());
         REQUIRE (view.controlPointForScenario ("list:0", point));
         panel.movePointer ({ -100.0f, -100.0f });
+        // An X11 window manager takes the child's focus on a press inside it.
         view.focusLost();
+        panel.frame (view);
+        panel.frame (view);
+        REQUIRE (view.capturesKeyboard());
+        REQUIRE (view.controlPointForScenario ("list:0", point));
+        view.closeLists();
         panel.frame (view);
         panel.frame (view);
         REQUIRE_FALSE (view.capturesKeyboard());
@@ -1551,4 +1558,35 @@ TEST_CASE ("a scenario control point stays inside the control, however short it 
         REQUIRE (map.point ("tall", fraction, x, y));
         REQUIRE_THAT (y, Catch::Matchers::WithinAbs (29.5 - fraction * 19.0, 1.0e-5));
     }
+}
+
+TEST_CASE ("a pick held down in a mastering list takes, whatever asks the lists to close meanwhile", "[mastering][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.clickControl (*view, "comp_preset");
+    ImVec2 point;
+    REQUIRE (view->controlPointForScenario ("list:2", point));
+    panel.movePointer (point);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.pressPointer (true);
+    panel.frame (*view);
+    // An X11 server can hand the page the same press, and the page asks every panel
+    // to close its lists before the release arrives.
+    view->closeLists();
+    panel.frame (*view);
+    panel.pressPointer (false);
+    panel.frame (*view);
+    panel.frame (*view);
+    REQUIRE (presetChoice == 2);
+    REQUIRE_FALSE (view->capturesKeyboard());
 }

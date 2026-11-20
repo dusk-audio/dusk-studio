@@ -151,7 +151,7 @@ public:
     bool wantsPlate() const override { return false; }
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! keyboardWasActive; }
-    void focusLost() override { listsToClose = true; }
+    void closeLists() override { listsToClose = true; }
 
     // A control is reported only while the last frame drew all of it inside the
     // panel, clear of every other control: each Multiband parameter by its symbol,

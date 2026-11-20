@@ -157,9 +157,13 @@ private:
     // The panel with this log tag while its proxy shows and its window is open.
     imgui::DuskPanelWindow* shownPanel (const std::string& panel) const;
    #endif
-    // A press anywhere on the page, or in another panel, closes a list left open in
-    // a native panel, which would otherwise keep the keyboard from the shell.
+    // A press anywhere on the page, or in another panel, or the window losing the
+    // keyboard, closes a list left open in a native panel, which would otherwise keep
+    // the keyboard from the shell. An X11 server can hand the page a press that lands
+    // in a native panel as well, which must leave that panel's list open for the
+    // release that picks from it.
     struct PagePress;
+    bool onNativePanel (int x, int y) const;
     void closePanelLists (const imgui::DuskPanelWindow* pressed = nullptr);
 
     // Open or close the native panels to match the stage. Coalesced onto the next
@@ -223,6 +227,7 @@ private:
     // name until another session loads, however often the panel's window reopens.
     int compPresetChoice = 0;
     std::unique_ptr<PagePress> pagePress;
+    bool windowFocused = false;
 
     EmbeddedModal exportModal;
 };

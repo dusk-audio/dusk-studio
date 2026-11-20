@@ -121,8 +121,13 @@ public:
     // The window lost the keyboard focus. A button held when that happens may
     // never report its release (a Wayland pointer leaving the window sends
     // none), so a view that sounds or edits for as long as a button is held
-    // lets go here.
+    // lets go here. Not a sign the user left the panel: an X11 window manager
+    // moves the focus between the child and its parent on a press inside it.
     virtual void focusLost() {}
+
+    // The user turned to something outside the panel (see
+    // DuskPanelWindow::closeLists): a list or menu left open closes.
+    virtual void closeLists() {}
 
     // Everything the body draws from that input does not change, folded into one
     // value, read between frames. The window draws when it changes, on input and
@@ -199,7 +204,7 @@ public:
         std::function<void (ShellShortcut)> shortcut;
 
         // The pointer went down inside the panel. Panels beside it never hear of
-        // the press, so the caller tells them (pointerPressedOutside).
+        // the press, so the caller tells them (closeLists).
         std::function<void()> pressed;
 
         // Where the child belongs now. Polled while the window is open so a host
@@ -253,10 +258,10 @@ public:
     // key it passed on, a commit, a take swap. The window draws as it does after input.
     void wake();
 
-    // The pointer went down in the host window outside this child, which the child
-    // never hears of; on Windows, where the child never holds the keyboard, no focus
-    // change says so either. The view is told as it is of a lost focus.
-    void pointerPressedOutside();
+    // The user turned away from this child: a press in the host window outside it,
+    // which the child never hears of, or the host window losing the keyboard. A
+    // list or menu the view has open closes on its next frame.
+    void closeLists();
 
     void close();
     bool isOpen() const noexcept;

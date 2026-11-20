@@ -57,7 +57,7 @@ bool formCombo (DuskWidgets::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
 std::optional<std::size_t> formListEntry (const std::string& name, std::size_t count);
 
 // Closes every list and menu open in the frame being drawn, as a press outside them
-// would. Called from a view's draw().
+// would, unless a button is held in the panel. Called from a view's draw().
 void formCloseLists();
 
 // A dropdown whose items are built at runtime. The pointers formCombo needs cannot be
