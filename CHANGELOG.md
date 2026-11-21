@@ -153,10 +153,8 @@ canonical source.
   Machine 2 uses less CPU, morphs over about 60 ms when the machine, the
   speed or the calibration changes, loads a preset without a burst, makes
   Gain Link the exact inverse of Input and aliases less on hot presets; its
-  latency goes from 56 to 62 samples. DuskVerb 2 and Sunset also carry the
-  fixes their plug-ins have made since those releases: DuskVerb 2's refined
-  room and plate voicing, and Sunset's revoiced Oracle brass and bells with
-  its chord headroom restored.
+  latency goes from 56 to 62 samples. DuskVerb 2 also carries the room and
+  plate voicing its plug-in has refined since that release.
   A MIDI binding on DuskVerb 2's **Algorithm** or on a Sunset mod-matrix
   destination covers the plug-in's longer list of choices, so a controller
   value that picked one engine or destination in 0.16 can pick another:
