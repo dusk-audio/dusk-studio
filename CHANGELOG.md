@@ -140,7 +140,7 @@ canonical source.
   its knob when no marking reaches that far.
 - **Built-in units at their plug-ins' released versions.** DuskVerb 2, Tape
   Echo 2, Tape Machine 2 and Sunset now build from DuskVerb 2 1.0.1, Tape
-  Echo 2 1.0.9, Tape Machine 2 1.0.12 and Sunset Circuits 1.1.0. DuskVerb 2
+  Echo 2 1.0.9, Tape Machine 2 1.0.13 and Sunset Circuits 1.1.0. DuskVerb 2
   gains a **Nonlinear** engine with four presets of its own and **MIX LOCK**,
   which keeps Dry / Wet and Bus Mode where they are when a preset or **INIT**
   is recalled; its editor is smaller, and **FREEZE** is hidden on the Reverse
@@ -149,7 +149,14 @@ canonical source.
   switch for 60 or 50 Hz mains. Sunset reports the same 13 samples of latency
   at every **Oversampling** setting, where it reported none at 1x and more at
   4x than at 2x. The DuskVerb 2 and Tape Echo 2 editors show the version that
-  is built in, where they showed 0.1.0 and 1.0.1 whatever it was.
+  is built in, where they showed 0.1.0 and 1.0.1 whatever it was. Tape
+  Machine 2 uses less CPU, morphs over about 60 ms when the machine, the
+  speed or the calibration changes, loads a preset without a burst, makes
+  Gain Link the exact inverse of Input and aliases less on hot presets; its
+  latency goes from 56 to 62 samples. DuskVerb 2 and Sunset also carry the
+  fixes their plug-ins have made since those releases: DuskVerb 2's refined
+  room and plate voicing, and Sunset's revoiced Oracle brass and bells with
+  its chord headroom restored.
   A MIDI binding on DuskVerb 2's **Algorithm** or on a Sunset mod-matrix
   destination covers the plug-in's longer list of choices, so a controller
   value that picked one engine or destination in 0.16 can pick another:

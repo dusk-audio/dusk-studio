@@ -123,7 +123,7 @@ void runMultiQ (const duskaudio::MultiQTube::Parameters& p,
     eq.prepare (kSampleRate, kBlock, 2);   // no setOversampling → 1x, matching
                                             // MasterBus (its own wrap does OS)
     eq.setParameters (p);
-    latencyOut = eq.getLatencySamples();
+    latencyOut = (int) std::lround (eq.oversamplingDelay (0));
 
     Lout.assign ((size_t) kTotal, 0.0f);
     Rout.assign ((size_t) kTotal, 0.0f);

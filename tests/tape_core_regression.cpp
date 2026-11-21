@@ -191,7 +191,7 @@ TEST_CASE ("TapeMachineDSP latency is stable per oversampling factor", "[tape][r
         core.prepare (kSampleRate, kBlock);
 
         INFO ("oversampling choice " << osChoice);
-        REQUIRE (core.latencySamples() == 56);
+        REQUIRE (core.latencySamples() == 62);
     }
 }
 
@@ -216,8 +216,8 @@ TEST_CASE ("TapeMachineDSP holds its tone across a fixed render", "[tape][regres
     // fused-multiply-add and libm differences between the compilers and
     // architectures this suite runs on.
     INFO ("peak " << m.peak << " rms " << m.rms);
-    REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.679183, 0.002));
-    REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.107245, 0.001));
+    REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.681335, 0.002));
+    REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.111072, 0.001));
 }
 
 TEST_CASE ("TapeMachineDSP ignores the oversampling choice", "[tape][regression]")

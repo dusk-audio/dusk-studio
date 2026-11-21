@@ -1959,7 +1959,8 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             "${_duskstudio_tape_machine_2_dir}" TapeMachine2DAF TM2)
         set(_duskstudio_tape_machine_2_dsp_sources
             "${_duskstudio_tape_machine_2_dir}/TapeMachinePlugin.cpp"
-            "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
+            "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineSwitcher.cpp")
         set(_duskstudio_tape_machine_2_includes
             "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core")
         duskstudio_add_daf_builtin_library(
@@ -2002,7 +2003,7 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 FDNReverb OctaveGEQDesign DattorroTank QuadTank SixAPTankEngine
                 DiffusionStage DuskVerbEngine OutputDiffusion EarlyReflections
                 SpringEngine NonLinearEngine ShimmerEngine DattorroPlateVintage
-                ReverseRoomEngine)
+                ReverseRoomEngine VelvetTail)
             list(APPEND _duskstudio_duskverb_2_engine_sources
                 "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp")
         endforeach()
