@@ -42,7 +42,7 @@ class Cover:
         time.sleep(1.0)
         desktop.click(960, 540)
         # A click that missed it would have landed on the app instead.
-        if not any(line.startswith("POINTER ") for line in read_lines(self.log)):
+        if not wait_for(lambda: any(line.startswith("POINTER ") for line in read_lines(self.log)), 5, step=0.1):
             self.close()
             raise Failure("the click meant for the cover window did not reach it")
 
@@ -119,6 +119,8 @@ def run_backend(desktop, binary, work, backend):
     for line in output.splitlines():
         if CASE in line or line.startswith("       "):
             print(f"{backend}: {line}", flush=True)
+    if app.returncode != 0:
+        raise Failure(f"{backend}: the app exited with status {app.returncode}")
     if backend == "wayland" and "using the native Wayland display" not in errors_text:
         raise Failure("the app did not use native Wayland")
     if "[PASS] " + CASE not in output:

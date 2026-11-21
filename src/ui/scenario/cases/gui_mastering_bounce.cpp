@@ -531,8 +531,9 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
             { ctx.expect (host.masteringPanelPointer ("mastering-comp", "comp_preset", 0.5f, false), std::string ("no preset picker to ") + what); } });
         };
         const auto listOpen = [&host] { return host.masteringCompCapturesKeyboard(); };
-        // The panels settle into the widened window before the first click.
-        steps->push_back ({ 300, [] {}, [&host]
+        // The panel reports its picker once it can take a click (see
+        // DuskPanelWindow's control hooks); the press waits for that.
+        steps->push_back ({ 0, [] {}, [&host]
         { return host.masteringControl ("mastering-comp", "comp_preset").has_value(); },
            "the multiband panel never drew its preset picker" });
         click ("open");
@@ -673,7 +674,9 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
             const auto click = [&] (std::string control, float position = 0.5f, int modifiers = 0)
             {
                 steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
-                { ctx.expect (host.masteringPhasePointer (control, position, true, modifiers), "phase press unavailable: " + control); } });
+                { ctx.expect (host.masteringPhasePointer (control, position, true, modifiers), "phase press unavailable: " + control); },
+                [&host, control, position] { return host.masteringControl ("mastering-phase", control, position).has_value(); },
+                "the Phase panel never showed " + control + " ready for a press" });
                 steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
                 { ctx.expect (host.masteringPhasePointer (control, position, false, modifiers), "phase release unavailable: " + control); } });
             };

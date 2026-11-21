@@ -286,6 +286,10 @@ public:
         scenarioRightButton = 4
     };
 
+    // Whether pointer input sent now reaches the item under it: Dear ImGui's
+    // keyboard navigation starts on a new window in its second frame and holds the
+    // mouse's hover off every item for that frame, so a click it takes is lost.
+    bool takesPointerForScenario() const noexcept;
     bool clickControlForScenario (const std::string& control);
     // Where the view's last frame put the control, in the window's pixels; empty
     // where the view reports none.

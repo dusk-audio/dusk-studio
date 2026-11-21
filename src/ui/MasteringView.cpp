@@ -688,7 +688,8 @@ void MasteringView::resetPhasePanelForScenario()
 bool MasteringView::compDoubleClickForScenario (const std::string& control)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    return compProxy.isShowing() && compWindow != nullptr && compWindow->doubleClickControlForScenario (control);
+    return compProxy.isShowing() && compWindow != nullptr && compWindow->takesPointerForScenario()
+        && compWindow->doubleClickControlForScenario (control);
    #else
     (void) control;
     return false;
@@ -716,7 +717,8 @@ bool MasteringView::panelPointerForScenario (const std::string& panel, const std
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     auto* window = shownPanel (panel);
-    return window != nullptr && window->pointerControlForScenario (control, position, pressed, modifiers);
+    return window != nullptr && window->takesPointerForScenario()
+        && window->pointerControlForScenario (control, position, pressed, modifiers);
    #else
     (void) panel;
     (void) control;
@@ -764,7 +766,7 @@ std::optional<std::array<float, 2>> MasteringView::controlForScenario (const std
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     const auto* window = shownPanel (panel);
-    if (window == nullptr) return std::nullopt;
+    if (window == nullptr || ! window->takesPointerForScenario()) return std::nullopt;
     const auto point = window->controlAtForScenario (control, position);
     if (! point) return std::nullopt;
     return std::array<float, 2> { point->x, point->y };
@@ -798,7 +800,7 @@ bool MasteringView::compCapturesKeyboardForScenario() const
 bool MasteringView::phasePointerForScenario (const std::string& control, float position, bool pressed, int modifiers)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    return phaseProxy.isShowing() && phaseWindow != nullptr
+    return phaseProxy.isShowing() && phaseWindow != nullptr && phaseWindow->takesPointerForScenario()
         && phaseWindow->pointerControlForScenario (control, position, pressed, modifiers);
    #else
     (void) control;

@@ -567,8 +567,9 @@ public:
     // Where the last frame of the mastering panel with this log tag
     // ("mastering-eq", "mastering-comp", "mastering-limiter", "mastering-phase")
     // drew that control, in the panel's pixels, while it drew all of it inside the
-    // panel clear of every other control; empty otherwise, and while that panel is
-    // not shown. The multiband's controls are its parameter symbols and the EQ's,
+    // panel clear of every other control; empty otherwise, while that panel is not
+    // shown, and until it has drawn twice, as a click before then is lost (see
+    // DuskPanelWindow::takesPointerForScenario). The multiband's controls are its parameter symbols and the EQ's,
     // the limiter's and Phase's their session keys; each view's
     // controlPointForScenario lists the rest. The multiband's "meter_<band>" (0 to
     // 3) is that band's gain-reduction bar, from the display's top at position 0 to

@@ -93,8 +93,9 @@ public:
     int compPresetForScenario() const noexcept { return compPresetChoice; }
     void restoreCompPresetForScenario (int choice) { compPresetChoice = choice; }
     // x and y of the control in the last frame of the panel with this log tag,
-    // while it drew all of it clear of the others and the panel is shown; empty
-    // otherwise.
+    // while it drew all of it clear of the others and the panel is shown and takes
+    // pointer input (DuskPanelWindow::takesPointerForScenario); empty otherwise. The
+    // pointer calls below reach no panel before that either.
     std::optional<std::array<float, 2>> controlForScenario (const std::string& panel, const std::string& control,
                                                             float position) const;
     bool compTypeForScenario (const std::string& text);

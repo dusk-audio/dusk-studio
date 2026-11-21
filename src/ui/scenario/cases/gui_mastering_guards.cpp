@@ -698,8 +698,11 @@ std::optional<ScenarioResult> runMasteringListsCloseOutside (GuiHost& host, Scen
                 *before = dropdown.choice (host, ctx);
                 ctx.expect (host.masteringPanelPointer (dropdown.owner, dropdown.control, 0.5f, true),
                             dropdown.name + " is not on screen");
-            }, [&host, &player] { return ! player.isPlaying() && host.modalStackEmpty(); },
-               "the mix did not stop" });
+            }, [&host, &player, dropdown]
+            {
+                return ! player.isPlaying() && host.modalStackEmpty()
+                    && host.masteringControl (dropdown.owner, dropdown.control).has_value();
+            }, "the mix did not stop, or " + dropdown.name + " never came on screen" });
             steps->push_back ({ 60, [&host, &ctx, dropdown]
             {
                 ctx.expect (host.masteringPanelPointer (dropdown.owner, dropdown.control, 0.5f, false),
