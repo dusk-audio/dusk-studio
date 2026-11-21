@@ -145,39 +145,6 @@ TEST_CASE ("comp editor: on a bus only the threshold engages the compressor")
     CHECK (engaged.load());
 }
 
-TEST_CASE ("comp editor: on the mastering multiband only BYPASS switches the compressor")
-{
-    MultiCompStage stage (CompStage::Multiband);
-    CompParams comp;
-    std::atomic<bool> engaged { false };
-    CompEditorTarget target;
-    target.comp = &comp;
-    target.engaged = &engaged;
-    target.editsEngage = false;
-
-    const int threshold = indexOf (stage, "mb_threshold_1");
-    const int enabled = indexOf (stage, "mb_enabled_2");
-    const int bypass = indexOf (stage, "daf_bypass");
-    REQUIRE (threshold >= 0);
-    REQUIRE (enabled >= 0);
-    REQUIRE (bypass >= 0);
-
-    compEditorEdit (stage, target, threshold, -30.0f);
-    CHECK_THAT (comp.get (duskstudio::compBandParam (1, duskstudio::CompBandField::Threshold)),
-                WithinAbs (-30.0f, 1.0e-6f));
-    compEditorEdit (stage, target, enabled, 0.0f);
-    CHECK (comp.get (duskstudio::compBandParam (2, duskstudio::CompBandField::Enabled)) < 0.5f);
-    CHECK_FALSE (engaged.load());
-
-    compEditorEdit (stage, target, bypass, 0.0f);
-    CHECK (engaged.load());
-    compEditorEdit (stage, target, threshold, -10.0f);
-    CHECK (engaged.load());
-    compEditorEdit (stage, target, bypass, 1.0f);
-    CHECK_FALSE (engaged.load());
-    CHECK_THAT (compEditorValue (stage, target, bypass), WithinAbs (1.0f, 0.0f));
-}
-
 // The stage an editor draws keeps the session's values in its plug-in only
 // while the editor is up; one that never opened leaves no such duty behind.
 TEST_CASE ("comp editor: an editor that could not open leaves its compressor's plug-in alone")

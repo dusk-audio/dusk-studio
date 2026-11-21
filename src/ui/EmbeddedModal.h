@@ -6,6 +6,7 @@
 #include "PlatformWindowing.h"
 #include "imgui/ShellShortcut.h"
 #include "../foundation/MessageThread.h"
+#include <array>
 #include <functional>
 #include <initializer_list>
 #include <memory>
@@ -120,6 +121,25 @@ public:
         ++activeSurfaces;
         registered = true;
         walk (root, skip, shouldHide);
+    }
+
+    // Whether hideUnder with this filter would take any shown editor down.
+    template <typename Node, typename Skip, typename ShouldHide>
+    static bool wouldHideAny (Node& c, const Skip& skip, const ShouldHide& shouldHide)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (child == nullptr || ! child->isVisible()
+                || std::find (skip.begin(), skip.end(), child) != skip.end())
+                continue;
+            if ((bool) child->getProperties().getWithDefault (kPluginEditorTag, false))
+            {
+                if (shouldHide (*child)) return true;
+                continue;
+            }
+            if (wouldHideAny (*child, skip, shouldHide)) return true;
+        }
+        return false;
     }
 
     void restore()
@@ -855,6 +875,19 @@ public:
                                          body_.get(), borrowedBody_ },
                                 [cover] (const auto& editor)
                                 { return editor.getScreenBounds().intersects (cover); });
+    }
+
+    // Whether hideEditorsUnderBody would take an editor down with the body where it
+    // sits now, so a caller can look for a place that leaves every editor drawn.
+    bool bodyCoversEditor() const
+    {
+        auto* const shown = getBody();
+        if (host == nullptr || shown == nullptr) return false;
+        const auto cover = backdrop_ != nullptr ? backdrop_->getScreenBounds()
+                                                : shown->getScreenBounds();
+        const std::array<decltype (getBody()), 4> skip { dim_.get(), backdrop_.get(), body_.get(), borrowedBody_ };
+        return PluginEditorHider::wouldHideAny (*host, skip, [cover] (const auto& editor)
+                                                { return editor.getScreenBounds().intersects (cover); });
     }
 
     // DuskContextMenu / DuskComboBox call this AFTER show() to anchor

@@ -859,7 +859,7 @@ The strip shows the mode's controls. The triangle handle on the right edge of th
 
 Each of these is one of Multi-Comp 2's own controls: it travels the plug-in's whole range, reads as the plug-in prints it, and a double-click returns it to the plug-in's default. Every knob takes a vertical drag; hold **Shift** while dragging for fine adjustment, and use the scroll wheel for small steps. Dragging the handle or moving a knob engages the compressor, and so does switching **LIMIT** on; switching it off does not. A double-click on the handle returns only that control to its default and leaves the status light alone. Right-click the handle to MIDI Learn it.
 
-**The editor.** **COMP** opens Multi-Comp 2's own editor over a dimmed window, scaled down if the window is too small to hold it. The tabs along its top, **OPTO**, **FET BLACK** and **VCA**, pick the mode as the COMP menu does. **AUTO MAKEUP** replaces the face's own make-up or output control with an automatic one, and **BYPASS** is the same switch as the status light. The editor opens on the compressor's settings as they stand, **BYPASS** included, whether or not the track has played since they changed. The face holds the mode's controls the strip has no room for as well, among them **MIX**, the sidechain filter (**SC HP** on Opto, **PULL/SC** on VCA) and the meter switches. A tab leaves the status light alone; any other control engages the compressor, as on the strip. Click outside the editor or press **Escape** to close it. The plug-in's settings drawer is not offered: stereo link, drive, the sidechain EQ and listen, true peak, analog noise and the FET's threshold, transient and curve stay at the plug-in's defaults, and a FET threshold carried over from an older session keeps playing with no control of its own.
+**The editor.** **COMP** opens Multi-Comp 2's own editor over a dimmed window, scaled down if the window is too small to hold it. The tabs along its top, **OPTO**, **FET BLACK** and **VCA**, pick the mode as the COMP menu does. **AUTO MAKEUP** replaces the face's own make-up or output control with an automatic one: it matches the output's level to the input's, measured over about two seconds, by as much as 24 dB either way, and reaches that level within about a second of playback starting. **BYPASS** is the same switch as the status light. The editor opens on the compressor's settings as they stand, **BYPASS** included, whether or not the track has played since they changed. The face holds the mode's controls the strip has no room for as well, among them **MIX**, the sidechain filter (**SC HP** on Opto, **PULL/SC** on VCA) and the meter switches. A tab leaves the status light alone; any other control engages the compressor, as on the strip. Click outside the editor or press **Escape** to close it. The plug-in's settings drawer is not offered: stereo link, drive, the sidechain EQ and listen, true peak, analog noise and the FET's threshold, transient and curve stay at the plug-in's defaults, and a FET threshold carried over from an older session keeps playing with no control of its own.
 
 **Oversampling and latency.** The compressor always runs at Multi-Comp 2's own 2× oversampling, whatever **Effect Oversampling** is set to: that is the setting its sound was matched to the plug-in at. A bypassed compressor is not run at all. While any channel's compressor is engaged, every channel carries the compressor's delay, about 73 samples at 44.1 and 48 kHz and 79 at 96 kHz, so the tracks stay lined up whichever of them are compressed. The delay stays until the transport is stopped with every channel's compressor bypassed, so switching one in or out while playing never moves the timing; the first compressor engaged fades in once the delay is in place. Delay compensation covers it, bounces and freezes trim it out, and a take recorded with **PRINT** on is placed without it (see *Print mode* under Recording).
 
@@ -1108,7 +1108,7 @@ Lists every channel that is sending to this aux, with its send level and a small
 
 # The mastering stage
 
-![Mastering chain with EQ, comp, and limiter engaged.](docs/images/mm-02-mastering-chain.png)
+![The mastering chain: the EQ, the multiband compressor, the limiter and Phase, every control on the page.](docs/images/mm-02-mastering-chain.png)
 
 The **MASTERING** stage is a separate signal path. It does not play your tracks; it plays a single stereo audio file through a dedicated mastering chain. Switching into or out of MASTERING force-stops the transport, because the mix engine and the mastering engine cannot run simultaneously.
 
@@ -1129,9 +1129,11 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 
 ## Mastering chain
 
-The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
+The digital EQ, the multiband compressor, the limiter and the **PHASE** panel each switch on and off from the status light in their header. **PHASE** measures the stereo output after the limiter. Every control of every module is on the page; none of them waits behind a click. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
 
-Wide windows give the EQ the most width, with additional space for the limiter meters and Phase frequency display; the compressor's slot is narrower, because its controls open in an editor of their own. The panels share header height and spacing.
+An open dropdown never takes a module off the page. The lists of the multiband presets, the limiter's mode and the Phase display open inside their own panel. A click anywhere else on the page closes such a list without picking from it, and the keys go back to the transport, so **Space** plays. The loudness target list and the compact picker's list open above their picker, or over it, when a list below it would lie over a module. A list that opens over its picker puts the current choice on the picker, so a second click there keeps that choice and closes the list.
+
+Wide windows give the EQ and the compressor's four band columns most of the width, and share the rest between the limiter meters and the Phase frequency display. The panels share header height and spacing.
 
 ### Digital 5-band EQ
 
@@ -1151,11 +1153,22 @@ the **FFT** button in the panel's top-left.
 
 Multi-Comp 2's Multiband mode: four frequency bands, Low, Low-Mid, High-Mid and High, split by three crossovers, each band with its own dynamics controls. The bus compressor settings do not apply to this stage.
 
-The compressor's slot holds the **MULTIBAND COMP** header, the preset picker and an overview of the bands: the crossovers, each band's threshold and ratio (or off, with BYP or SOLO when set), and the output. Click the header's status light to engage or bypass the compressor. Click the **MULTIBAND COMP** label to open Multi-Comp 2's Multiband face over the dimmed window, at its design size, scaled down if the window is too small to hold it. The face holds every band control, the crossovers, **MIX** and **OUTPUT**, and its **BYPASS** is the header's status light. Editing the face leaves the compressor as it is: only **BYPASS** and the status light switch it. What you set stays on the face while the compressor is bypassed. Press **Escape** or click outside the face to close it; it also closes when a dialog opens over the window and when you leave the MASTERING stage. Every band setting is saved with the session.
+Every control is on the page. Click the **MULTIBAND COMP** header, its status light or its label, to engage or bypass the compressor. Nothing else switches it: the band controls, **MIX**, **OUTPUT**, **AUTO MAKEUP** and the presets leave it engaged or bypassed as it was, so you can set it up while it is out.
+
+Under the header and the preset picker is the band display, 20 Hz to 20 kHz from left to right. Each band that plays fills its stretch of the display in its colour, and its gain-reduction bar hangs from the top on a 0 to −20 dB scale. Three crossover handles, labelled with their frequency, sit along the bottom: drag one sideways to move that split. The display draws each crossover where the compressor plays it. The compressor keeps every crossover at least 1.5 times the one below, so a crossover set closer than that to the one below it plays, and is drawn, at 1.5 times that one. A band that is off has no stretch of its own: the band beside it is drawn across it, and the crossover that no longer splits anything turns dashed. A bypassed band's stretch is dimmed and reads **BYP**; a soloed band is outlined and reads **SOLO**. With the compressor bypassed the display reads **BYPASS**, and the bars and readouts rest at 0.
+
+Below the display, the four band columns sit side by side: **LOW**, **LOW-MID**, **HIGH-MID** and **HIGH**. Each shows its band's gain reduction in dB beside the name, then three switches and five dials:
+
+- **ON** switches the band on or off. At least two bands stay on: with only two left, their **ON** switches are locked. Switching a band off also clears its solo.
+- **S** solos the band.
+- **BYP** bypasses the band, which then passes unprocessed.
+- **THRESH**, **RATIO**, **ATTACK**, **RELEASE** and **MAKEUP** set its dynamics.
+
+Along the bottom are **MIX**, the blend of the compressed and the dry signal, **OUTPUT**, and **AUTO MAKEUP**, which matches the output's level to the input's, measured over about two seconds, by as much as 24 dB either way, and reaches that level within about a second of playback starting. Drag or scroll a dial. Double-click a dial or a crossover handle to put it back to its default, and Cmd-click it on macOS (Ctrl-click elsewhere) to type a value. Every band setting is saved with the session.
 
 The compressor runs at Multi-Comp 2's own 2×. Its delay is part of the chain's latency whether it is in or out, and while it is out the plug-in does not run.
 
-**Presets** (the **PRESET** dropdown under the header): nine genre starting points transcribed from a hardware portastudio's multiband compression chart: Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. The chart has three bands. Picking a preset writes its Low, Mid and High bands, with their threshold, ratio, attack, release and makeup, into Low, Low-Mid and High, sets the crossovers from the chart's two splits, switches High-Mid off and turns **AUTO MAKEUP** off. **MIX** and **OUTPUT** keep their values. It is a one-shot apply: the picked name stays showing when you change a band afterwards.
+**Presets** (the **PRESET** dropdown under the header, which reads **Select preset...** until you pick one): nine genre starting points transcribed from a hardware portastudio's multiband compression chart: Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. The chart has three bands. Picking a preset writes its Low, Mid and High bands, with their threshold, ratio, attack, release and makeup, into Low, Low-Mid and High, sets the crossovers from the chart's two splits, switches High-Mid off and turns **AUTO MAKEUP** off. **MIX** and **OUTPUT** keep their values. The list opens inside the compressor's panel and shows every preset at once, and the other modules stay drawn while it is open. The panel shows the new settings at once. It is a one-shot apply: the picked name stays showing when you change a band afterwards, picking that name again applies the preset again, and the picker reads **Select preset...** again once another session opens.
 
 ### Brickwall limiter
 
@@ -1172,7 +1185,9 @@ The lookahead adds latency (set by the Lookahead control) on the mastering outpu
 
 ### Phase module
 
-The **PHASE** panel measures the post-limiter stereo signal without changing it or adding latency. It refreshes at 30 Hz while the mastering view is visible. Its analysis settings save in the session; readings, held values, warnings, the selected display mode and the **Mono** monitor switch do not.
+The **PHASE** panel measures the post-limiter stereo signal without changing it or adding latency. It refreshes at 30 Hz while the mastering view is visible. Its on and off switch and its analysis settings save in the session; readings, held values, warnings, the selected display mode and the **Mono** monitor switch do not.
+
+Click the **PHASE** header, its status light or its label, to switch the module on or off. It is on by default. Lit, the light is green while there is a reading and amber while it waits for one. Off, nothing is analysed: the readings show **--**, the graph reads **PHASE is off**, and **Mono** is released and greyed out until **PHASE** is on again. The held minima and warnings are kept for when it comes back, and **Bands**, **Q**, **Average**, the display mode and **Reset** still work. Switched back on, it starts a fresh analysis window, and **Mono** stays off until you switch it on.
 
 - **Bands**: 4 to 64 logarithmic frequency bands from 20 Hz to 20 kHz, default **16**. Frequencies above the device's Nyquist limit are unavailable.
 - **Q**: **0.25 to 8**, default **2**. Higher values select narrower frequency regions; lower values give wider overlapping bands.
@@ -3209,6 +3224,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Limiter   | Ceiling                          | −12 to 0 dB   | −0.3 dB     |
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
 | Limiter   | Release                          | 10–1000 ms     | 100 ms      |
+| Phase     | Enabled                          | Off / On      | On          |
 | Phase     | Bands                            | 4–64          | 16          |
 | Phase     | Q                                | 0.25–8        | 2           |
 | Phase     | Average                          | 50–5000 ms    | 500 ms      |
@@ -3216,7 +3232,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Phase     | Mono monitor                     | Off / On      | Off         |
 | Phase     | Reset                            | Clear minima and warnings |             |
 
-The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled: with fewer, all four play. Auto makeup is off by default. Every multiband setting is saved with the session.
+The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low, Low-Mid, High-Mid and High. These are the ranges of the controls on the MASTERING page; the DSP keeps each crossover at least 1.5 times the preceding crossover. The page keeps at least two bands enabled by locking the last two on; a session that holds fewer plays the bands it has on, made up to two with the lowest of the others. Every multiband setting is saved with the session.
 
 | Multiband control | Range | Default |
 | ----------------- | ----- | ------- |
@@ -3225,6 +3241,7 @@ The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low,
 | Crossover 3 | 2–16 kHz | 8 kHz |
 | Each band: enable | Off / On | On |
 | Each band: solo | Off / On | Off |
+| Each band: bypass | Off / On | Off |
 | Each band: threshold | −60 to 0 dB | −20 dB |
 | Each band: ratio | 1:1–20:1 | 4:1 |
 | Each band: attack | 0.1–100 ms | 10 ms |
@@ -3232,6 +3249,7 @@ The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low,
 | Each band: makeup | −12 to +12 dB | 0 dB |
 | Output | −24 to +24 dB | 0 dB |
 | Mix | 0–100% | 100% |
+| Auto makeup | Off / On | Off |
 
 \newpage
 

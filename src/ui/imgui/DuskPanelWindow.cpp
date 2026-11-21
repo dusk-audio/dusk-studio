@@ -674,6 +674,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         bool onMouse (const MouseEvent& event) override
         {
             noteActivity();
+            if (event.press && owner.callbacks.pressed)
+                owner.callbacks.pressed();
             return DGL::ImGuiTopLevelWidget::onMouse (event);
         }
 
@@ -836,6 +838,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             drawnAt = std::chrono::steady_clock::now();
             framesOwed = std::max (0, framesOwed - 1);
             ++owner.completedFrames;
+            ++framesShown;
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
                                        static_cast<int> (getHeight()));
         }
@@ -916,6 +919,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     public:
         // Dear ImGui's frame time on the last frame drawn after a gap.
         std::optional<float> clockAfterGap;
+        // Frames this widget has drawn since it opened.
+        std::uint64_t framesShown = 0;
     };
 
     Impl (std::string className, std::string logTagToUse, std::string displayName)
@@ -1330,6 +1335,11 @@ bool DuskPanelWindow::takeKeptKey (const std::string& description, std::uint32_t
     return true;
 }
 
+// Input queued now lands in the next frame, so two drawn frames put it in the third.
+bool DuskPanelWindow::takesPointerForScenario() const noexcept
+{
+    return isOpen() && impl->panelWidget != nullptr && impl->panelWidget->framesShown >= 2;
+}
 bool DuskPanelWindow::clickControlForScenario (const std::string& control)
 {
     ImVec2 point;
@@ -1338,6 +1348,13 @@ bool DuskPanelWindow::clickControlForScenario (const std::string& control)
     if (auto* window = impl->host.window()) window->focus();
     impl->panelWidget->clickForScenario (point);
     return true;
+}
+std::optional<ImVec2> DuskPanelWindow::controlAtForScenario (const std::string& control, float position) const
+{
+    ImVec2 point;
+    if (! isOpen() || impl->view == nullptr || ! impl->view->controlPointForScenario (control, point, position))
+        return std::nullopt;
+    return point;
 }
 bool DuskPanelWindow::doubleClickControlForScenario (const std::string& control)
 {
@@ -1435,6 +1452,12 @@ void DuskPanelWindow::wake()
 {
     if (isOpen() && impl->panelWidget != nullptr)
         impl->panelWidget->noteActivity();
+}
+void DuskPanelWindow::closeLists()
+{
+    if (! isOpen() || impl->view == nullptr) return;
+    impl->view->closeLists();
+    wake();
 }
 bool DuskPanelWindow::inputSeenForScenario() noexcept
 {

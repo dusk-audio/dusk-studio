@@ -3,13 +3,17 @@
 
 #include "dsp/BrickwallLimiter.h"
 #include "dsp/MasteringChain.h"
+#include "dsp/MultiCompStage.h"
+#include "dsp/MultibandCompPresets.h"
 #include "dsp/PhaseAnalyzer.h"
 #include "foundation/Decibels.h"
 #include "session/Session.h"
 #include "ui/imgui/DuskTheme.h"
+#include "ui/imgui/MasteringCompView.h"
 #include "ui/imgui/MasteringEqView.h"
 #include "ui/imgui/MasteringLimiterView.h"
 #include "ui/imgui/MasteringPhaseView.h"
+#include "ui/imgui/ScenarioControlMap.h"
 
 #include <DuskWidgets.hpp>
 
@@ -77,6 +81,7 @@ public:
     }
 
     const std::vector<ImVec2>& lastVertexPositions() const { return vertexPositions; }
+    const std::vector<ImU32>& lastVertexColours() const { return vertexColours; }
     int renderedChildVertices() const { return childVertices; }
 
     // Draws one frame of `view` into the whole display and returns the vertex count.
@@ -100,8 +105,13 @@ public:
         const int vertices = ctx.dl->VtxBuffer.Size;
         vertexPositions.clear();
         vertexPositions.reserve (static_cast<std::size_t> (vertices));
+        vertexColours.clear();
+        vertexColours.reserve (static_cast<std::size_t> (vertices));
         for (const auto& vertex : ctx.dl->VtxBuffer)
+        {
             vertexPositions.push_back (vertex.pos);
+            vertexColours.push_back (vertex.col);
+        }
 
         ImGui::End();
         ImGui::Render();
@@ -118,6 +128,7 @@ private:
     dw::Fonts fonts;
     dw::DragState drag;
     std::vector<ImVec2> vertexPositions;
+    std::vector<ImU32> vertexColours;
     int childVertices = 0;
 };
 
@@ -449,6 +460,23 @@ TEST_CASE ("the mastering Phase controls wire settings monitoring reset and keyb
         panel.clickControl (*view, "mono");
         REQUIRE_FALSE (mono);
         REQUIRE (monoWrites == 2);
+    }
+    SECTION ("The header's light switches the module, letting go of Mono and holding it off")
+    {
+        panel.clickControl (*view, "mono");
+        REQUIRE (mono);
+        panel.clickControl (*view, "header");
+        REQUIRE_FALSE (params.enabled.load());
+        REQUIRE_FALSE (mono);
+        const int writes = monoWrites;
+        panel.clickControl (*view, "mono");
+        REQUIRE_FALSE (mono);
+        REQUIRE (monoWrites == writes);
+        REQUIRE (analyzer.report().broadband.flagged);
+        panel.clickControl (*view, "header");
+        REQUIRE (params.enabled.load());
+        REQUIRE_FALSE (mono);
+        requireUnchanged (params, before);
     }
     SECTION ("Wheeling visible knobs changes their value without scrolling the short panel")
     {
@@ -783,4 +811,782 @@ TEST_CASE ("a mastering view's live stamp holds while what it shows holds, and m
         REQUIRE (previous.has_value());
         REQUIRE (unchanged >= 16);
     }
+}
+
+namespace
+{
+// A press at one point of a control, moves to another in steps and a release, as a
+// pointer drags; `then` names the control the drag ends over, when another.
+void dragControl (HeadlessPanel& panel, imgui::DuskPanelView& view, const std::string& control, float from,
+                  float to, const std::string& then = {})
+{
+    ImVec2 start, end;
+    REQUIRE (view.controlPointForScenario (control, start, from));
+    REQUIRE (view.controlPointForScenario (then.empty() ? control : then, end, to));
+    panel.movePointer (start);
+    panel.frame (view);
+    panel.frame (view);
+    panel.pressPointer (true);
+    panel.frame (view);
+    for (int step = 1; step <= 4; ++step)
+    {
+        const float t = (float) step / 4.0f;
+        panel.movePointer ({ start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t });
+        panel.frame (view);
+    }
+    panel.pressPointer (false);
+    panel.frame (view);
+    panel.frame (view);
+}
+
+CompParams::Values multibandValues (const CompParams& comp)
+{
+    return comp.values();
+}
+
+// Every compressor value is what `before` held.
+void requireUnchanged (const CompParams& comp, const CompParams::Values& before)
+{
+    for (std::size_t i = 0; i < kCompParamCount; ++i)
+    {
+        CAPTURE (compParamSpec ((CompParamId) i).symbol);
+        REQUIRE_THAT (comp.get ((CompParamId) i), Catch::Matchers::WithinAbs (before[i], 0.0));
+    }
+}
+
+// Every multiband value but `moved` is what `before` held, and `moved` is not.
+void requireOnly (const CompParams& comp, const CompParams::Values& before, CompParamId moved)
+{
+    for (const auto id : compStageParams (CompStage::Multiband))
+    {
+        CAPTURE (compParamSpec (id).symbol);
+        if (id == moved)
+            REQUIRE (std::abs (comp.get (id) - before[(std::size_t) id]) > 1.0e-5f);
+        else
+            REQUIRE_THAT (comp.get (id), Catch::Matchers::WithinAbs (before[(std::size_t) id], 0.0));
+    }
+}
+} // namespace
+
+TEST_CASE ("the mastering multiband view shows every multiband control at once, at every size it is given",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    REQUIRE_FALSE (view->wantsPlate());
+
+    for (const auto size : { ImVec2 (400.0f, 410.0f), ImVec2 (400.0f, 464.0f), ImVec2 (483.0f, 760.0f),
+                             ImVec2 (632.0f, 800.0f), ImVec2 (1376.0f, 400.0f) })
+    {
+        CAPTURE (size.x, size.y);
+        panel.setSize (size);
+        panel.frame (*view);
+        panel.frame (*view);
+        for (const auto id : compStageParams (CompStage::Multiband))
+        {
+            CAPTURE (compParamSpec (id).symbol);
+            ImVec2 point;
+            REQUIRE (view->controlPointForScenario (compParamSpec (id).symbol, point));
+            REQUIRE (point.x > 0.0f);
+            REQUIRE (point.x < size.x);
+            REQUIRE (point.y > 0.0f);
+            REQUIRE (point.y < size.y);
+        }
+    }
+}
+
+TEST_CASE ("the mastering multiband view draws without writing to its parameters", "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    const auto before = multibandValues (params.comp);
+    const bool engaged = params.compEnabled.load();
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    for (int frame = 0; frame < 4; ++frame)
+        REQUIRE (panel.frame (*view) > 0);
+    requireUnchanged (params.comp, before);
+    REQUIRE (params.compEnabled.load() == engaged);
+}
+
+TEST_CASE ("the mastering multiband controls each move their own value and leave the compressor as it is",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    params.compEnabled.store (false);
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    panel.frame (*view);
+    panel.frame (*view);
+
+    SECTION ("a band dial dragged up")
+    {
+        const auto before = multibandValues (params.comp);
+        const auto id = compBandParam (1, CompBandField::Threshold);
+        dragControl (panel, *view, "mb_threshold_1", 0.5f, 1.0f);
+        requireOnly (params.comp, before, id);
+        REQUIRE (params.comp.get (id) > before[(std::size_t) id]);
+    }
+    SECTION ("a stage-wide dial dragged down")
+    {
+        const auto before = multibandValues (params.comp);
+        dragControl (panel, *view, "mb_output", 0.5f, 0.0f);
+        requireOnly (params.comp, before, CompParamId::MbOutput);
+        REQUIRE (params.comp.get (CompParamId::MbOutput) < before[(std::size_t) CompParamId::MbOutput]);
+    }
+    SECTION ("a band switch and auto makeup clicked")
+    {
+        auto before = multibandValues (params.comp);
+        const auto bypass = compBandParam (2, CompBandField::Bypass);
+        panel.clickControl (*view, "mb_bypass_2");
+        requireOnly (params.comp, before, bypass);
+        REQUIRE (params.comp.get (bypass) > 0.5f);
+        before = multibandValues (params.comp);
+        panel.clickControl (*view, "auto_makeup");
+        requireOnly (params.comp, before, CompParamId::AutoMakeup);
+    }
+    SECTION ("a crossover dragged across the display")
+    {
+        const auto before = multibandValues (params.comp);
+        dragControl (panel, *view, "mb_crossover_2", 0.5f, 0.75f, "plot");
+        requireOnly (params.comp, before, CompParamId::MbCrossover2);
+        REQUIRE (params.comp.get (CompParamId::MbCrossover2) > before[(std::size_t) CompParamId::MbCrossover2]);
+    }
+    SECTION ("a double-click puts a dial back to the plug-in's default")
+    {
+        const auto id = compBandParam (3, CompBandField::Makeup);
+        params.comp.set (id, 6.0f);
+        const auto before = multibandValues (params.comp);
+        panel.frame (*view);
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("mb_makeup_3", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        for (const bool down : { true, false, true })
+        {
+            panel.pressPointer (down);
+            panel.frame (*view);
+        }
+        // The second press is held for a while, as a hand holds it.
+        for (int frame = 0; frame < 6; ++frame)
+            panel.frame (*view);
+        panel.pressPointer (false);
+        panel.frame (*view);
+        REQUIRE_THAT (params.comp.get (id), Catch::Matchers::WithinAbs (compParamSpec (id).hostDefault, 0.0));
+        requireOnly (params.comp, before, id);
+    }
+    SECTION ("a double-click puts a crossover back to the plug-in's default")
+    {
+        const auto id = CompParamId::MbCrossover2;
+        float moved = 0.0f;
+        REQUIRE (stage.valueFromText (id, "3000", moved));
+        params.comp.set (id, moved);
+        REQUIRE (std::abs (moved - compParamSpec (id).hostDefault) > 1.0e-3f);
+        const auto before = multibandValues (params.comp);
+        panel.frame (*view);
+        panel.frame (*view);
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("mb_crossover_2", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        for (const bool down : { true, false, true })
+        {
+            panel.pressPointer (down);
+            panel.frame (*view);
+        }
+        for (int frame = 0; frame < 6; ++frame)
+            panel.frame (*view);
+        panel.pressPointer (false);
+        panel.frame (*view);
+        REQUIRE_THAT (params.comp.get (id), Catch::Matchers::WithinAbs (compParamSpec (id).hostDefault, 0.0));
+        requireOnly (params.comp, before, id);
+    }
+    SECTION ("the wheel over a dial")
+    {
+        const auto id = compBandParam (1, CompBandField::Threshold);
+        const auto before = multibandValues (params.comp);
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("mb_threshold_1", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        panel.frame (*view);
+        panel.scroll (1.0f);
+        panel.frame (*view);
+        panel.frame (*view);
+        requireOnly (params.comp, before, id);
+        REQUIRE (params.comp.get (id) > before[(std::size_t) id]);
+    }
+    SECTION ("a value typed after a command-click")
+    {
+        const auto id = compBandParam (0, CompBandField::Makeup);
+        const auto before = multibandValues (params.comp);
+        float expected = 0.0f;
+        REQUIRE (stage.valueFromText (id, "3", expected));
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("mb_makeup_0", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        const auto control = ImGui::GetIO().ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
+        panel.key (control, true);
+        panel.frame (*view);
+        panel.pressPointer (true);
+        panel.frame (*view);
+        panel.pressPointer (false);
+        panel.key (control, false);
+        panel.frame (*view);
+        panel.frame (*view);
+        REQUIRE (view->capturesKeyboard());
+        panel.type ("3");
+        panel.frame (*view);
+        panel.key (ImGuiKey_Enter, true);
+        panel.frame (*view);
+        panel.key (ImGuiKey_Enter, false);
+        panel.frame (*view);
+        panel.frame (*view);
+        REQUIRE_THAT (params.comp.get (id), Catch::Matchers::WithinAbs (expected, 0.0));
+        requireOnly (params.comp, before, id);
+        REQUIRE_FALSE (view->capturesKeyboard());
+    }
+    SECTION ("a value being typed is dropped when the panel shrinks past its controls")
+    {
+        const auto before = multibandValues (params.comp);
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("mb_makeup_0", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        const auto control = ImGui::GetIO().ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
+        panel.key (control, true);
+        panel.frame (*view);
+        panel.pressPointer (true);
+        panel.frame (*view);
+        panel.pressPointer (false);
+        panel.key (control, false);
+        panel.frame (*view);
+        panel.frame (*view);
+        REQUIRE (view->capturesKeyboard());
+        panel.setSize ({ 483.0f, 120.0f });
+        panel.frame (*view);
+        panel.frame (*view);
+        REQUIRE_FALSE (view->capturesKeyboard());
+        panel.setSize ({ 483.0f, 600.0f });
+        panel.frame (*view);
+        panel.frame (*view);
+        REQUIRE_FALSE (view->capturesKeyboard());
+        requireUnchanged (params.comp, before);
+    }
+    REQUIRE_FALSE (params.compEnabled.load());
+}
+
+TEST_CASE ("the mastering multiband view keeps two bands on and the crossovers apart, as the plug-in plays them",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& comp = session.mastering().comp;
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (session.mastering(), stage, presetChoice);
+
+    SECTION ("the last two enabled bands are locked on, and a band switched off drops its solo")
+    {
+        comp.set (compBandParam (2, CompBandField::Enabled), 0.0f);
+        comp.set (compBandParam (3, CompBandField::Enabled), 0.0f);
+        comp.set (compBandParam (1, CompBandField::Solo), 1.0f);
+        panel.frame (*view);
+        panel.clickControl (*view, "mb_enabled_0");
+        REQUIRE (comp.get (compBandParam (0, CompBandField::Enabled)) > 0.5f);
+        panel.clickControl (*view, "mb_enabled_2");
+        REQUIRE (comp.get (compBandParam (2, CompBandField::Enabled)) > 0.5f);
+        panel.clickControl (*view, "mb_enabled_1");
+        REQUIRE (comp.get (compBandParam (1, CompBandField::Enabled)) < 0.5f);
+        REQUIRE (comp.get (compBandParam (1, CompBandField::Solo)) < 0.5f);
+    }
+    SECTION ("a crossover set under the one below it shows where the plug-in plays it")
+    {
+        comp.set (CompParamId::MbCrossover1, 1.0f);
+        comp.set (CompParamId::MbCrossover2, 0.0f);
+        panel.frame (*view);
+        panel.frame (*view);
+        ImVec2 low, mid;
+        REQUIRE (view->controlPointForScenario ("mb_crossover_1", low));
+        REQUIRE (view->controlPointForScenario ("mb_crossover_2", mid));
+        REQUIRE (mid.x > low.x);
+        REQUIRE_THAT (comp.get (CompParamId::MbCrossover2), Catch::Matchers::WithinAbs (0.0, 0.0));
+    }
+}
+
+TEST_CASE ("a press on a crossover's label drags that crossover, however close the next one sits",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& comp = session.mastering().comp;
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 400.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (session.mastering(), stage, presetChoice);
+    // The plug-in plays the middle split at no less than 1.5 times the low one, which
+    // puts each label's inner half over the other split's press area.
+    float low = 0.0f;
+    REQUIRE (stage.valueFromText (CompParamId::MbCrossover1, "400", low));
+    comp.set (CompParamId::MbCrossover1, low);
+    comp.set (CompParamId::MbCrossover2, compParamSpec (CompParamId::MbCrossover2).hostMin);
+    panel.frame (*view);
+    panel.frame (*view);
+    ImVec2 lowLabel, middleLabel, plotEnd;
+    REQUIRE (view->controlPointForScenario ("mb_crossover_1", lowLabel));
+    REQUIRE (view->controlPointForScenario ("mb_crossover_2", middleLabel));
+    REQUIRE (middleLabel.y < lowLabel.y);
+    REQUIRE (middleLabel.x - lowLabel.x < 25.0f);
+    const float between = 0.5f * (lowLabel.x + middleLabel.x);
+
+    const auto drag = [&] (ImVec2 start, float plotFraction)
+    {
+        REQUIRE (view->controlPointForScenario ("plot", plotEnd, plotFraction));
+        panel.movePointer (start);
+        panel.frame (*view);
+        panel.frame (*view);
+        panel.pressPointer (true);
+        panel.frame (*view);
+        for (int step = 1; step <= 4; ++step)
+        {
+            const float t = (float) step / 4.0f;
+            panel.movePointer ({ start.x + (plotEnd.x - start.x) * t, start.y + (plotEnd.y - start.y) * t });
+            panel.frame (*view);
+        }
+        panel.pressPointer (false);
+        panel.frame (*view);
+        panel.frame (*view);
+    };
+
+    SECTION ("the middle split's label, above the low one")
+    {
+        const auto before = multibandValues (comp);
+        drag ({ between, middleLabel.y }, 0.95f);
+        requireOnly (comp, before, CompParamId::MbCrossover2);
+        REQUIRE (comp.get (CompParamId::MbCrossover2) > before[(std::size_t) CompParamId::MbCrossover2]);
+    }
+    SECTION ("the low split's label")
+    {
+        const auto before = multibandValues (comp);
+        drag ({ between, lowLabel.y }, 0.05f);
+        requireOnly (comp, before, CompParamId::MbCrossover1);
+        REQUIRE (comp.get (CompParamId::MbCrossover1) < before[(std::size_t) CompParamId::MbCrossover1]);
+    }
+}
+
+TEST_CASE ("the mastering multiband display marks the bands that are bypassed, soloed and off",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    auto& comp = params.comp;
+    params.compEnabled.store (true);
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+
+    const auto hex = [] (unsigned int c)
+    {
+        return IM_COL32 ((c >> 24) & 0xff, (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
+    };
+    const unsigned int bandColours[kCompBandCount] = { 0xf07070ff, 0xe0c850ff, 0x70c870ff, 0x5a9ae8ff };
+    const ImU32 bypassText = dw::withAlpha (hex (0xe0a040ff), 0.8f);
+    const ImU32 soloText = hex (0xd4d400ff);
+    const ImU32 idleCrossover = hex (0x9090a0a0);
+    // Vertices of this colour the last frame put in the band display, between its top
+    // and the crossover handles' row.
+    const auto inDisplay = [&] (ImU32 colour)
+    {
+        ImVec2 top, handles;
+        REQUIRE (view->controlPointForScenario ("meter_0", top, 0.0f));
+        REQUIRE (view->controlPointForScenario ("plot", handles, 0.5f));
+        int count = 0;
+        const auto& positions = panel.lastVertexPositions();
+        const auto& colours = panel.lastVertexColours();
+        for (std::size_t i = 0; i < positions.size(); ++i)
+            if (colours[i] == colour && positions[i].y >= top.y && positions[i].y <= handles.y) ++count;
+        return count;
+    };
+    const auto settle = [&]
+    {
+        panel.frame (*view);
+        panel.frame (*view);
+    };
+
+    settle();
+    CHECK (inDisplay (bypassText) == 0);
+    CHECK (inDisplay (soloText) == 0);
+    CHECK (inDisplay (dw::withAlpha (hex (bandColours[1]), 0.14f)) > 0);
+    CHECK (std::count (panel.lastVertexColours().begin(), panel.lastVertexColours().end(), idleCrossover) == 0);
+
+    comp.set (compBandParam (1, CompBandField::Bypass), 1.0f);
+    settle();
+    CHECK (inDisplay (bypassText) > 0);
+    CHECK (inDisplay (dw::withAlpha (hex (bandColours[1]), 0.05f)) > 0);
+    CHECK (inDisplay (dw::withAlpha (hex (bandColours[1]), 0.14f)) == 0);
+
+    comp.set (compBandParam (1, CompBandField::Bypass), 0.0f);
+    comp.set (compBandParam (2, CompBandField::Solo), 1.0f);
+    settle();
+    CHECK (inDisplay (bypassText) == 0);
+    CHECK (inDisplay (soloText) > 0);
+    CHECK (inDisplay (dw::withAlpha (hex (bandColours[2]), 0.9f)) > 0);
+
+    comp.set (compBandParam (2, CompBandField::Solo), 0.0f);
+    comp.set (compBandParam (3, CompBandField::Enabled), 0.0f);
+    settle();
+    ImVec2 point;
+    CHECK_FALSE (view->controlPointForScenario ("meter_3", point, 0.0f));
+    CHECK (view->controlPointForScenario ("meter_2", point, 0.0f));
+    CHECK (std::count (panel.lastVertexColours().begin(), panel.lastVertexColours().end(), idleCrossover) > 0);
+}
+
+TEST_CASE ("the mastering multiband meters follow the plug-in's band reduction while it is in and rest at 0 while out",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    MultiCompStage stage (CompStage::Multiband);
+    stage.prepare (48000.0, 256, 2);
+    for (int band = 0; band < kCompBandCount; ++band)
+        params.comp.set (compBandParam (band, CompBandField::Threshold), -50.0f);
+    stage.pushParameters (params.comp, true, 0);
+    std::vector<float> left (256), right (256);
+    std::uint32_t state = 7;
+    for (int block = 0; block < 200; ++block)
+    {
+        for (std::size_t i = 0; i < left.size(); ++i)
+        {
+            state = state * 1664525u + 1013904223u;
+            left[i] = right[i] = (static_cast<float> (state >> 8) / 8388608.0f - 1.0f) * 0.5f;
+        }
+        stage.process (left.data(), right.data(), 256);
+    }
+    for (int band = 0; band < kCompBandCount; ++band)
+    {
+        CAPTURE (band);
+        REQUIRE (stage.bandGainReductionDb (band) < -1.0f);
+    }
+
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    panel.setDeltaTime (1.0f / 30.0f);
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    const auto depth = [&view] (int band)
+    {
+        ImVec2 top, foot;
+        REQUIRE (view->controlPointForScenario ("meter_" + std::to_string (band), top, 0.0f));
+        REQUIRE (view->controlPointForScenario ("meter_" + std::to_string (band), foot, 1.0f));
+        return foot.y - top.y;
+    };
+
+    params.compEnabled.store (false);
+    for (int frame = 0; frame < 4; ++frame) panel.frame (*view);
+    for (int band = 0; band < kCompBandCount; ++band)
+        REQUIRE_THAT (depth (band), Catch::Matchers::WithinAbs (0.0, 0.0));
+
+    params.compEnabled.store (true);
+    for (int frame = 0; frame < 4; ++frame) panel.frame (*view);
+    for (int band = 0; band < kCompBandCount; ++band)
+        REQUIRE (depth (band) > 1.0f);
+
+    params.compEnabled.store (false);
+    for (int frame = 0; frame < 120; ++frame) panel.frame (*view);
+    for (int band = 0; band < kCompBandCount; ++band)
+        REQUIRE_THAT (depth (band), Catch::Matchers::WithinAbs (0.0, 0.0));
+    REQUIRE (view->liveStamp().has_value());
+}
+
+TEST_CASE ("the mastering multiband preset picker opens inside the panel, applies a preset and keeps its name",
+           "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    params.compEnabled.store (false);
+    MultiCompStage stage (CompStage::Multiband);
+    CompParams pop;
+    REQUIRE (mbpresets::apply (1, stage, pop));
+    params.comp.set (CompParamId::MbMix, 60.0f);
+    params.comp.set (CompParamId::MbOutput, -3.0f);
+    params.comp.set (CompParamId::AutoMakeup, 1.0f);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    panel.frame (*view);
+    panel.frame (*view);
+
+    // In the smallest panel the page gives the compressor the whole list still fits.
+    panel.setSize ({ 400.0f, 410.0f });
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.clickControl (*view, "comp_preset");
+    for (int entry = 0; entry <= mbpresets::kNumPresets; ++entry)
+    {
+        CAPTURE (entry);
+        ImVec2 at;
+        REQUIRE (view->controlPointForScenario ("list:" + std::to_string (entry), at));
+    }
+    panel.key (ImGuiKey_Escape, true);
+    panel.frame (*view);
+    panel.key (ImGuiKey_Escape, false);
+    panel.frame (*view);
+    REQUIRE_FALSE (view->capturesKeyboard());
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.frame (*view);
+    panel.frame (*view);
+
+    panel.clickControl (*view, "comp_preset");
+    REQUIRE (view->capturesKeyboard());
+    // Every other control stays drawn while the list is open.
+    ImVec2 point;
+    REQUIRE (view->controlPointForScenario ("comp_enabled", point));
+    // Every entry shows, inside the panel, without scrolling.
+    for (int entry = 0; entry <= mbpresets::kNumPresets; ++entry)
+    {
+        CAPTURE (entry);
+        REQUIRE (view->controlPointForScenario ("list:" + std::to_string (entry), point));
+    }
+    panel.clickControl (*view, "list:2");
+    REQUIRE_FALSE (view->capturesKeyboard());
+    REQUIRE (presetChoice == 2);
+    for (const auto id : compStageParams (CompStage::Multiband))
+    {
+        CAPTURE (compParamSpec (id).symbol);
+        if (id == CompParamId::MbMix || id == CompParamId::MbOutput) continue;
+        const bool highMidLevel = id >= compBandParam (2, CompBandField::Threshold)
+                               && id <= compBandParam (2, CompBandField::Makeup);
+        if (highMidLevel) continue;
+        REQUIRE_THAT (params.comp.get (id), Catch::Matchers::WithinAbs (pop.get (id), 0.0));
+    }
+    REQUIRE_THAT (params.comp.get (CompParamId::MbMix), Catch::Matchers::WithinAbs (60.0, 0.0));
+    REQUIRE_THAT (params.comp.get (CompParamId::MbOutput), Catch::Matchers::WithinAbs (-3.0, 0.0));
+    REQUIRE (params.comp.get (CompParamId::AutoMakeup) < 0.5f);
+    REQUIRE_FALSE (params.compEnabled.load());
+
+    // A band changed afterwards leaves the picked name showing.
+    const auto lowThreshold = compBandParam (0, CompBandField::Threshold);
+    params.comp.set (lowThreshold, -12.0f);
+    panel.frame (*view);
+    REQUIRE (presetChoice == 2);
+
+    // Picking the name it shows applies that preset again.
+    REQUIRE (std::abs (pop.get (lowThreshold) - (-12.0f)) > 1.0e-3f);
+    panel.clickControl (*view, "comp_preset");
+    panel.clickControl (*view, "list:2");
+    REQUIRE (presetChoice == 2);
+    REQUIRE_THAT (params.comp.get (lowThreshold), Catch::Matchers::WithinAbs (pop.get (lowThreshold), 0.0));
+}
+
+TEST_CASE ("the mastering multiband header engages the compressor", "[mastering][multiband][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    params.compEnabled.store (false);
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.clickControl (*view, "comp_enabled");
+    REQUIRE (params.compEnabled.load());
+    panel.movePointer (kHeaderPoint);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.pressPointer (true);
+    panel.frame (*view);
+    panel.pressPointer (false);
+    panel.frame (*view);
+    REQUIRE_FALSE (params.compEnabled.load());
+}
+
+TEST_CASE ("a list open in a mastering panel closes when the user turns away, not when its child loses the keyboard",
+           "[mastering][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    const auto closesOnFocusLoss = [&panel] (imgui::DuskPanelView& view, const char* control)
+    {
+        CAPTURE (control);
+        panel.frame (view);
+        panel.frame (view);
+        panel.clickControl (view, control);
+        ImVec2 point;
+        REQUIRE (view.capturesKeyboard());
+        REQUIRE (view.controlPointForScenario ("list:0", point));
+        panel.movePointer ({ -100.0f, -100.0f });
+        // An X11 window manager takes the child's focus on a press inside it.
+        view.focusLost();
+        panel.frame (view);
+        panel.frame (view);
+        REQUIRE (view.capturesKeyboard());
+        REQUIRE (view.controlPointForScenario ("list:0", point));
+        view.closeLists();
+        panel.frame (view);
+        panel.frame (view);
+        REQUIRE_FALSE (view.capturesKeyboard());
+        REQUIRE_FALSE (view.controlPointForScenario ("list:0", point));
+    };
+
+    SECTION ("the multiband presets")
+    {
+        MultiCompStage stage (CompStage::Multiband);
+        int presetChoice = 0;
+        const auto before = multibandValues (params.comp);
+        auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+        closesOnFocusLoss (*view, "comp_preset");
+        REQUIRE (presetChoice == 0);
+        requireUnchanged (params.comp, before);
+    }
+    SECTION ("the limiter's mode")
+    {
+        BrickwallLimiter limiter;
+        const int mode = params.limiterMode.load();
+        auto view = imgui::makeMasteringLimiterView (params, limiter);
+        closesOnFocusLoss (*view, "limiter_mode");
+        REQUIRE (params.limiterMode.load() == mode);
+    }
+    SECTION ("the Phase display")
+    {
+        PhaseAnalyzer analyzer;
+        bool mono = false;
+        auto view = imgui::makeMasteringPhaseView (params.phase, analyzer, [&] { return mono; },
+                                                  [&] (bool value) { mono = value; });
+        closesOnFocusLoss (*view, "mode");
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("phase_display:0", point));
+    }
+}
+
+TEST_CASE ("a mastering panel reports an open list's entries only while it draws them", "[mastering][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.clickControl (*view, "comp_preset");
+    ImVec2 point;
+    REQUIRE (view->controlPointForScenario ("list:1", point));
+    REQUIRE (view->controlPointForScenario ("list:" + std::to_string (mbpresets::kNumPresets), point));
+    for (const auto* name : { "list:", "list:typo", "list:1x", "list:-1", "list: 1", "list:99", "list:99999999999999999999" })
+    {
+        CAPTURE (name);
+        REQUIRE_FALSE (view->controlPointForScenario (name, point));
+    }
+
+    SECTION ("the frame a pick closes the list")
+    {
+        REQUIRE (view->controlPointForScenario ("list:2", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        panel.frame (*view);
+        panel.pressPointer (true);
+        panel.frame (*view);
+        panel.pressPointer (false);
+        panel.frame (*view);
+        REQUIRE (presetChoice == 2);
+        REQUIRE_FALSE (view->controlPointForScenario ("list:0", point));
+    }
+}
+
+TEST_CASE ("the limiter reports no Mode entries from a frame that did not draw its picker", "[mastering][imgui]")
+{
+    Session session;
+    BrickwallLimiter limiter;
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    auto view = imgui::makeMasteringLimiterView (session.mastering(), limiter);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.clickControl (*view, "limiter_mode");
+    ImVec2 point;
+    REQUIRE (view->controlPointForScenario ("list:0", point));
+    panel.setSize ({ 60.0f, 600.0f });
+    panel.frame (*view);
+    REQUIRE_FALSE (view->controlPointForScenario ("list:0", point));
+}
+
+TEST_CASE ("a scenario control point stays inside the control, however short it is", "[mastering][imgui]")
+{
+    imgui::ScenarioControlMap map;
+    map.begin ({ 0.0f, 0.0f, 100.0f, 100.0f });
+    map.note ("tall", { 10.0f, 10.0f, 20.0f, 30.0f });
+    map.note ("thin", { 40.0f, 50.0f, 60.0f, 50.4f });
+    map.settle();
+    for (const float fraction : { 0.0f, 0.5f, 1.0f })
+    {
+        CAPTURE (fraction);
+        float x = 0.0f, y = 0.0f;
+        REQUIRE (map.point ("thin", fraction, x, y));
+        REQUIRE_THAT (y, Catch::Matchers::WithinAbs (50.2, 1.0e-5));
+        REQUIRE (map.point ("tall", fraction, x, y));
+        REQUIRE_THAT (y, Catch::Matchers::WithinAbs (29.5 - fraction * 19.0, 1.0e-5));
+    }
+}
+
+TEST_CASE ("a pick held down in a mastering list takes, whatever asks the lists to close meanwhile", "[mastering][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    MultiCompStage stage (CompStage::Multiband);
+    HeadlessPanel panel;
+    panel.setSize ({ 483.0f, 600.0f });
+    panel.movePointer ({ -100.0f, -100.0f });
+    int presetChoice = 0;
+    auto view = imgui::makeMasteringCompView (params, stage, presetChoice);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.clickControl (*view, "comp_preset");
+    ImVec2 point;
+    REQUIRE (view->controlPointForScenario ("list:2", point));
+    panel.movePointer (point);
+    panel.frame (*view);
+    panel.frame (*view);
+    panel.pressPointer (true);
+    panel.frame (*view);
+    // An X11 server can hand the page the same press, and the page asks every panel
+    // to close its lists before the release arrives.
+    view->closeLists();
+    panel.frame (*view);
+    panel.pressPointer (false);
+    panel.frame (*view);
+    panel.frame (*view);
+    REQUIRE (presetChoice == 2);
+    REQUIRE_FALSE (view->capturesKeyboard());
 }

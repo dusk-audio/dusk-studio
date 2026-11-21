@@ -211,6 +211,7 @@ add_executable(dusk-studio-tests
     timeline_follow.cpp
     timeline_sample_rate.cpp
     aux_send_text.cpp
+    largest_uniform_rect.cpp
     dsp_readout_severity.cpp
     loop_timeline.cpp
     capture_schedule.cpp
@@ -1203,6 +1204,7 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         multi_comp_stage.cpp
+        multi_comp_auto_makeup.cpp
         comp_editor_host.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/CompEditorHost.cpp
         comp_stage_strips.cpp
@@ -1219,6 +1221,7 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_lane_view.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinLaneView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringCompView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringPhaseView.cpp>

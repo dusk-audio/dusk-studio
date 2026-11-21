@@ -51,6 +51,12 @@ public:
     // The plug-in's GR output, in dB at or below 0.
     float gainReductionDb() const noexcept;
 
+    // One Multiband band's GR output (band 0..kCompBandCount - 1), in dB at or
+    // below 0; 0 on the other kinds and for a band out of range. The plug-in
+    // publishes it through an atomic, so any thread may read it. A stage that
+    // is out keeps the reading it last ran with.
+    float bandGainReductionDb (int band) const noexcept;
+
     // The plug-in, for building its editor. Message thread.
     builtin::DafPlugin& plugin() noexcept;
 
@@ -74,8 +80,9 @@ public:
 
     CompStage kind() const noexcept;
 
-    // The first symbol among the kind's parameters, mode, bypass and GR that
-    // the plug-in lacks, or null when it has them all.
+    // The first symbol among the kind's parameters, mode, bypass and GR (and
+    // the Multiband's band GRs) that the plug-in lacks, or null when it has
+    // them all.
     const char* unresolvedSymbol() const noexcept;
 
     // The session value behind each of the plug-in's parameter indices, which

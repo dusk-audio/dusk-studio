@@ -845,7 +845,10 @@ While a bounce is running:
 MASTERING plays one stereo mix file through the digital EQ, multiband compressor
 and brickwall limiter. A fourth native **Phase** panel measures the post-limiter
 signal without changing the chain output or latency. Wide windows show all four
-modules; compact windows select one full-width module. Covering dialogs must keep
+modules; compact windows select one full-width module. Every module's controls
+are on the page in its own native panel, the multiband compressor's included: no
+module opens a face or popup for its settings, and the GUI scenarios fail a module
+whose session settings lack a control on the page or whose panel is mostly empty. Covering dialogs must keep
 native children hidden across layout changes, including a cover opened while no
 native module was visible.
 
@@ -859,6 +862,9 @@ child recreation preserves the analyzer and held evidence.
 
 The analyzer uses Hann-windowed FFTs, log-spaced bands from 20 Hz to 20 kHz,
 Q-dependent spectral weights and exponentially smoothed cross/auto spectra.
+The header's switch (default on) saves as `phase_enabled`; off, the view analyses
+nothing, blanks the live readings, releases and disables Mono, and keeps held
+evidence, and switching it on starts a fresh analysis window with Mono still off.
 **Bands** (4-64, default 16), **Q** (0.25-8, default 2) and **Average** (50-5000 ms,
 default 500 ms) save as `phase_bands`, `phase_q` and `phase_averaging_ms` in the
 session's `mastering` object. Missing fields restore their defaults. Meter values,

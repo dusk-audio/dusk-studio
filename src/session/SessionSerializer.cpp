@@ -2450,6 +2450,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
     const auto phase = s.mastering().phase.snapshot();
+    mast["phase_enabled"]      = s.mastering().phase.enabled.load();
     mast["phase_bands"]        = phase.bands;
     mast["phase_q"]            = phase.q;
     mast["phase_averaging_ms"] = phase.averagingMs;
@@ -3116,6 +3117,7 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
                                                        kMasteringDefaults.limiterMode.load()), 0, 2));
         m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
                                                   kMasteringDefaults.limiterStereoLink.load()));
+        m.phase.enabled.store (json::getBool (mast, "phase_enabled", true));
         m.phase.bands.store (std::clamp (json::getInt (mast, "phase_bands", 16),
                                         MasteringPhaseSettings::kMinBands, MasteringPhaseSettings::kMaxBands));
         storeFiniteClampedFloat (m.phase.q, mast, "phase_q", 2.0f,

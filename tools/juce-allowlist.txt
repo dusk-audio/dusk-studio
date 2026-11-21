@@ -105,8 +105,8 @@ src/ui/MainComponent.cpp	403
 src/ui/MainComponent.h	54
 src/ui/MasterStripComponent.cpp	270
 src/ui/MasterStripComponent.h	55
-src/ui/MasteringView.cpp	142
-src/ui/MasteringView.h	26
+src/ui/MasteringView.cpp	126
+src/ui/MasteringView.h	24
 src/ui/MidiBindingsPanel.cpp	46
 src/ui/MidiBindingsPanel.h	15
 src/ui/MiniTimelineStrip.cpp	9

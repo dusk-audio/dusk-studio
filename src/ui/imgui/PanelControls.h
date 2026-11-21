@@ -2,6 +2,8 @@
 
 #include <DuskWidgets.hpp>
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,8 +44,21 @@ void formRule (const DuskWidgets::Context& ctx, ImVec2 at, float width);
 
 // A dropdown filling tl..br. `items` are NUL-terminated strings; `selected` indexes
 // them, or is -1 for "nothing chosen". True when the user picked a different one.
+// `openItems`, when given, is filled with each entry's screen rectangle (x0, y0, x1,
+// y1) while the list is open and emptied while it is closed, for a scenario to click.
+// `repick` reports a pick of the entry already selected as well, for a list whose
+// entries are actions rather than a setting.
 bool formCombo (DuskWidgets::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
-                const char* const* items, int count, int& selected, bool enabled = true);
+                const char* const* items, int count, int& selected, bool enabled = true,
+                std::vector<ImVec4>* openItems = nullptr, bool repick = false);
+
+// The entry a scenario's "list:<n>" names in a list of `count`: empty for any other
+// name, for n that is not a whole number, and for an entry the list does not have.
+std::optional<std::size_t> formListEntry (const std::string& name, std::size_t count);
+
+// Closes every list and menu open in the frame being drawn, as a press outside them
+// would, unless a button is held in the panel. Called from a view's draw().
+void formCloseLists();
 
 // A dropdown whose items are built at runtime. The pointers formCombo needs cannot be
 // taken while the list is still growing, so add() every entry and then finish() once.

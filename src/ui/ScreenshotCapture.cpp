@@ -332,7 +332,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     settle (300);
     snapshotComponent (auxView.get(), outDir, "np-07-aux-view.png");
 
-    // np-08 / mm-02 are the mastering stage, whose EQ and limiter panels are framework
+    // np-08 / mm-02 are the mastering stage, whose module panels are framework
     // children: that figure is taken in captureNativePanels below, from the running
     // message loop, because a child cannot draw while settle() holds the loop.
 
@@ -589,7 +589,7 @@ void MainComponent::captureNativePanels (std::string outDir)
 
     auto steps = std::make_shared<std::vector<Step>>();
 
-    // The mastering stage's EQ and limiter are framework children inside a JUCE view, so
+    // The mastering stage's module panels are framework children inside a JUCE view, so
     // its figure is the JUCE snapshot with each child's own frame pasted back in.
     steps->push_back ({ 0, [dir] (MainComponent& self)
     {
