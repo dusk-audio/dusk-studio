@@ -1018,10 +1018,10 @@ master input → program EQ → master bus compressor → tape saturation → ma
 The master tape is Dusk Audio's Tape Machine 2 plug-in, compiled into Dusk Studio and running the plug-in's own DSP, so a setting sounds the same here as in the plug-in.
 
 - **Bypass / engage**: click the left status light to toggle the tape stage in or out of the signal path. The editor's **BYPASS** switch is the same switch.
-- **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**. Tape Machine 2's own editor opens over a dimmed window, the same editor its VST3, CLAP and AU builds show, scaled down if the window is too small to hold it. Click outside it, click **TAPE** again or press **Escape** to dismiss it. It holds the machine (Swiss or American), tape speed and formulation, signal path, EQ standard and calibration, input drive, bias, high/low-pass filters, wow, flutter, noise and output level, **Auto cal** (calibrates bias for the selected tape type and speed; disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness; overrides Output). The American deck adds its head width and its crosstalk, wow-and-flutter and transformer switches, and the **ADVANCED** page holds the repro-head EQ. Touching any control engages the tape stage.
+- **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**. Tape Machine 2's own editor opens over a dimmed window, the same editor its VST3, CLAP and AU builds show, scaled down if the window is too small to hold it. Click outside it, click **TAPE** again or press **Escape** to dismiss it. It holds the machine (Swiss or American), tape speed and formulation, signal path, EQ standard and calibration, input drive, bias, high/low-pass filters, wow, flutter, noise and output level, **Auto cal**, the editor's **AUTO BIAS** (calibrates bias for the selected tape type and speed; disables the Bias knob), and **Auto comp**, its **GAIN LINK** (sets Output to the exact opposite of Input, so the gain added going in is taken off coming out; what the tape itself does to the level stays, so a loud source driven hard comes out lower as the tape compresses; overrides Output). The American deck adds its head width and its crosstalk, wow-and-flutter and transformer switches, and the **ADVANCED** page holds the repro-head EQ. Touching any control engages the tape stage.
 - **Presets**: the editor's preset bar holds the plug-in's factory presets and any you save yourself. Every setting, a preset's included, is saved with the session.
 
-- **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 56 samples of latency, which delay compensation covers.
+- **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 62 samples of latency, which delay compensation covers.
 
 ![The tape-machine editor.](docs/images/fx-03-tape.png)
 
@@ -1974,13 +1974,13 @@ Dusk Audio's Tape Machine 2 plug-in, the same one the master tape runs, compiled
 | Low Cut / High Cut | 20 Hz to 500 Hz / 3 kHz to 20 kHz | 20 Hz / 20 kHz | Filters on the output. |
 | Wow / Flutter | 0% to 100% | 7% / 3% | Transport instability. |
 | Noise | 0% to 100% | 0% | Tape hiss. |
-| Auto Cal / Auto Comp | Off / On | On | Level compensation, so changing speed or calibration does not change loudness. |
+| Auto Cal / Auto Comp | Off / On | On | The editor's **AUTO BIAS** and **GAIN LINK**. Auto Cal sets the bias for the tape and speed itself and ignores the Bias knob. Auto Comp sets Output to the exact opposite of Input and ignores the Output knob: the gain added going in comes off coming out, and what the tape does to the level stays, so a loud source driven hard comes out a few dB lower. |
 | Head Width | 1/4″ / 1/2″ / 1″ | 1/2″ | The American deck's head stack. Ignored on the Swiss deck. |
 | Crosstalk / Wow & Flutter / Transformer | Off / On | On | The American deck's front-panel switches. Ignored on the Swiss deck. |
 | Repro EQ | −12 dB to +12 dB | 0 dB | The **ADVANCED** page's repro-head LF, LMF, HMF and HF bands. |
 | Bypass | Off / On | Off | The plug-in's own bypass. |
 
-The editor's preset bar holds the plug-in's factory presets and any you save yourself. The unit reports **56 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Tape unit load into Tape Machine 2 with their settings.
+The editor's preset bar holds the plug-in's factory presets and any you save yourself. The unit reports **62 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Tape unit load into Tape Machine 2 with their settings.
 
 ![The Tape Machine 2 unit's editor.](docs/images/bi-04-tape.png)
 

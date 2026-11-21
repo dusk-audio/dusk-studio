@@ -307,24 +307,30 @@ TEST_CASE ("tape unit Auto cal sets the bias itself and ignores the Bias knob", 
     CHECK (largestDifference (manualLow, manualHigh) > 1.0e-3f);
 }
 
-TEST_CASE ("tape unit Auto comp holds the output level against the drive and overrides Output", "[builtin][tape]")
+TEST_CASE ("tape unit Auto comp takes the drive back off the output and overrides Output", "[builtin][tape]")
 {
     static constexpr float amplitude = 0.1f;
+    static constexpr double driveDb = 10.0;
+    static constexpr double toleranceDb = 0.05;
     const double dry = amplitude / std::sqrt (2.0);
 
     const auto flat   = renderTone (amplitude, { { "autoComp", 1.0f }, { "inputGain", 0.0f },
                                                  { "outputGain", -12.0f } });
-    const auto driven = renderTone (amplitude, { { "autoComp", 1.0f }, { "inputGain", 10.0f },
+    const auto driven = renderTone (amplitude, { { "autoComp", 1.0f }, { "inputGain", (float) driveDb },
                                                  { "outputGain", -12.0f } });
-    INFO ("Auto comp on: " << dbOf (flat.rms, dry) << " dB flat, " << dbOf (driven.rms, dry) << " dB driven");
+    const auto open   = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", 0.0f },
+                                                 { "outputGain", 0.0f } });
+    const auto hot    = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", (float) driveDb },
+                                                 { "outputGain", 0.0f } });
+    INFO ("Auto comp on: " << dbOf (flat.rms, dry) << " dB flat, " << dbOf (driven.rms, dry) << " dB driven; "
+          "off: " << dbOf (open.rms, dry) << " dB flat, " << dbOf (hot.rms, dry) << " dB driven");
     CHECK (std::abs (dbOf (flat.rms, dry)) < 1.5);
-    CHECK (std::abs (dbOf (driven.rms, dry)) < 1.5);
+    CHECK (std::abs (dbOf (flat.rms, open.rms)) < toleranceDb);
+    CHECK (std::abs (dbOf (driven.rms, hot.rms) + driveDb) < toleranceDb);
 
     const auto trimmed = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", 0.0f },
                                                   { "outputGain", -12.0f } });
-    const auto hot     = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", 6.0f },
-                                                  { "outputGain", 0.0f } });
-    INFO ("Auto comp off: " << dbOf (trimmed.rms, dry) << " dB at -12 out, " << dbOf (hot.rms, dry) << " dB at +6 in");
-    CHECK (dbOf (trimmed.rms, flat.rms) < -9.0);
+    INFO ("Auto comp off: " << dbOf (trimmed.rms, open.rms) << " dB at -12 out");
+    CHECK (dbOf (trimmed.rms, open.rms) < -9.0);
     CHECK (dbOf (hot.rms, dry) > 3.0);
 }

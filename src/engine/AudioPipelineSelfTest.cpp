@@ -482,15 +482,14 @@ std::string AudioPipelineSelfTest::testChannelRoutingFourOut()
 
 std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
 {
-    // Audit: characterize the master tape core's transfer function across
-    // its input-gain (drive) parameter, with auto-compensation both ON and
-    // OFF. Pre-tape peak after pan-center is 0.3544 (-9.01 dBFS) given a
-    // -6 dBFS sine on the input. With autoComp ON the tape core is
-    // expected to hold close-to-unity output across the full drive range
-    // (-12..+12 dB). Pass = autoComp ON delivers |delta| < 0.5 dB at every
-    // drive point. The compressionCompensation curve was re-derived
-    // from the measured raw transfer (plugins GH #92), so the old 2-4 dB
-    // high-drive undercompensation no longer applies.
+    // Sweeps the master tape's drive with Gain Link (autoComp) on and off. Gain
+    // Link sets Output to the exact opposite of Input and matches no level, so
+    // what the tape itself does, its compression at high drive included, stays
+    // in the output: at every drive the linked output is the unlinked one minus
+    // the drive. The two agree to under 0.001 dB at every drive; the 0.05 dB
+    // tolerance stays far below the 2 dB the tape compresses by at +12 dB,
+    // which a link that rode the level would miss by. At drive 0 the default
+    // tape stays within 0.5 dB of unity.
    #if DUSKSTUDIO_HAS_DUSK_DSP
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
@@ -504,50 +503,57 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
         "      Pre-tape peak (track 0 -> pan center): %.4f (%+.2f dBFS)\n",
         postStripPeak, ampToDb (postStripPeak));
 
-    const float drives[]       = { -12.0f, -6.0f, 0.0f, +6.0f, +12.0f };
-    const bool  autoCompModes[] = { true, false };
+    static constexpr float kLinkToleranceDb    = 0.05f;
+    static constexpr float kDefaultToleranceDb = 0.5f;
+    static constexpr int drivesDb[] = { -12, -6, 0, +6, +12 };
+    static constexpr int kNumDrives = (int) (sizeof (drivesDb) / sizeof (drivesDb[0]));
+    static constexpr int kDefaultDrive = 2;
+    static_assert (drivesDb[kDefaultDrive] == 0, "kDefaultDrive must index the 0 dB drive");
 
-    float deltaAtDefault = 0.0f;
-    float worstAutoOnDelta = 0.0f;   // largest |delta| over the autoComp-ON sweep
-    bool  autoCompOnWithinHalfDb = true;
-    for (bool ac : autoCompModes)
+    float linkedDeltaDb[kNumDrives] {}, unlinkedDeltaDb[kNumDrives] {};
+    for (bool linked : { true, false })
     {
-        tape.autoComp.store     (ac,   std::memory_order_relaxed);
-        tape.outputGainDb.store (0.0f, std::memory_order_relaxed);
+        tape.autoComp.store     (linked, std::memory_order_relaxed);
+        tape.outputGainDb.store (0.0f,   std::memory_order_relaxed);
 
-        table += dusk::text::format ("      autoComp=%s\n", ac ? "ON " : "OFF");
-        for (float drDb : drives)
+        table += dusk::text::format ("      autoComp=%s\n", linked ? "ON " : "OFF");
+        for (int d = 0; d < kNumDrives; ++d)
         {
-            tape.inputGainDb.store (drDb, std::memory_order_relaxed);
+            tape.inputGainDb.store ((float) drivesDb[d], std::memory_order_relaxed);
             auto m = runSynthetic (48000.0, 512, 16, 2,
                                     kInputAmpMinusSixDb, kToneHz, 24, 8);
             const float deltaDb = ampToDb (m.peakL / postStripPeak);
             table += dusk::text::format (
                 "        drive=%+6.1f dB -> post-tape L=%.4f (%+.2f dBFS), "
                 "delta=%+.2f dB\n",
-                drDb, m.peakL, ampToDb (m.peakL), deltaDb);
-            if (ac && std::abs (drDb) < 0.001f)
-                deltaAtDefault = deltaDb;
-            if (ac)
-            {
-                worstAutoOnDelta = std::max (worstAutoOnDelta, std::abs (deltaDb));
-                if (std::abs (deltaDb) > 0.5f)
-                    autoCompOnWithinHalfDb = false;
-            }
+                (float) drivesDb[d], m.peakL, ampToDb (m.peakL), deltaDb);
+            (linked ? linkedDeltaDb : unlinkedDeltaDb)[d] = deltaDb;
         }
     }
 
-    const bool pass = autoCompOnWithinHalfDb;
+    float worstLinkErrorDb = 0.0f;
+    table += "      autoComp ON - (OFF - drive):\n";
+    for (int d = 0; d < kNumDrives; ++d)
+    {
+        const float errorDb = linkedDeltaDb[d] - (unlinkedDeltaDb[d] - (float) drivesDb[d]);
+        worstLinkErrorDb = std::max (worstLinkErrorDb, std::abs (errorDb));
+        table += dusk::text::format ("        drive=%+6.1f dB -> %+.3f dB\n", (float) drivesDb[d], errorDb);
+    }
+
+    const float deltaAtDefault = linkedDeltaDb[kDefaultDrive];
+    const bool pass = worstLinkErrorDb < kLinkToleranceDb
+                   && std::abs (deltaAtDefault) < kDefaultToleranceDb;
 
     return dusk::text::format (
         "%s Master Tape gain audit (sweep)\n%s"
-        "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity\n"
-        "      autoComp ON worst |delta| over -12..+12 dB: %.2f dB "
-        "(pass if < 0.5 dB at every drive point)",
+        "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity "
+        "(pass if within %.1f dB)\n"
+        "      autoComp ON worst |ON - (OFF - drive)| over -12..+12 dB: %.3f dB "
+        "(pass if < %.2f dB at every drive point)",
         fmtPassFail (pass).c_str(),
         table.c_str(),
-        deltaAtDefault,
-        worstAutoOnDelta);
+        deltaAtDefault, kDefaultToleranceDb,
+        worstLinkErrorDb, kLinkToleranceDb);
    #else
     return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
    #endif
