@@ -347,7 +347,8 @@ private:
         const ScenarioControlMap::Box dial { centreX - radius, centreY - radius, centreX + radius, centreY + radius };
         scenarioControls.note (name, dial.unite ({ centreX - valueW * 0.5f, centreY + radius + ctx.s (1.0f),
                                                    centreX + valueW * 0.5f,
-                                                   centreY + radius + ctx.s (1.0f) + valueSize }));
+                                                   centreY + radius + ctx.s (1.0f) + valueSize }),
+                               dial);
         if (result.changed)
             parameter.store (clampf (range.start, range.end, result.value),
                              std::memory_order_relaxed);
@@ -438,7 +439,8 @@ private:
                   (bar.x1 - bar.x0) + ctx.s (28.0f), rgba (kCaptionText), label);
     }
 
-    // A drag column as the pointer finds it: the well and the caption over it.
+    // A drag column: the well and the caption over it are seen, the well takes the
+    // pointer.
     void noteColumn (const dw::Context& ctx, const char* name, const Rect& bar, const char* caption)
     {
         const float size = ctx.s (10.5f);
@@ -447,7 +449,8 @@ private:
         const float centreX = 0.5f * (bar.x0 + bar.x1);
         const ScenarioControlMap::Box well { bar.x0, bar.y0, bar.x1, bar.y1 };
         scenarioControls.note (name, well.unite ({ centreX - captionW * 0.5f, bar.y0 - ctx.s (18.0f),
-                                                   centreX + captionW * 0.5f, bar.y0 - ctx.s (18.0f) + size }));
+                                                   centreX + captionW * 0.5f, bar.y0 - ctx.s (18.0f) + size }),
+                               well);
     }
 
     void drawLevelFill (dw::Context& ctx, const Rect& bar, float frac, unsigned int top,

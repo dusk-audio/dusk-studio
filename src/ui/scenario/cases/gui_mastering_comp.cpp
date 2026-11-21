@@ -220,19 +220,34 @@ std::optional<ScenarioResult> runMasteringCompControls (GuiHost& host, ScenarioC
     auto& mastering = session.mastering();
     auto& comp = mastering.comp;
     const auto& stage = engine.getMasteringChain().getCompressor();
+    auto& player = engine.getMasteringPlayer();
     const auto originalDir = currentSessionDirectory (session);
+    const auto originalSource = mastering.sourceFile;
+    const auto originalMix = player.getLoadedFile();
+    const auto originalPosition = player.getPlayhead();
     const auto restore = ctx.tempDir() / "restore.json";
-    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the session");
+    // The reopen makes restore.json's folder the session's, where a mix saved
+    // relative to the session folder would not be found, so the mix is left out
+    // of it and put back by hand.
+    mastering.sourceFile = decltype (mastering.sourceFile) {};
+    const bool restoreSaved = SessionSerializer::save (session, restore);
+    mastering.sourceFile = originalSource;
+    if (! restoreSaved) return ScenarioResult::fail ("could not save the session");
     keepComp (ctx, comp);
     ctx.keep (mastering.compEnabled);
     keepStage (host, ctx);
     if (! ctx.expect (host.mainWindowSize().size() >= 2, "the window size is unavailable")) return ctx.verdict();
     const auto size = host.mainWindowSize();
-    ctx.cleanup ([&host, &session, originalDir, restore, size]
+    ctx.cleanup ([&host, &session, &mastering, &player, originalDir, originalSource, originalMix, originalPosition,
+                  restore, size]
     {
         drainModals (host);
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
+        mastering.sourceFile = originalSource;
+        if (originalMix.existsAsFile()) player.loadFile (originalMix);
+        else player.unloadFile();
+        player.setPlayhead (originalPosition);
         host.refreshMasteringSource();
         host.resizeMainWindow (size[0], size[1]);
     });
@@ -358,11 +373,16 @@ std::optional<ScenarioResult> runMasteringCompControls (GuiHost& host, ScenarioC
         comp.set (compBandParam (3, CompBandField::Enabled), 0.0f);
     } });
     pushClick (host, ctx, *steps, "mb_enabled_0");
-    pushClick (host, ctx, *steps, "mb_enabled_2");
-    steps->push_back ({ 0, [&ctx, &comp, &mastering]
+    steps->push_back ({ 0, [&ctx, &comp]
     {
         ctx.expect (comp.get (compBandParam (0, CompBandField::Enabled)) > 0.5f,
                     "LOW went off with only two bands enabled");
+        ctx.expect (comp.get (compBandParam (1, CompBandField::Enabled)) > 0.5f,
+                    "a click on LOW ON switched LOW-MID off");
+    } });
+    pushClick (host, ctx, *steps, "mb_enabled_2");
+    steps->push_back ({ 0, [&ctx, &comp, &mastering]
+    {
         ctx.expect (comp.get (compBandParam (2, CompBandField::Enabled)) > 0.5f, "HIGH-MID ON did not switch it on");
         ctx.expect (! mastering.compEnabled.load(), "a band control engaged the compressor");
     } });
@@ -425,6 +445,12 @@ std::optional<ScenarioResult> runMasteringCompControls (GuiHost& host, ScenarioC
         ctx.expect (host.masteringCompPreset() == kPopPreset + 1, "a band change took the preset's name away");
     } });
 
+    // A value left half typed when another session opens goes with the old one.
+    pushClick (host, ctx, *steps, "mb_threshold_0", kCommand);
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.typeInMasteringComp ("-7"), "the LOW THRESH field took no text"); },
+        [&host] { return host.masteringCompCapturesKeyboard(); }, "a command-click on LOW THRESH opened no field" });
+
     // The bands as the preset left them, saved and loaded back over other values.
     steps->push_back ({ 0, [&ctx, &session, &comp, values, saved, highSaved, handleX]
     {
@@ -447,6 +473,8 @@ std::optional<ScenarioResult> runMasteringCompControls (GuiHost& host, ScenarioC
                             + ", not the saved " + std::to_string ((*values)[(std::size_t) id]));
         ctx.expect (host.masteringCompPreset() == 0, "after another session loaded the picker still names preset "
                                                          + std::to_string (host.masteringCompPreset()));
+        ctx.expect (! host.masteringCompCapturesKeyboard(),
+                    "the LOW THRESH value typed for the session before is still being typed in the one loaded");
     }, [&host, highSaved, handleAt]
     {
         return host.masteringControl (kPanel, "plot") && handleAt ("mb_crossover_3", *highSaved);

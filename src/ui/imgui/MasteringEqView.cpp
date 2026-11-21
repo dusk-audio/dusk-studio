@@ -803,7 +803,8 @@ private:
         }
     }
 
-    // A dial and the readout under it, as dw::knob draws them.
+    // A dial and the readout under it, as dw::knob draws them; the dial takes the
+    // pointer.
     void noteKnob (const dw::Context& ctx, const std::string& name, float centreX, float centreY,
                    float radius, const char* readout)
     {
@@ -815,7 +816,7 @@ private:
         const ScenarioControlMap::Box dial { centreX - radius, centreY - radius, centreX + radius, centreY + radius };
         const ScenarioControlMap::Box value { centreX - width * 0.5f, centreY + radius + ctx.s (1.0f),
                                               centreX + width * 0.5f, centreY + radius + ctx.s (1.0f) + size };
-        scenarioControls.note (name.c_str(), dial.unite (value));
+        scenarioControls.note (name.c_str(), dial.unite (value), dial);
     }
 
     MasteringParams& params;

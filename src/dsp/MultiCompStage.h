@@ -53,8 +53,10 @@ public:
 
     // One Multiband band's GR output (band 0..kCompBandCount - 1), in dB at or
     // below 0; 0 on the other kinds and for a band out of range. The plug-in
-    // publishes it through an atomic, so any thread may read it. A stage that
-    // is out keeps the reading it last ran with.
+    // publishes it through an atomic, so any thread may read it. This is the
+    // last value it published: a stage paused without a reset keeps it, and a
+    // reset, such as the one CompStageAlign makes once a fade out ends, clears
+    // it to 0.
     float bandGainReductionDb (int band) const noexcept;
 
     // The plug-in, for building its editor. Message thread.

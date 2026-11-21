@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -504,7 +505,9 @@ void pushDropdownSteps (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& 
     {
         if (open() || (page && ! host.modalStackEmpty()) || dropdown.choice (host, ctx) != run->wanted) return false;
         const auto now = shownPanels (host);
-        return ! now.empty() && (dropdown.name != "the compact module picker" ? now == run->shown : now.size() == 1);
+        if (dropdown.name == "the compact module picker")
+            return now == std::vector<std::string> { panelTag (run->wanted) };
+        return ! now.empty() && now == run->shown;
     }, dropdown.name + " did not close with every panel drawn again in " + where });
 }
 
@@ -583,16 +586,25 @@ std::optional<ScenarioResult> runMasteringDropdownsKeepModules (GuiHost& host, S
     const auto all = dropdowns();
     auto shot = std::make_shared<int> (0);
     auto steps = std::make_shared<std::vector<Step>>();
-    const auto settle = [&host, &ctx, steps] (int width, int height, int module, const std::string& where)
+    // Side by side every module's panel is up before the dropdowns record which
+    // are shown; compact, the picked one.
+    const auto settle = [&host, &ctx, steps] (int width, int height, int module, const std::string& where,
+                                              bool sideBySide)
     {
         steps->push_back ({ 0, [&host, &ctx, width, height, module, where]
         {
             ctx.expect (host.resizeMainWindow (width, height), "could not size the window for " + where);
             host.restoreMasteringModule (module);
         } });
-        steps->push_back ({ 500, [] {}, [&host, module]
+        steps->push_back ({ 500, [] {}, [&host, module, sideBySide]
         {
-            return host.panelFrames (panelTag (module)).value_or (0) > 1 && host.modalStackEmpty();
+            if (! host.modalStackEmpty()) return false;
+            if (! sideBySide) return host.panelFrames (panelTag (module)).value_or (0) > 1;
+            const auto shown = shownPanels (host);
+            if ((int) shown.size() != host.masteringPanelsExpected()) return false;
+            for (const auto& panel : shown)
+                if (host.panelFrames (panel).value_or (0) <= 1) return false;
+            return true;
         }, "the mastering panels did not settle in " + where });
     };
 
@@ -606,7 +618,7 @@ std::optional<ScenarioResult> runMasteringDropdownsKeepModules (GuiHost& host, S
     };
 
     const std::string wide = "a 1424 x 1120 window";
-    settle (1424, 1120, 1, wide);
+    settle (1424, 1120, 1, wide, true);
     for (int d = 0; d < 4; ++d)
         pushDropdownSteps (host, ctx, *steps, all[(std::size_t) d], wide, shot);
     for (int choice = 0; choice < all[3].choices; ++choice)
@@ -614,7 +626,7 @@ std::optional<ScenarioResult> runMasteringDropdownsKeepModules (GuiHost& host, S
     for (const int module : { 1, 2, 3 })
     {
         const std::string where = "the smallest window with " + std::string (panelTag (module)) + " picked";
-        settle (size[2], size[3], module, where);
+        settle (size[2], size[3], module, where, false);
         pushDropdownSteps (host, ctx, *steps, all[(std::size_t) module - 1], where, shot);
         if (module == 1)
         {
@@ -622,9 +634,9 @@ std::optional<ScenarioResult> runMasteringDropdownsKeepModules (GuiHost& host, S
             for (int choice = 0; choice < all[3].choices; ++choice)
                 pressTwice (choice, where);
         }
-        settle (size[2], size[3], module, where);
+        settle (size[2], size[3], module, where, false);
         pushDropdownSteps (host, ctx, *steps, all[4], where, shot);
-        settle (size[2], size[3], module, where);
+        settle (size[2], size[3], module, where, false);
         pushSecondPressSteps (host, ctx, *steps, all[4], false, where);
     }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -840,26 +852,52 @@ std::optional<ScenarioResult> runMasteringRealListPicks (GuiHost& host, Scenario
     // to the page between the waveform and the panels: where the window saw it is
     // what lines the driver's clicks up, wherever the compositor put the window.
     auto aim = std::make_shared<std::array<int, 2>>();
-    const auto announce = [&host, &ctx, steps, aim]
+    // The first move's landing: the pointer as the window saw it before the move,
+    // then where it rests once it has left there. The driver goes by way of the
+    // screen's corner, so a reading that has changed is not yet where it stops.
+    struct Landing
     {
-        steps->push_back ({ 300, [&host, &ctx, aim]
+        std::vector<int> before, seen;
+        bool moved = false;
+        std::chrono::steady_clock::time_point since;
+    };
+    auto landing = std::make_shared<Landing>();
+    const auto announce = [&host, &ctx, steps, aim, landing]
+    {
+        steps->push_back ({ 300, [&host, &ctx, aim, landing]
         {
             const auto bounds = host.mainWindowBounds();
             const auto eq = host.masteringPanelArea ("mastering-eq");
             if (! ctx.expect (bounds.size() >= 4 && eq.size() >= 4, "the window or the EQ panel has no place")) return;
             *aim = { eq[0] + 40, eq[1] - 3 };
+            *landing = {};
+            landing->before = host.pointerInMainWindow();
             std::fprintf (stderr, "[real-input] window %d %d %d %d\n[real-input] move %d %d\n", bounds[0], bounds[1],
                           bounds[2], bounds[3], (*aim)[0], (*aim)[1]);
             std::fflush (stderr);
         } });
-        steps->push_back ({ 800, [&host, aim]
+        steps->push_back ({ 0, [aim, landing]
         {
-            const auto seen = host.pointerInMainWindow();
-            if (seen.size() >= 2)
-                std::fprintf (stderr, "[real-input] shift %d %d\n[real-input] move %d %d\n", seen[0] - (*aim)[0],
-                              seen[1] - (*aim)[1], (*aim)[0], (*aim)[1]);
+            const auto& seen = landing->seen;
+            std::fprintf (stderr, "[real-input] shift %d %d\n[real-input] move %d %d\n", seen[0] - (*aim)[0],
+                          seen[1] - (*aim)[1], (*aim)[0], (*aim)[1]);
             std::fflush (stderr);
-        } });
+        }, [&host, landing]
+        {
+            static constexpr auto kRest = std::chrono::milliseconds (300);
+            const auto seen = host.pointerInMainWindow();
+            const auto now = std::chrono::steady_clock::now();
+            if (seen.size() < 2) return false;
+            if (! landing->moved && seen == landing->before) return false;
+            if (! landing->moved || seen != landing->seen)
+            {
+                landing->moved = true;
+                landing->seen = seen;
+                landing->since = now;
+                return false;
+            }
+            return now - landing->since >= kRest;
+        }, "the driver's first move never reached the window", {}, kBoundMs });
         steps->push_back ({ 300, [] {}, [&host, aim]
         {
             const auto seen = host.pointerInMainWindow();

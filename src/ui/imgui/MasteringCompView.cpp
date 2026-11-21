@@ -152,6 +152,7 @@ public:
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! keyboardWasActive; }
     void closeLists() override { listsToClose = true; }
+    void sessionReplaced() override { editing = -1; }
 
     // A control is reported only while the last frame drew all of it inside the
     // panel, clear of every other control: each Multiband parameter by its symbol,
@@ -819,7 +820,7 @@ private:
         float y = top + ctx.s (kNameRowH + kRowGap);
         const float switchW = (width - 2.0f * ctx.s (2.0f)) / 3.0f;
         const auto toggle = [&] (int slot, CompBandField field, const char* label, ImU32 lit, bool locked,
-                                 const char* help)
+                                 const char* help, bool available = true)
         {
             const auto id = compBandParam (b, field);
             const bool value = band (b, field);
@@ -828,15 +829,17 @@ private:
             char buttonId[32];
             std::snprintf (buttonId, sizeof buttonId, "##%s", compParamSpec (id).symbol);
             dw::ButtonStyle style;
-            style.offFill = rgba (kSwitchOff);
-            style.onFill = locked ? dw::withAlpha (lit, 0.55f) : lit;
-            style.offText = rgba (kSwitchText);
+            style.offFill = available ? rgba (kSwitchOff) : dw::withAlpha (rgba (kSwitchOff), 0.5f);
+            style.onFill = ! available ? dw::withAlpha (lit, 0.3f) : locked ? dw::withAlpha (lit, 0.55f) : lit;
+            style.offText = available ? rgba (kSwitchText) : dw::withAlpha (rgba (kSwitchText), 0.35f);
             style.onText = ctx.theme->textOn;
             style.fontSize = 9.5f;
+            ImGui::BeginDisabled (! available);
             const auto clicked = dw::textButton (ctx, buttonId, { r.x0, r.y0 }, { r.x1, r.y1 }, label, value, style).clicked;
+            ImGui::EndDisabled();
             formTooltip (help);
             note (id, r, r);
-            return clicked && ! locked;
+            return clicked && ! locked && available;
         };
         char help[96];
         const bool locked = on && enabledCount <= 2;
@@ -851,8 +854,13 @@ private:
                 set (compBandParam (b, CompBandField::Solo), 0.0f);
             set (compBandParam (b, CompBandField::Enabled), on ? 0.0f : 1.0f);
         }
-        std::snprintf (help, sizeof help, "Solo the %s band", kBandTitles[b]);
-        if (toggle (1, CompBandField::Solo, "S", rgba (0xd4d400ff), false, help))
+        // Multi-Comp 2 ignores the solo of a band it does not play, which would
+        // then mute every other band the moment the band came on.
+        if (plays)
+            std::snprintf (help, sizeof help, "Solo the %s band", kBandTitles[b]);
+        else
+            std::snprintf (help, sizeof help, "Switch the %s band on to solo it", kBandTitles[b]);
+        if (toggle (1, CompBandField::Solo, "S", rgba (0xd4d400ff), false, help, plays))
             set (compBandParam (b, CompBandField::Solo), band (b, CompBandField::Solo) ? 0.0f : 1.0f);
         std::snprintf (help, sizeof help, "Bypass the %s band: it passes unprocessed", kBandTitles[b]);
         if (toggle (2, CompBandField::Bypass, "BYP", rgba (kBypassLit), false, help))
@@ -896,7 +904,7 @@ private:
         style.fontSize = 9.5f;
         if (dw::textButton (ctx, "##auto_makeup", { bx0, by0 }, { bx1, by0 + buttonH }, "AUTO MAKEUP", on, style).clicked)
             set (id, on ? 0.0f : 1.0f);
-        formTooltip ("Auto makeup: Multi-Comp 2 makes up the level each band's compression takes off.");
+        formTooltip ("Match the output's overall level to the input's, by as much as 24 dB either way.");
         const Rect r { bx0, by0, bx1, by0 + buttonH };
         note (id, r, r);
     }

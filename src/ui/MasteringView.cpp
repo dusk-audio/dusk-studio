@@ -616,8 +616,9 @@ void MasteringView::sessionReplaced()
 {
     compPresetChoice = 0;
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (compWindow != nullptr)
-        compWindow->wake();
+    for (auto* window : { eqWindow.get(), compWindow.get(), limiterWindow.get(), phaseWindow.get() })
+        if (window != nullptr)
+            window->sessionReplaced();
    #endif
 }
 

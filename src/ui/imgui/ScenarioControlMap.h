@@ -36,19 +36,24 @@ public:
         for (auto& entry : entries)
         {
             entry.drawn = {};
+            entry.hit = {};
             entry.clean = false;
         }
     }
 
-    void note (const char* name, const Box& drawn)
+    // `drawn` is all of the control, captions and readouts included; `hit`, where
+    // it takes the pointer, when that is less than all of it.
+    void note (const char* name, const Box& drawn) { note (name, drawn, drawn); }
+    void note (const char* name, const Box& drawn, const Box& hit)
     {
         for (auto& entry : entries)
             if (std::strcmp (entry.name.c_str(), name) == 0)
             {
                 entry.drawn = drawn;
+                entry.hit = hit;
                 return;
             }
-        entries.push_back ({ name, drawn, false });
+        entries.push_back ({ name, drawn, false, hit });
     }
 
     void settle()
@@ -62,15 +67,16 @@ public:
         }
     }
 
-    // The control's centre across, and `fraction` of the way up it, half a pixel in
-    // from its edges; a box under a pixel tall gives its centre.
+    // The centre across of where the control takes the pointer, and `fraction` of
+    // the way up it, half a pixel in from its edges; a box under a pixel tall gives
+    // its centre.
     bool point (const std::string& name, float fraction, float& x, float& y) const
     {
         for (const auto& entry : entries)
             if (entry.name == name)
             {
                 if (! entry.clean) return false;
-                const auto& r = entry.drawn;
+                const auto& r = entry.hit.empty() ? entry.drawn : entry.hit;
                 const float inset = std::min (0.5f, 0.5f * (r.y1 - r.y0));
                 x = 0.5f * (r.x0 + r.x1);
                 y = r.y1 - inset - std::clamp (fraction, 0.0f, 1.0f) * (r.y1 - r.y0 - 2.0f * inset);
@@ -85,6 +91,7 @@ private:
         std::string name;
         Box drawn;
         bool clean;
+        Box hit;
     };
 
     std::vector<Entry> entries;

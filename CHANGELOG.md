@@ -66,13 +66,13 @@ canonical source.
   sit side by side, each with **ON**, **S** and **BYP** and its **THRESH**,
   **RATIO**, **ATTACK**, **RELEASE** and **MAKEUP** dials, and **MIX**,
   **OUTPUT** and **AUTO MAKEUP** run along the bottom. The last two bands
-  that are on stay on, and switching a band off clears its solo. A
-  double-click resets a dial or a crossover, and Cmd-click on macOS or
-  Ctrl-click elsewhere types a value. Only the **MULTIBAND COMP** header
-  engages the compressor. The **PRESET** picker sits under the header, and
-  its list opens inside the panel with every preset showing. Picking the
-  name it shows applies that preset again, and it reads **Select
-  preset...** again once another session opens.
+  that are on stay on, and switching a band off clears its solo. **S** is
+  unavailable on a band that does not play. A double-click resets a dial or
+  a crossover, and Cmd-click on macOS or Ctrl-click elsewhere types a value.
+  Only the **MULTIBAND COMP** header engages the compressor. The **PRESET**
+  picker sits under the header, and its list opens inside the panel with
+  every preset showing. Picking the name it shows applies that preset again,
+  and it reads **Select preset...** again once another session opens.
 - **PHASE switches off.** The **PHASE** header's status light is a switch,
   on by default and saved with the session. Off, nothing is analysed, the
   readings blank and **Mono** is released and greyed out; held minima and

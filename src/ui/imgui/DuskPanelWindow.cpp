@@ -1459,6 +1459,12 @@ void DuskPanelWindow::closeLists()
     impl->view->closeLists();
     wake();
 }
+void DuskPanelWindow::sessionReplaced()
+{
+    if (! isOpen() || impl->view == nullptr) return;
+    impl->view->sessionReplaced();
+    wake();
+}
 bool DuskPanelWindow::inputSeenForScenario() noexcept
 {
     return panelsWithUnseenScenarioInput == 0;

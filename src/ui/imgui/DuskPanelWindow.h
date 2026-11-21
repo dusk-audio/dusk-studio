@@ -129,6 +129,11 @@ public:
     // DuskPanelWindow::closeLists): a list or menu left open closes.
     virtual void closeLists() {}
 
+    // The shell opened another session in what the view shows (see
+    // DuskPanelWindow::sessionReplaced): a value being typed for the one
+    // before is dropped rather than written into the new one.
+    virtual void sessionReplaced() {}
+
     // Everything the body draws from that input does not change, folded into one
     // value, read between frames. The window draws when it changes, on input and
     // on a slow floor, and otherwise leaves the last frame up. Empty asks for a
@@ -262,6 +267,10 @@ public:
     // which the child never hears of, or the host window losing the keyboard. A
     // list or menu the view has open closes on its next frame.
     void closeLists();
+
+    // Another session replaced the one the view shows. The view drops what it
+    // was in the middle of for the old one, and the window draws as after wake().
+    void sessionReplaced();
 
     void close();
     bool isOpen() const noexcept;

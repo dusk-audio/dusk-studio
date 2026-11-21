@@ -384,6 +384,30 @@ TEST_CASE ("the mastering limiter view takes no plate")
     REQUIRE_FALSE (view->wantsPlate());
 }
 
+TEST_CASE ("a scenario press at either end of a limiter column takes that column", "[mastering][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    BrickwallLimiter limiter;
+    HeadlessPanel panel;
+    panel.movePointer ({ -100.0f, -100.0f });
+    auto view = imgui::makeMasteringLimiterView (params, limiter);
+    panel.frame (*view);
+    panel.frame (*view);
+
+    // Threshold is minus the drive: its column runs from -20 dB at the foot to 0 at the top.
+    params.limiterDriveDb.store (10.0f);
+    panel.clickControl (*view, "limiter_drive_db", 1.0f);
+    REQUIRE_THAT (params.limiterDriveDb.load(), Catch::Matchers::WithinAbs (0.0, 1.0e-4));
+    panel.clickControl (*view, "limiter_drive_db", 0.0f);
+    REQUIRE_THAT (params.limiterDriveDb.load(), Catch::Matchers::WithinAbs (20.0, 1.0e-4));
+
+    panel.clickControl (*view, "limiter_ceiling_db", 1.0f);
+    REQUIRE_THAT (params.limiterCeilingDb.load(), Catch::Matchers::WithinAbs (0.0, 1.0e-4));
+    panel.clickControl (*view, "limiter_ceiling_db", 0.0f);
+    REQUIRE_THAT (params.limiterCeilingDb.load(), Catch::Matchers::WithinAbs (-12.0, 1.0e-4));
+}
+
 TEST_CASE ("the mastering Phase view preserves parameters and held analysis across recreation", "[mastering][phase][imgui]")
 {
     MasteringPhaseParams params;
@@ -1087,6 +1111,36 @@ TEST_CASE ("the mastering multiband controls each move their own value and leave
         REQUIRE_FALSE (view->capturesKeyboard());
         requireUnchanged (params.comp, before);
     }
+    SECTION ("a value being typed is dropped when another session opens")
+    {
+        const auto id = compBandParam (0, CompBandField::Makeup);
+        ImVec2 point;
+        REQUIRE (view->controlPointForScenario ("mb_makeup_0", point));
+        panel.movePointer (point);
+        panel.frame (*view);
+        const auto control = ImGui::GetIO().ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
+        panel.key (control, true);
+        panel.frame (*view);
+        panel.pressPointer (true);
+        panel.frame (*view);
+        panel.pressPointer (false);
+        panel.key (control, false);
+        panel.frame (*view);
+        panel.frame (*view);
+        REQUIRE (view->capturesKeyboard());
+        panel.type ("3");
+        panel.frame (*view);
+        view->sessionReplaced();
+        params.comp.set (id, 1.5f);
+        const auto loaded = multibandValues (params.comp);
+        panel.key (ImGuiKey_Enter, true);
+        panel.frame (*view);
+        panel.key (ImGuiKey_Enter, false);
+        panel.frame (*view);
+        panel.frame (*view);
+        requireUnchanged (params.comp, loaded);
+        REQUIRE_FALSE (view->capturesKeyboard());
+    }
     REQUIRE_FALSE (params.compEnabled.load());
 }
 
@@ -1115,6 +1169,39 @@ TEST_CASE ("the mastering multiband view keeps two bands on and the crossovers a
         panel.clickControl (*view, "mb_enabled_1");
         REQUIRE (comp.get (compBandParam (1, CompBandField::Enabled)) < 0.5f);
         REQUIRE (comp.get (compBandParam (1, CompBandField::Solo)) < 0.5f);
+    }
+    SECTION ("S does nothing on a band that is off, and solos it once it is on")
+    {
+        const ImU32 dimmedOff = dw::withAlpha (IM_COL32 (0x26, 0x26, 0x2e, 0xff), 0.5f);
+        const auto dimmed = [&panel, dimmedOff]
+        {
+            const auto& colours = panel.lastVertexColours();
+            return std::count (colours.begin(), colours.end(), dimmedOff);
+        };
+        comp.set (compBandParam (2, CompBandField::Enabled), 0.0f);
+        panel.frame (*view);
+        CHECK (dimmed() > 0);
+        const auto before = multibandValues (comp);
+        panel.clickControl (*view, "mb_solo_2");
+        requireUnchanged (comp, before);
+        panel.clickControl (*view, "mb_enabled_2");
+        REQUIRE (comp.get (compBandParam (2, CompBandField::Enabled)) > 0.5f);
+        REQUIRE (comp.get (compBandParam (2, CompBandField::Solo)) < 0.5f);
+        CHECK (dimmed() == 0);
+        panel.clickControl (*view, "mb_solo_2");
+        REQUIRE (comp.get (compBandParam (2, CompBandField::Solo)) > 0.5f);
+    }
+    SECTION ("S solos a band that is off but plays to make up two")
+    {
+        for (int b = 1; b < kCompBandCount; ++b)
+            comp.set (compBandParam (b, CompBandField::Enabled), 0.0f);
+        panel.frame (*view);
+        auto before = multibandValues (comp);
+        panel.clickControl (*view, "mb_solo_1");
+        requireOnly (comp, before, compBandParam (1, CompBandField::Solo));
+        before = multibandValues (comp);
+        panel.clickControl (*view, "mb_solo_3");
+        requireUnchanged (comp, before);
     }
     SECTION ("a crossover set under the one below it shows where the plug-in plays it")
     {

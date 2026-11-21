@@ -1160,7 +1160,7 @@ Under the header and the preset picker is the band display, 20 Hz to 20 kHz from
 Below the display, the four band columns sit side by side: **LOW**, **LOW-MID**, **HIGH-MID** and **HIGH**. Each shows its band's gain reduction in dB beside the name, then three switches and five dials:
 
 - **ON** switches the band on or off. At least two bands stay on: with only two left, their **ON** switches are locked. Switching a band off also clears its solo.
-- **S** solos the band.
+- **S** solos the band. It is unavailable on a band that does not play.
 - **BYP** bypasses the band, which then passes unprocessed.
 - **THRESH**, **RATIO**, **ATTACK**, **RELEASE** and **MAKEUP** set its dynamics.
 
