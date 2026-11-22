@@ -35,7 +35,9 @@ constexpr int kCutBlocks = 94;
 constexpr int kMeasured = 4800;
 // Reset there instead, the compressors came back 1.6 to 3 dB over their
 // settled peak on a strip, under its 20 ms fade-in, and 7 to 15 dB on a bus,
-// which has none. Kept, they come back within 0.1 dB.
+// which has none. Kept, they come back within 0.1 dB, and a bus fed by a
+// strip that was out within 0.9 dB: the bus compressor runs on the silence
+// it drains before it sleeps.
 constexpr double kMaxRiseDb = 1.0;
 // Until the mix latency has passed after the block a strip or bus is heard
 // again, the master plays what the stages held from before (the compressor
@@ -226,7 +228,7 @@ ScenarioResult unmuteKeepsCompression (ScenarioContext& ctx)
                   + db (r.peakDb) + ", RMS " + db (r.rmsDb) + " against the settled level");
         if (! held) return;
         ctx.expect (r.peakDb <= kMaxRiseDb && r.rmsDb <= kMaxRiseDb,
-                    leg + ": the compressor came back " + db (r.peakDb) + " peak, " + db (r.rmsDb)
+                    leg + ": it came back " + db (r.peakDb) + " peak, " + db (r.rmsDb)
                         + " RMS over the level it had settled at");
         ctx.expect (r.heldPeak <= kHeldCeiling,
                     leg + ": the master was not silent for the mix latency after it was heard again, peak "
@@ -276,11 +278,22 @@ ScenarioResult unmuteKeepsCompression (ScenarioContext& ctx)
                                                [&] { quiet.solo.store (false); }, busReduction), true);
         strip.busAssign[1].store (false);
     }
-    // Muted, a bus-routed strip parks its bus gain with its fader, so for the
-    // 20 ms its gains take to come back part of it reaches the master straight
-    // rather than through the bus and its compressor. Measured, not held.
-    report ("bus-routed strip muted", playThrough (ctx, [&] { strip.mute.store (true); },
-                                                   [&] { strip.mute.store (false); }, busReduction), false);
+    // A bus-routed strip muted or soloed out fades back in through its bus
+    // alone, with the bus compressing and with it flat. Part of it reaching
+    // the master straight while it fades in came back 7.3 dB over the settled
+    // level with the bus compressing; with it flat both ways carry the same.
+    for (const bool compressed : { true, false })
+    {
+        bus.compEnabled.store (compressed);
+        const std::string kind = compressed ? " (bus compressed)" : " (bus flat)";
+        report ("bus-routed strip muted" + kind,
+                playThrough (ctx, [&] { strip.mute.store (true); }, [&] { strip.mute.store (false); },
+                             busReduction), true);
+        report ("bus-routed strip soloed out" + kind,
+                playThrough (ctx, [&] { other.solo.store (true); }, [&] { other.solo.store (false); },
+                             busReduction), true);
+    }
+    bus.compEnabled.store (true);
     // Unrouted, the track plays straight to the master; its bus gain fades
     // back over 20 ms when it is routed again, so that is left out.
     report ("bus with the track routed away and back",

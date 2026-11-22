@@ -270,6 +270,11 @@ canonical source.
   rest, so the bus came back for a moment as loud as the compressor's gain
   reduction: 15 dB over its settled level on a bus compressed by 16 dB. The
   compressor now keeps the gain reduction it had while the bus was out.
+- **A bus-routed track came back around its bus.** For the 20 ms a track
+  routed to a bus takes to fade back in after a mute or a solo, part of it
+  went straight to the master instead of through the bus, uncompressed by the
+  bus compressor: 7 dB over the settled level on a bus compressed by 16 dB. It
+  now fades back in through its bus alone.
 - **Mastering multiband compressor on the audio thread** (#1045). It
   allocated memory in every block it processed, which the audio thread must
   never do. Multi-Comp 2, which replaces it, does not.

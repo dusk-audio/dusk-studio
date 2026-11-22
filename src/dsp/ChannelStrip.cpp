@@ -470,9 +470,18 @@ void ChannelStrip::updateGainTargets() noexcept
     panGainL.setTargetValue (std::cos (angle));
     panGainR.setTargetValue (std::sin (angle));
 
+    // The master gets what the buses leave (1 - the largest bus gain), so a
+    // route ramping in under the fader's fade-in would put part of a bus-routed
+    // strip on the master around its bus. With the fader at zero nothing the
+    // strip sends is heard: it takes its route at once, after a prepare or a
+    // route changed while it was out.
+    const bool silent = faderGain.getCurrentValue() <= 0.0f;
     for (int i = 0; i < kNumBuses; ++i)
-        busGain[(size_t) i].setTargetValue (
-            paramsRef->busAssign[(size_t) i].load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+    {
+        const float route = paramsRef->busAssign[(size_t) i].load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+        if (silent) busGain[(size_t) i].setCurrentAndTargetValue (route);
+        else        busGain[(size_t) i].setTargetValue (route);
+    }
 
     // Aux sends - per-knob linear gain. Reads liveAuxSendDb (engine routes
     // manual or lane through it) - same pattern as liveFaderDb / livePan.
@@ -495,11 +504,6 @@ void ChannelStrip::parkGainSmoothers (int numSamples) noexcept
 {
     faderGain.setTargetValue (0.0f);
     faderGain.skip (numSamples);
-    for (auto& s : busGain)
-    {
-        s.setTargetValue (0.0f);
-        s.skip (numSamples);
-    }
     for (auto& s : auxSendGain)
     {
         s.setTargetValue (0.0f);

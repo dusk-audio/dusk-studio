@@ -931,7 +931,7 @@ Below the fader:
 - **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode.
 - **Ø** (phase invert). Lights yellow when on. Inverts the polarity of the channel's audio before the insert.
 
-A track that is heard again after a mute or a solo while playing fades back in over 20 ms, and its compressor keeps the gain reduction it had while the track was out, so the track comes back at the level the compressor was holding it to.
+A track that is heard again after a mute or a solo while playing fades back in over 20 ms, through its bus alone when it is routed to one, and its compressor keeps the gain reduction it had while the track was out, so the track comes back at the level the compressor was holding it to.
 
 ## Bus assigns
 

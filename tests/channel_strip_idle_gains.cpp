@@ -13,10 +13,12 @@
 #include <limits>
 
 // A strip that mixes nothing in a block (no input, or not passing) still ramps
-// its fader, bus and aux-send gains toward zero across that block, so the
-// block it next mixes fades in from where the ramp got to. It moves each ramp
-// on with one skip() per block rather than one getNextValue() per sample.
-// These cases hold that to what ticking every sample gives.
+// its fader and aux-send gains toward zero across that block, so the block it
+// next mixes fades in from where the ramp got to. It moves each ramp on with
+// one skip() per block rather than one getNextValue() per sample. Its bus
+// gains are its route, which stays where it was, and which it takes at once
+// whenever its fader gain is at zero. These cases hold that to what ticking
+// every sample gives.
 
 namespace
 {
@@ -158,13 +160,12 @@ struct Mix
     std::array<bool, ChannelStrip::kNumAuxSends> auxPre {};
 
     // The same setting with every gain the idle paths ramp turned to zero by
-    // hand: muted, off every bus, sends bypassed. Pan is left alone, as the
-    // idle paths leave it.
+    // hand: muted, sends bypassed. Pan and the route are left alone, as the
+    // idle paths leave them.
     Mix turnedDown() const
     {
         Mix m = *this;
         m.mute = true;
-        m.bus.fill (false);
         m.auxBypassed = true;
         return m;
     }
@@ -386,8 +387,12 @@ struct GainModel
         const float angle = (std::clamp (m.pan, -1.0f, 1.0f) + 1.0f) * (1.57079632679489661923f * 0.5f);
         panL.setTargetValue (std::cos (angle));
         panR.setTargetValue (std::sin (angle));
+        const bool silent = fader.getCurrentValue() <= 0.0f;
         for (std::size_t a = 0; a < bus.size(); ++a)
-            bus[a].setTargetValue (m.bus[a] ? 1.0f : 0.0f);
+        {
+            if (silent) bus[a].setCurrentAndTargetValue (m.bus[a] ? 1.0f : 0.0f);
+            else        bus[a].setTargetValue (m.bus[a] ? 1.0f : 0.0f);
+        }
         for (std::size_t a = 0; a < aux.size(); ++a)
         {
             aux[a].setTargetValue ((m.auxBypassed || m.auxDb[a] <= ChannelStripParams::kAuxSendOffDb)
@@ -399,12 +404,10 @@ struct GainModel
     void park (int n)
     {
         fader.setTargetValue (0.0f);
-        for (auto& r : bus) r.setTargetValue (0.0f);
         for (auto& r : aux) r.setTargetValue (0.0f);
         for (int i = 0; i < n; ++i)
         {
             fader.getNextValue();
-            for (auto& r : bus) r.getNextValue();
             for (auto& r : aux) r.getNextValue();
         }
     }
@@ -513,13 +516,15 @@ TEST_CASE ("An idle strip's gains wake where ticking each sample leaves them",
 }
 
 // Strip `idle` stops mixing for a stretch: it loses its input or stops
-// passing. Strip `kept` mixes the whole time and has its fader, buses and
-// sends turned down by hand over the same stretch, so its gains ramp to zero
-// one sample at a time. Once both mix again with the same settings, their
-// outputs have to match, every channel and every sample. (A strip whose
-// chain runs while it does not pass is left out: it restarts its ramps from
-// its settings each block, as the case above models, so it fades slower than
-// a strip turned down by hand.)
+// passing. Strip `kept` mixes the whole time and has its fader and sends
+// turned down by hand over the same stretch, so those gains ramp to zero one
+// sample at a time. Once both mix again with the same settings, their outputs
+// have to match, every channel and every sample. (A strip whose chain runs
+// while it does not pass is left out: it restarts its ramps from its settings
+// each block, as the case above models, so it fades slower than a strip
+// turned down by hand. So is a route change still ramping when a stretch too
+// short for the fader to reach zero starts: the idle strip holds it part made,
+// the kept one finishes it.)
 TEST_CASE ("A strip woken from an idle stretch mixes like one kept running with its gains down",
            "[channel-strip][smoothing]")
 {
@@ -527,6 +532,8 @@ TEST_CASE ("A strip woken from an idle stretch mixes like one kept running with 
     const int stretchBlocks = GENERATE (3, 10, 64);
     const Change change = GENERATE (Change::beforeStretch, Change::duringStretch,
                                     Change::turnedDownDuring, Change::atAndAfterWake);
+    if (change == Change::beforeStretch && stretchBlocks * kBlock < kRampSamples)
+        return;
     const Timeline t = timelineFor (change);
 
     Rig idle, kept;
@@ -570,4 +577,61 @@ TEST_CASE ("A strip woken from an idle stretch mixes like one kept running with 
     INFO ("idle path " << (int) idlePath << ", " << stretchBlocks << " idle blocks, change "
           << (int) change << ", peak " << peak << ", worst " << worst << ", tolerance " << tolerance);
     REQUIRE_THAT (worst, WithinAbs (0.0, tolerance));
+}
+
+// The master gets what a strip's buses leave it, so a bus-routed strip coming
+// back from an idle stretch, or mixing for the first time after prepare, must
+// put nothing on the master while its fader fades it in: its route is the
+// buses, and each bus it is on gets the whole fade.
+TEST_CASE ("A bus-routed strip fades back in through its buses alone",
+           "[channel-strip][smoothing]")
+{
+    const Idle idlePath = GENERATE (Idle::noInput, Idle::notPassing, Idle::notPassingChainRuns);
+    const int stretchBlocks = GENERATE (0, 3, 10, 64);
+    const bool severalBuses = GENERATE (false, true);
+    Mix routed;
+    routed.bus = severalBuses ? std::array<bool, ChannelStrip::kNumBuses> { true, false, true, false }
+                              : std::array<bool, ChannelStrip::kNumBuses> { true, false, false, false };
+    CAPTURE ((int) idlePath, stretchBlocks, severalBuses);
+
+    Rig rig;
+    GainModel model;
+    Input in;
+    Outputs expected {};
+    float masterLeak = 0.0f, busPeak = 0.0f, worst = 0.0f;
+    const auto passing = [&]
+    {
+        rig.apply (routed);
+        in.next();
+        rig.block (in.l.data(), in.r.data(), true);
+        model.follow (routed);
+        model.mix (in, expected);
+        for (std::size_t c : { std::size_t { 0 }, std::size_t { 1 } })
+            for (int i = 0; i < kBlock; ++i)
+                masterLeak = std::max (masterLeak, std::abs (rig.out[c][(std::size_t) i]));
+        for (std::size_t a = 0; a < (std::size_t) ChannelStrip::kNumBuses; ++a)
+            for (int i = 0; i < kBlock; ++i)
+                busPeak = std::max (busPeak, std::abs (rig.out[2 + 2 * a][(std::size_t) i]));
+        worst = std::max (worst, worstGap (rig.out, expected));
+    };
+
+    // From prepare, then settled, then back from the stretch.
+    for (int b = 0; b < kSettleBlocks; ++b)
+        passing();
+    for (int b = 0; b < stretchBlocks; ++b)
+    {
+        rig.apply (routed);
+        in.next();
+        rig.idleBlock (idlePath, in.l.data(), in.r.data());
+        if (idlePath == Idle::notPassingChainRuns)
+            model.follow (routed);
+        model.park (kBlock);
+    }
+    for (int b = 0; b < kWakeBlocks; ++b)
+        passing();
+
+    REQUIRE (rig.nonFinite == 0);
+    REQUIRE (busPeak > 0.1f);
+    CHECK_THAT (masterLeak, WithinAbs (0.0, 0.0));
+    CHECK_THAT (worst, WithinAbs (0.0, toleranceFor (busPeak)));
 }
