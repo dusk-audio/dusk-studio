@@ -8515,17 +8515,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // What the input capture keeps of this block, so a printed track keeps
     // the same input samples, passes and positions when its strip delivers
     // them.
+    bool captureKeepsInput = false;
     if (recordManagerActive && anyPrintCapture)
     {
         if (loopRecordingActive)
-            forEachRecordCaptureSpan ([this] (const RecordManager::LoopCaptureSpan& span) noexcept
+            forEachRecordCaptureSpan ([this, &captureKeepsInput] (const RecordManager::LoopCaptureSpan& span) noexcept
             {
                 captureSchedule.add ({ captureClock + span.inputOffset, span.numSamples, span.passOrdinal,
                                        span.timelineStart, span.startsPass, span.endsPass });
+                captureKeepsInput = true;
             });
         else if (linearCaptureLength > 0)
+        {
             captureSchedule.add ({ captureClock + linearCaptureOffset, linearCaptureLength, 0,
                                    blockStartSamples + linearCaptureOffset, false, false });
+            captureKeepsInput = true;
+        }
     }
 
     // Post-DSP serial tail: metering + recording (audio thread).
@@ -8575,9 +8580,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // Recording capture - armed tracks always commit their input to
         // disk while recording. By default the raw deviceInput is written;
-        // when the take prints (PRINT was on at its start), the post-EQ/
-        // post-comp buffer that the strip just produced is written instead,
-        // "printing" the channel-strip processing to the WAV.
+        // when the take prints (PRINT was on when Record was pressed), the
+        // post-EQ/post-comp buffer that the strip just produced is written
+        // instead, "printing" the channel-strip processing to the WAV.
         if (isRecording && job.armed && job.deviceInput != nullptr)
         {
             // Default sources: deviceInput on L; deviceInputR on R for stereo
@@ -8599,13 +8604,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     if (job.stereoInput)
                         recR = strip.getLastProcessedR();  // may be nullptr -> recorder duplicates L
                 }
-                if (print.delay < 0)
+                // A count-in, a pre-roll or the wait for a punch-in keeps no
+                // input, and the strip's delay can still move in it, so the
+                // take's delay is the one the strip has in the first block
+                // whose input the capture keeps.
+                if (print.delay < 0 && captureKeepsInput)
                 {
                     print.delay = (int) std::min<std::int64_t> (strip.getProcessedLatencySamples(),
                                                                 CaptureSchedule::kHorizonSamples);
                     longestPrintDelay = std::max (longestPrintDelay, print.delay);
                 }
-                capturePrinted (t, recL, recR, print, numSamples, loopRecordingActive);
+                if (print.delay >= 0)
+                    capturePrinted (t, recL, recR, print, numSamples, loopRecordingActive);
             }
             else if (loopRecordingActive)
             {

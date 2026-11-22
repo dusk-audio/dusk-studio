@@ -1809,8 +1809,8 @@ private:
     std::int64_t  lastBlockEndSample  = 0;
     bool         lastBlockWasLoopRecording = false;
 
-    // How each armed track records the take in progress, fixed at the first
-    // block it captures: its input, or its strip's output (PRINT) and that
+    // How each armed track records the take in progress: its input, or its
+    // strip's output (PRINT), fixed at the first block it captures, and that
     // output's delay. A printed track writes each input sample once the strip
     // has delayed it, on what captureSchedule says the take kept of the input,
     // so it lands where its input would. Audio thread; record() resets them
@@ -1819,9 +1819,12 @@ private:
     {
         bool latched = false;
         bool print = false;
-        // The strip's delay, taken after its first block of the take.
+        // The strip's delay, taken after it ran the track's first block whose
+        // input the take keeps; a count-in, a pre-roll or the wait for a
+        // punch-in keeps none. -1 until then.
         int delay = -1;
-        // The schedule's clock at that block: nothing before it is the track's.
+        // The schedule's clock at the first block: nothing before it is the
+        // track's.
         std::int64_t from = 0;
     };
     std::array<PrintCapture, Session::kNumTracks> printCaptures {};

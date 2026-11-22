@@ -1275,7 +1275,7 @@ The channel delays what passes through it: by the compressors' 73 samples at 44.
 
 PRINT is read when you press Record: switching it during a take changes the next take, not this one.
 
-A take keeps the delay the channel had when you pressed Record, so it never jumps. If the delay changes during the take, the rest of the take lands later or earlier by the difference: engaging the first channel compressor while recording, for instance, puts the rest of the take 73 samples late at 48 kHz. Engage the compressor before you press Record; its delay then stays until the transport is stopped with every channel compressor bypassed.
+A take keeps the delay the channel had when it started recording, so it never jumps. The count-in, the pre-roll and the stretch before a punch-in record nothing, so a delay that changes in them is the take's delay from its first sample. If the delay changes during the take, the rest of the take lands later or earlier by the difference: engaging the first channel compressor while recording, for instance, puts the rest of the take 73 samples late at 48 kHz. Engage the compressor before the take starts recording; its delay then stays until the transport is stopped with every channel compressor bypassed.
 
 When you press Stop, what you played in the last moments is still inside the channel, so a printed take ends that much earlier than a dry take of the same input: by the channel's delay, 73 samples or about 1.5 ms at 48 kHz with a compressor engaged.
 
