@@ -10,7 +10,9 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -48,6 +50,25 @@ void load (Session& session, const Json& document)
         REQUIRE (stream.good());
     }
     REQUIRE (SessionSerializer::load (session, file));
+}
+
+// Written as text: building it as a Json and dumping it would recurse once per
+// level, as deep as the copy under test.
+std::string nestedArrays (std::size_t depth)
+{
+    return std::string (depth, '[') + std::string (depth, ']');
+}
+
+bool loadText (Session& session, const std::string& text)
+{
+    test::TempDirectory dir ("dusk-comp-migration-");
+    const auto file = dir.path() / "session.json";
+    {
+        std::ofstream stream (file, std::ios::binary);
+        stream << text;
+        REQUIRE (stream.good());
+    }
+    return SessionSerializer::load (session, file);
 }
 
 using Expected = std::vector<std::pair<Id, float>>;
@@ -287,6 +308,115 @@ TEST_CASE ("The format 11 to 12 step converts what the old loader would have rea
     CHECK_THAT (session->master().comp.get (Id::BusThreshold), WithinAbs (masterThreshold.threshold, 1e-6));
     CHECK_THAT (session->master().comp.get (Id::BusRelease), WithinAbs (2.0f, 1e-6));
     CHECK_FALSE (session->master().compEnabled.load());
+}
+
+TEST_CASE ("A session saved by 0.16.0 loads with its compressors and EQ converted once", "[session][serializer][comp][eq][migration]")
+{
+    auto session = std::make_unique<Session>();
+    SessionLoadError error;
+    REQUIRE (SessionSerializer::load (*session, fixture ("v0.16.0-format11.json"), &error));
+    CHECK (error.failure == SessionLoadFailure::None);
+    CHECK (error.fileVersion == 11);
+    CHECK (error.supportedVersion > error.fileVersion);
+
+    const auto inRange = [] (const CompParams& comp, CompStage stage)
+    {
+        for (const auto id : compStageParams (stage))
+        {
+            const auto& spec = compParamSpec (id);
+            CAPTURE (spec.symbol);
+            const float v = comp.get (id);
+            CHECK (std::isfinite (v));
+            CHECK (v >= spec.hostMin);
+            CHECK (v <= spec.hostMax);
+        }
+    };
+
+    struct StripComp { const char* name; bool enabled; int mode; };
+    static constexpr StripComp kTracks[] {
+        { "Opto vocal", true, 0 }, { "FET drums", true, 1 }, { "VCA bass", true, 2 },
+        { "Comp off", false, 1 }, { "Black EQ", false, 0 } };
+    for (int t = 0; t < (int) std::size (kTracks); ++t)
+    {
+        const auto& track = session->track (t);
+        CAPTURE (t);
+        CHECK (track.name == kTracks[t].name);
+        CHECK (track.strip.compEnabled.load() == kTracks[t].enabled);
+        CHECK (track.strip.compMode.load() == kTracks[t].mode);
+        inRange (track.strip.comp, CompStage::Strip);
+    }
+    for (int b = 0; b < Session::kNumBuses; ++b)
+    {
+        CAPTURE (b);
+        CHECK (session->bus (b).strip.compEnabled.load() == (b == 0));
+        inRange (session->bus (b).strip.comp, CompStage::Bus);
+    }
+    CHECK (session->master().compEnabled.load());
+    inRange (session->master().comp, CompStage::Bus);
+    CHECK (session->mastering().compEnabled.load());
+    inRange (session->mastering().comp, CompStage::Multiband);
+
+    using EqFreq = ChannelStripParams::EqFreq;
+    struct Band { EqFreq freq; float lo, hi; };
+    static constexpr Band kBands[] {
+        { EqFreq::Lf, ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax },
+        { EqFreq::Lm, ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax },
+        { EqFreq::Hm, ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax },
+        { EqFreq::Hf, ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax } };
+    for (const int t : { 0, 4 })
+    {
+        const auto& strip = session->track (t).strip;
+        CAPTURE (t);
+        CHECK (strip.eqEnabled.load());
+        CHECK (strip.eqBlackMode.load() == (t == 4));
+        for (const auto& band : kBands)
+        {
+            const float marking = strip.eqFreq (band.freq).load();
+            CHECK (std::isfinite (marking));
+            CHECK (marking >= band.lo);
+            CHECK (marking <= band.hi);
+        }
+    }
+    CHECK_THAT (session->track (0).strip.lmGainDb.load(), WithinAbs (-3.0f, 1e-6));
+    CHECK_THAT (session->track (0).strip.hmQ.load(), WithinAbs (2.0f, 1e-6));
+    CHECK (session->track (0).strip.hpfEnabled.load());
+    CHECK_THAT (session->track (0).strip.hpfFreq.load(), WithinAbs (80.0f, 1e-6));
+    CHECK_THAT (session->track (4).strip.hfGainDb.load(), WithinAbs (3.0f, 1e-6));
+    CHECK (session->track (4).strip.lpfEnabled.load());
+    CHECK_THAT (session->track (4).strip.lpfFreq.load(), WithinAbs (12000.0f, 1e-6));
+
+    test::TempDirectory dir ("dusk-comp-migration-");
+    const auto saved = dir.path() / "session.json";
+    REQUIRE (SessionSerializer::save (*session, saved));
+    auto reloaded = std::make_unique<Session>();
+    SessionLoadError reloadError;
+    REQUIRE (SessionSerializer::load (*reloaded, saved, &reloadError));
+    CHECK (reloadError.fileVersion == reloadError.supportedVersion);
+    CHECK (Json::parse (SessionSerializer::serialize (*reloaded).toStdString())
+           == Json::parse (SessionSerializer::serialize (*session).toStdString()));
+}
+
+// Nested far past what any thread's stack holds one frame per level for; the
+// loader takes a slot nested past its depth bound as the default whole.
+TEST_CASE ("A format-11 track whose compressor nests past the depth bound loads as the default track", "[session][serializer][comp][migration]")
+{
+    const auto text = R"({"version":11,"tracks":[{"name":"Deep","comp":{"enabled":true,"mode":)"
+                    + nestedArrays (400000)
+                    + R"(}},{"name":"Kept","comp":{"enabled":true,"mode_picked":true,"mode":2}}]})";
+
+    auto session = std::make_unique<Session>();
+    session->track (0).name = "Stale";
+    session->track (0).strip.compEnabled.store (true);
+    REQUIRE (loadText (*session, text));
+
+    const auto defaults = std::make_unique<Session>();
+    CHECK (session->track (0).name == defaults->track (0).name);
+    CHECK_FALSE (session->track (0).strip.compEnabled.load());
+    checkDefaults (session->track (0).strip.comp, CompStage::Strip);
+
+    CHECK (session->track (1).name == "Kept");
+    CHECK (session->track (1).strip.compEnabled.load());
+    CHECK (session->track (1).strip.compMode.load() == 2);
 }
 
 TEST_CASE ("Legacy compressor conversions keep the old settings' sound", "[session][comp][migration]")

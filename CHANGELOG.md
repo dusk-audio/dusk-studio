@@ -222,6 +222,12 @@ canonical source.
 
 ### Fixed
 
+- **A damaged session from an earlier version no longer crashes on opening.**
+  A `session.json` saved by an earlier version, holding a value nested
+  hundreds of thousands of levels deep inside a track, as only a damaged or
+  hand-made file does, could run Dusk Studio out of stack while the session
+  was converted. The track, bus or aux lane holding it now opens at its
+  defaults, as it already did in a session saved in the current format.
 - **Auto makeup gives back heavy compression.** A compressor's **AUTO
   MAKEUP** now makes up as much as 24 dB. It stopped at 12 dB, so a track,
   bus or master compressed by more than that came out quieter than it went

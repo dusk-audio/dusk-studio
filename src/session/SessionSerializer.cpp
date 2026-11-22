@@ -2644,8 +2644,19 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
                       fileVersion, kFormatVersion);
         return fail (SessionLoadFailure::NewerVersion);
     }
-    if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
-        return fail (SessionLoadFailure::MigrationFailed);
+    if (fileVersion < kFormatVersion)
+    {
+        // The migrations copy parts of a slot, and a copy recurses once per
+        // nesting level. A slot past the bound loads as the default whole, so
+        // it is dropped before they run.
+        for (const auto* section : { "tracks", "buses", "aux_lanes" })
+            if (const auto slots = root.find (section); slots != root.end() && slots->is_array())
+                for (auto& slot : *slots)
+                    if (! withinSlotDepth (slot))
+                        slot = nullptr;
+        if (! migrateSession (root, fileVersion))
+            return fail (SessionLoadFailure::MigrationFailed);
+    }
 
     // First write to the Session, and past every return above it: a caller that
     // has to undo a failed load (the session directory moves before this runs)
