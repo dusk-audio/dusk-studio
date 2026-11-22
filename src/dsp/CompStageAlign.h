@@ -106,7 +106,8 @@ private:
 // delay of its input), and crossfades between the two, time-aligned, when the
 // compressor is switched. Nothing runs while the stage is off.
 //
-// prepare allocates; process and discard are audio-thread and lock-free.
+// prepare allocates; process, discard and pause are audio-thread and
+// lock-free.
 class CompStageAlign
 {
 public:
@@ -119,9 +120,15 @@ public:
     void process (float* L, float* R, int numSamples, const CompStageBlock& stage,
                   bool engaged, CompStageProcessor* compressor) noexcept;
 
-    // The member's output was cut (gated, muted or bailed): the audio it holds
-    // must not play when it next runs.
+    // The member's output was cut and what comes next is not what it was
+    // playing (a strip with no input, a block it could not take): the audio it
+    // holds must not play when it next runs, and its compressor starts again
+    // from rest.
     void discard() noexcept;
+    // The member's output was cut while its input went on (its strip muted or
+    // soloed out, its bus muted): the audio it holds must not play when it
+    // next runs, and its compressor keeps its state, as across a sleep.
+    void pause() noexcept { pauseHeld = true; }
 
     // The compressor runs now and may be heard; its meter means something.
     bool compressorRunning() const noexcept { return running != nullptr; }
@@ -150,7 +157,7 @@ private:
     int mixAt = 0;
     int mixDir = 0;
     // Samples of the running compressor's output still to be silenced: what
-    // its delay held when the mixer paused.
+    // its delay held when the member or the mixer paused.
     int heldToSilence = 0;
 
     int heldLatency = 0;
@@ -160,5 +167,6 @@ private:
     std::uint32_t lastPause = 0;
     bool resync = true;
     bool dropHeld = false;
+    bool pauseHeld = false;
 };
 } // namespace duskstudio

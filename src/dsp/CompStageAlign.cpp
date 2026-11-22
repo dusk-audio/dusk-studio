@@ -145,6 +145,7 @@ void CompStageAlign::prepare (int blockSize, int maxLatency)
     heldLatency = 0;
     resync = true;
     dropHeld = false;
+    pauseHeld = false;
 }
 
 void CompStageAlign::discard() noexcept
@@ -246,9 +247,9 @@ void CompStageAlign::process (float* L, float* R, int numSamples, const CompStag
     // pause keeps it.
     const bool snapped = resync || stage.snap != lastSnap;
     const bool cut = dropHeld || stage.cut != lastCut;
-    const bool paused = stage.pause != lastPause;
+    const bool paused = pauseHeld || stage.pause != lastPause;
     const bool gap = snapped || cut || paused || (std::uint32_t) (stage.serial - lastSerial) > 1u;
-    resync = dropHeld = false;
+    resync = dropHeld = pauseHeld = false;
     lastSnap = stage.snap;
     lastCut = stage.cut;
     lastPause = stage.pause;

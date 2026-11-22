@@ -265,6 +265,11 @@ canonical source.
   window and each loop pass hold what was played in them. PRINT is read when
   Record is pressed, a take keeps the delay it started with, and at Stop a
   printed take ends that delay before a dry one.
+- **A bus compressor jumped when its bus was heard again.** Unmuting a bus, or
+  un-soloing another, while playing started the bus compressor again from
+  rest, so the bus came back for a moment as loud as the compressor's gain
+  reduction: 15 dB over its settled level on a bus compressed by 16 dB. The
+  compressor now keeps the gain reduction it had while the bus was out.
 - **Mastering multiband compressor on the audio thread** (#1045). It
   allocated memory in every block it processed, which the audio thread must
   never do. Multi-Comp 2, which replaces it, does not.

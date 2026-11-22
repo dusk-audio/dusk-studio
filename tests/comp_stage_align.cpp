@@ -667,6 +667,58 @@ TEST_CASE ("CompStageAlign: a pause plays what a cut plays and keeps the compres
     }
 }
 
+TEST_CASE ("CompStageAlign: a member muted while its input goes on keeps its compressor and replays nothing", "[compressor][comp-stage]")
+{
+    // A muted or soloed-out strip skips its member for as long as it is out
+    // and pauses it, as a strip with no input discards it. FakeComp holds
+    // nothing but its delay, so the two must sound the same once the member
+    // runs again, while only the discard resets the compressor.
+    static constexpr int kOutFrom = 8, kOutTo = 12;
+    const int total = 24 * kBlock;
+    const auto in = sine (300.0, 0.5f, total);
+    for (const bool stereo : { false, true })
+    {
+        CAPTURE (stereo);
+        const auto runWith = [&] (bool pause, FakeComp& comp, std::vector<float>& L, std::vector<float>& R)
+        {
+            CompStageClock clock;
+            clock.prepare (kSr, kLatency);
+            clock.snap (true);
+            CompStageAlign member;
+            member.prepare (kBlock, kLatency);
+            L = in;
+            R = in;
+            for (int b = 0; b * kBlock < total; ++b)
+            {
+                clock.advance (true, false, kBlock);
+                const auto at = (std::size_t) (b * kBlock);
+                if (b >= kOutFrom && b < kOutTo)
+                {
+                    if (pause) member.pause();
+                    else       member.discard();
+                    std::fill (L.begin() + (std::ptrdiff_t) at, L.begin() + (std::ptrdiff_t) at + kBlock, 0.0f);
+                    std::fill (R.begin() + (std::ptrdiff_t) at, R.begin() + (std::ptrdiff_t) at + kBlock, 0.0f);
+                    continue;
+                }
+                member.process (L.data() + at, stereo ? R.data() + at : nullptr, kBlock, clock.block(), true, &comp);
+            }
+            CHECK (member.compressorRunning());
+        };
+        FakeComp pausedComp (kLatency, 0.5f), discardedComp (kLatency, 0.5f);
+        std::vector<float> pausedL, pausedR, discardedL, discardedR;
+        runWith (true, pausedComp, pausedL, pausedR);
+        runWith (false, discardedComp, discardedL, discardedR);
+        CHECK (pausedComp.resets == 0);
+        CHECK (discardedComp.resets == 1);
+        CHECK (pausedL == discardedL);
+        if (stereo) CHECK (pausedR == discardedR);
+        const int back = kOutTo * kBlock;
+        CHECK (worstAgainst (pausedL, back, back + kLatency, [] (int) { return 0.0f; }) <= 0.0f);
+        CHECK (worstAgainst (pausedL, back + kLatency, total,
+                             [&] (int i) { return 0.5f * in[(std::size_t) (i - kLatency)]; }) <= 0.0f);
+    }
+}
+
 TEST_CASE ("CompStageAlign: a snapped stage starts aligned, compressor in, with no fade", "[compressor][comp-stage]")
 {
     std::vector<float> in ((std::size_t) (4 * kBlock), 0.0f);
@@ -864,6 +916,93 @@ TEST_CASE ("CompStageAlign: a Multi-Comp 2 paused while compressing goes on with
         CHECK (worstAgainst (pausedIntoSilence, kPauseAt, kPauseAt + latency, zero) <= 0.0f);
         CHECK (worstAgainst (pausedIntoSilence, kPauseAt + latency, kTotal,
                              [&] (int i) { return stopping[(std::size_t) i]; }) <= 0.0f);
+    }
+}
+TEST_CASE ("CompStageAlign: a Multi-Comp 2 muted while compressing comes back with the gain it had", "[compressor][comp-stage][multicomp]")
+{
+    using duskstudio::CompParamId;
+    using duskstudio::CompStage;
+    // Each mode settles on a hot 1 kHz tone, is muted for half a second while
+    // the tone plays on, and comes back. Discarded there, as a muted strip's
+    // compressor was, it came back 10 to 19 dB over its settled level before
+    // the strip's fade-in; paused, within 0.2 dB.
+    struct Case
+    {
+        const char* name;
+        CompStage kind;
+        int mode;
+        CompParamId control;
+        float value;
+        int channels;
+    };
+    const Case cases[] {
+        { "Opto", CompStage::Strip, 0, CompParamId::OptoPeakReduction, 55.0f, 1 },
+        { "FET",  CompStage::Strip, 1, CompParamId::FetThreshold, -10.0f, 1 },
+        { "VCA",  CompStage::Strip, 2, CompParamId::VcaThreshold, -20.0f, 1 },
+        { "Bus",  CompStage::Bus,   0, CompParamId::BusThreshold, -14.0f, 2 },
+    };
+    static constexpr int kSettleBlocks = 200;
+    static constexpr int kOutBlocks = 94;
+    static constexpr int kAfterBlocks = 24;
+    static constexpr int kTotal = (kSettleBlocks + kOutBlocks + kAfterBlocks) * kBlock;
+    static constexpr int kBackAt = (kSettleBlocks + kOutBlocks) * kBlock;
+    const auto tone = sine (1000.0, 0.5f, kTotal);
+    for (const auto& c : cases)
+    {
+        CAPTURE (c.name);
+        int latency = 0;
+        const auto runOnce = [&] (bool pause)
+        {
+            duskstudio::MultiCompStage comp (c.kind);
+            comp.prepare (kSr, kBlock, c.channels);
+            latency = comp.latencySamples();
+            duskstudio::CompParams params;
+            params.resetToDefaults (c.kind);
+            params.set (c.control, c.value);
+            comp.pushParameters (params, true, c.mode);
+            CompStageClock clock;
+            clock.prepare (kSr, latency);
+            clock.snap (true);
+            CompStageAlign member;
+            member.prepare (kBlock, latency);
+            auto L = tone, R = tone;
+            for (int b = 0; b * kBlock < kTotal; ++b)
+            {
+                clock.advance (true, false, kBlock);
+                const auto at = (std::size_t) (b * kBlock);
+                if (b >= kSettleBlocks && (int) at < kBackAt)
+                {
+                    if (pause) member.pause();
+                    else       member.discard();
+                    continue;
+                }
+                member.process (L.data() + at, c.channels == 2 ? R.data() + at : nullptr, kBlock,
+                                clock.block(), true, &comp);
+            }
+            return L;
+        };
+        const auto paused = runOnce (true), discarded = runOnce (false);
+        REQUIRE (latency > 0);
+
+        float settled = 0.0f;
+        for (int i = kBackAt - kOutBlocks * kBlock - 4 * kBlock; i < kBackAt - kOutBlocks * kBlock; ++i)
+            settled = std::max (settled, std::abs (paused[(std::size_t) i]));
+        const auto worstRiseDb = [&] (const std::vector<float>& v)
+        {
+            double worst = -200.0;
+            for (int w = kBackAt + latency; w + 48 <= kTotal; w += 48)
+            {
+                float peak = 0.0f;
+                for (int i = w; i < w + 48; ++i) peak = std::max (peak, std::abs (v[(std::size_t) i]));
+                worst = std::max (worst, 20.0 * std::log10 ((double) peak / (double) settled));
+            }
+            return worst;
+        };
+        const double pausedRiseDb = worstRiseDb (paused), discardedRiseDb = worstRiseDb (discarded);
+        CAPTURE (settled, pausedRiseDb, discardedRiseDb);
+        CHECK (worstAgainst (paused, kBackAt, kBackAt + latency, [] (int) { return 0.0f; }) <= 0.0f);
+        CHECK (pausedRiseDb < 0.5);
+        CHECK (discardedRiseDb > 5.0);
     }
 }
 #endif

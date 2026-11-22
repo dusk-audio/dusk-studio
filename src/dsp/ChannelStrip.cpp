@@ -1051,8 +1051,6 @@ void ChannelStrip::drainPdcForSkip() noexcept
     }
     // A closed gate is a silent gap even when the current delay is zero.
     pdcSilentRun = std::max (pdcSilentRun, std::int64_t { 1 });
-    // The compressor stage's delay holds audio from before the skip too.
-    compAlign.discard();
 }
 
 // The MIDI dispatch below hands the block's MIDI to whichever slot is loaded,
@@ -1263,7 +1261,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // whole bail, so the held PDC / oversampler tail is dropped rather than
         // replayed on resume, and the drained latch lets a latency retarget
         // requested while stopped land click-free on the next full pass.
+        // With no input there is no programme going on for the compressor to
+        // keep up with (a stopped transport, a locate), so it starts again
+        // from rest.
         drainPdcForSkip();
+        compAlign.discard();
         return;
     }
 
@@ -1307,8 +1309,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // and FIR history once and mark them drained, which also lets
         // relatchPdcIfDrained take a pending latency retarget click-free on
         // the next full pass. pdcSilentRun doubles as the once-latch - the
-        // full path zeroes it again on the first loud block.
+        // full path zeroes it again on the first loud block. The compressor
+        // keeps its gain reduction for the input that goes on playing.
         drainPdcForSkip();
+        compAlign.pause();
         return;
     }
 

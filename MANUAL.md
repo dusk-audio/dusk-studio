@@ -931,6 +931,8 @@ Below the fader:
 - **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode.
 - **Ø** (phase invert). Lights yellow when on. Inverts the polarity of the channel's audio before the insert.
 
+A track that is heard again after a mute or a solo while playing fades back in over 20 ms, and its compressor keeps the gain reduction it had while the track was out, so the track comes back at the level the compressor was holding it to.
+
 ## Bus assigns
 
 Each channel can be routed to any combination of the four mix buses. Right-click the fader area for a bus-assign menu. Bus routing is **exclusive with the master send**: as soon as a channel is assigned to one or more buses, its direct send to master is removed and the signal reaches master only via the bus (which sums into master through its own fader and processing). With every bus deassigned, the channel sends directly to master as normal. This prevents the same signal arriving at master twice (once direct, once via the bus) and the +3 dB doubling that would otherwise occur.
@@ -991,7 +993,7 @@ A 2:1 ratio with a 10ms attack and Auto release is a classic drum-bus setting. A
 
 ## Pan, fader, mute, solo
 
-Identical in function to the channel strip versions. Bus solos follow the same additive solo-in-place rule.
+Identical in function to the channel strip versions. Bus solos follow the same additive solo-in-place rule. A bus compressor likewise keeps its gain reduction while its bus is muted or soloed out.
 
 ## Meters
 
