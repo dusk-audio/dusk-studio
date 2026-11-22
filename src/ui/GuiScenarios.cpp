@@ -2376,6 +2376,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
         return clickAt (corner.x, corner.y, 1);
     }
+    bool windowDimmed() const override
+    {
+        const auto dimmed = [] (const auto& parent)
+        {
+            for (const auto* child : parent.getChildren())
+                if (dynamic_cast<const DimOverlay*> (child) != nullptr && child->isVisible())
+                    return true;
+            return false;
+        };
+        const auto* top = owner.getTopLevelComponent();
+        return (top != nullptr && dimmed (*top)) || dimmed (owner);
+    }
     bool clickInsert (int track, bool right) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
@@ -3273,6 +3285,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int consoleFocusedStrip() const override
     {
         return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
+    }
+    int consoleBank() const override
+    {
+        return owner.consoleView != nullptr ? owner.consoleView->getBank() : -1;
     }
     void restoreTrackFocus (int tapeTrack, int consoleStrip) override
     {

@@ -241,6 +241,10 @@ canonical source.
   click anywhere else on the page. It used to keep the keyboard, so
   **Space** did nothing and Down and Return could pick an entry out of
   sight.
+- **Editors left over another stage.** **Cmd/Ctrl+1** to **4** with the
+  master's tape editor, or a channel strip's DuskVerb 2, Tape Echo 2 or
+  Sunset editor, open changed the stage and left the editor and its dim over
+  the new page until **Escape**. Changing stage now closes them.
 - **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
   SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
   stayed silent until the audio device restarted, for example after a buffer

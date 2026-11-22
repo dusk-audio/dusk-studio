@@ -502,6 +502,8 @@ public:
     // window's corner, which the centred editor never covers. False when none
     // is up.
     virtual bool clickCompEditorDim() = 0;
+    // Whether any editor's or panel's dim is up over the window.
+    virtual bool windowDimmed() const = 0;
     // The COMP header's label on a channel strip, as the strip shows it.
     virtual std::string stripCompLabel (int track) const = 0;
     // A compressor control on the face of a channel strip, a bus or the master,
@@ -768,6 +770,8 @@ public:
     virtual int tapeMoveLineY() const = 0;
     // The strip carrying the console's focus ring, -1 when none does.
     virtual int consoleFocusedStrip() const = 0;
+    // The page of strips the console shows, 0 for the first; -1 with no console.
+    virtual int consoleBank() const = 0;
     // Puts back the selected track and the focused strip a click on a strip
     // moved, as tapeSelectedTrack and consoleFocusedStrip read them before it.
     virtual void restoreTrackFocus (int tapeTrack, int consoleStrip) = 0;

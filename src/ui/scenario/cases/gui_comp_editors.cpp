@@ -767,5 +767,158 @@ const ScenarioRegistrar compBusMasterFace { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runCompBusMasterFace (host, ctx); }
 } };
 
+// A stage change takes down the editors that open over the console: a
+// compressor editor on a strip, a bus or the master, the master's tape editor
+// and a strip's built-in unit editor, whether the change comes from Cmd/Ctrl+1
+// to 4 or a stage button.
+// Nothing of them stays over the new page, MASTERING opens every module, and
+// back on the console COMP opens its editor again. A bank key leaves a strip's
+// editor up on the strip it was opened from, banked out of view or not.
+std::optional<ScenarioResult> runEditorsCloseOnStageChange (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    using Stage = GuiHost::Stage;
+    static constexpr int kBus = 0;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the compressor editor can embed into");
+    if (session.track (kStripIndex).frozen.load()) return ScenarioResult::skip ("requires an unfrozen first track");
+    auto& dsp = engine.getChannelStrip (kStripIndex);
+    if (dsp.getPluginSlot().isLoaded() || dsp.isBuiltinLoaded() || dsp.isNativeClapLoaded()
+        || dsp.isNativeLv2Loaded() || dsp.isNativeVst3Loaded() || dsp.isNativeAuLoaded()
+        || dsp.isNativeMultisampleLoaded() || dsp.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    keepCarriedInsert (ctx, session.track (kStripIndex));
+    ctx.cleanup ([&host, &engine, &dsp, mode = dsp.insertMode.load()]
+    {
+        host.closeBuiltin (kStripIndex);
+        engine.suspendProcessing();
+        dsp.unloadBuiltin();
+        dsp.insertMode.store (mode);
+        engine.resumeProcessing();
+        if (auto* handle = host.strip (kStripIndex)) handle->refreshInsertButton();
+    });
+    {
+        std::string error;
+        engine.suspendProcessing();
+        const bool loaded = dsp.loadBuiltin ("dusk.builtin.reverb", error);
+        if (loaded) dsp.insertMode.store (ChannelStrip::kInsertPlugin);
+        engine.resumeProcessing();
+        if (! loaded) return ScenarioResult::fail ("could not load DuskVerb 2: " + error);
+        if (auto* handle = host.strip (kStripIndex)) handle->refreshInsertButton();
+    }
+    ctx.keep (session.activeBank);
+    ctx.keep (session.mcu.bank);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    ctx.cleanup ([&host]
+    {
+        host.closeCompEditor (Kind::Channel, kStripIndex);
+        host.closeCompEditor (Kind::Bus, kBus);
+        host.closeCompEditor (Kind::Master, 0);
+        host.closeMasterTape();
+        drainModals (host);
+    });
+
+    const auto pageClear = [&host] (Stage stage)
+    {
+        if (! host.stageViewMatches (stage) || host.windowDimmed()) return false;
+        const int modules = host.masteringPanelsExpected();
+        return stage != Stage::Mastering || modules <= 0 || host.masteringPanelsOpen() == modules;
+    };
+    const auto stageKey = [&host, &ctx] (char digit)
+    {
+        ctx.expect (host.pressPeerKey (commandChord (digit)),
+                    std::string ("the window did not handle the stage key ") + digit);
+    };
+    const auto stageButton = [&host, &ctx] (Stage stage)
+    { ctx.expect (host.clickStage (stage), "the stage button is not on screen"); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host] { host.openCompEditor (Kind::Channel, kStripIndex); } });
+    steps->push_back ({ 0, [stageKey] { stageKey ('3'); },
+        [&host] { return host.compEditorDrawn (Kind::Channel, kStripIndex); },
+        "the strip's compressor editor never drew a frame" });
+    steps->push_back ({ 0, [stageButton] { stageButton (Stage::Mixing); },
+        [&host, pageClear] { return ! host.compEditorOpen (Kind::Channel, kStripIndex) && pageClear (Stage::Mastering); },
+        "Cmd/Ctrl+3 left the strip's compressor editor or its dim over MASTERING, or a module unopened" });
+    steps->push_back ({ 0, [&host] { host.openCompEditor (Kind::Bus, kBus); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "the MIXING button did not bring the console back clear" });
+    steps->push_back ({ 0, [stageButton] { stageButton (Stage::Aux); },
+        [&host] { return host.compEditorDrawn (Kind::Bus, kBus); }, "the bus compressor editor never drew a frame" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [&host, pageClear] { return ! host.compEditorOpen (Kind::Bus, kBus) && pageClear (Stage::Aux); },
+        "the AUX button left the bus compressor editor or its dim over AUX" });
+    steps->push_back ({ 0, [&host] { host.openCompEditor (Kind::Master, 0); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('1'); },
+        [&host] { return host.compEditorDrawn (Kind::Master, 0); }, "the master compressor editor never drew a frame" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [&host, pageClear] { return ! host.compEditorOpen (Kind::Master, 0) && pageClear (Stage::Recording); },
+        "Cmd/Ctrl+1 left the master compressor editor or its dim over RECORDING" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickMasterTape (true), "the master TAPE label is not on screen"); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('3'); },
+        [&host] { return host.masterTapeEditorDrawn(); }, "the master tape editor never drew a frame" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [&host, pageClear] { return ! host.masterTapeEditorOpen() && pageClear (Stage::Mastering); },
+        "Cmd/Ctrl+3 left the master tape editor or its dim over MASTERING, or a module unopened" });
+    const auto unitEditorUp = [&host]
+    {
+        auto* strip = host.strip (kStripIndex);
+        return strip != nullptr && strip->hasOpenBuiltinEditor();
+    };
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickInsert (kStripIndex, false), "the strip's insert is not on screen"); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 500, [stageKey] { stageKey ('4'); }, unitEditorUp, "DuskVerb 2's editor did not open" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [unitEditorUp, pageClear] { return ! unitEditorUp() && pageClear (Stage::Aux); },
+        "Cmd/Ctrl+4 left the strip's DuskVerb 2 editor or its dim over AUX" });
+    // At its narrowest the window shows one page of strips, so a bank key banks
+    // the strip away.
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        const auto size = host.mainWindowSize();
+        if (size.size() < 4) return;
+        ctx.cleanup ([&host, size] { host.resizeMainWindow (size[0], size[1]); });
+        if (! host.resizeMainWindow (size[2], size[1]))
+            ctx.note ("the window would not take its smallest width");
+    }, [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (kStripIndex, 1, true, false), "the strip's COMP label is not on screen"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        const auto* shown = host.compEditorStage (Kind::Channel, kStripIndex);
+        const int page = host.consoleBank();
+        ctx.expect (host.pressPeerKey ("2", '2'), "the window did not handle the bank key 2");
+        if (host.consoleBank() == page)
+            ctx.note ("the window shows every strip at once, so the bank key changed nothing");
+        ctx.expect (host.compEditorOpen (Kind::Channel, kStripIndex) && host.compEditorStage (Kind::Channel, kStripIndex) == shown,
+                    "a bank key took the strip's compressor editor off its strip");
+        ctx.expect (host.pressPeerKey ("escape"), "the window did not handle Escape");
+    }, [&host] { return host.compEditorDrawn (Kind::Channel, kStripIndex); },
+       "COMP did not reopen the strip's compressor editor after the stage changes" });
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.pressPeerKey ("1", '1'), "the window did not handle the bank key 1"); },
+        [&host] { return ! host.compEditorOpen (Kind::Channel, kStripIndex) && ! host.windowDimmed(); },
+        "Escape did not close the editor of a strip banked out of view" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar editorsCloseOnStageChange { Scenario {
+    "gui.comp_editors_close_on_stage_change", { "gui", "master", "comp", "stage" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEditorsCloseOnStageChange (host, ctx); }
+} };
+
 } // namespace
 } // namespace duskstudio::scenario::gui
