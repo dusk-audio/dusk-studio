@@ -1,5 +1,6 @@
 #include "AudioSettingsView.h"
 #include "AudioDeviceSelector.h"
+#include "GeneralSettingsControls.h"
 #include "PanelControls.h"
 #include "PanelFontFallback.h"
 #include "DuskTheme.h"
@@ -19,8 +20,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -70,10 +71,6 @@ const char* const kStopBehaviorItems[] = { "Stay where it is (pause)",
                                            "Return to where play or record started" };
 constexpr int kStopBehaviorCount = static_cast<int> (std::size (kStopBehaviorItems));
 
-const char* const kAutosaveItems[] = { "15 seconds", "30 seconds", "1 minute",
-                                       "2 minutes", "5 minutes" };
-constexpr int kAutosaveSeconds[] = { 15, 30, 60, 120, 300 };
-
 #if defined(__linux__)
 // Sensible USB-audio range. 2 is the minimum that gives the kernel any slack at all;
 // 4 is what most DAWs use; 8 and 16 add latency but give the kernel more headroom
@@ -82,28 +79,29 @@ const char* const kPeriodItems[] = { "2", "3", "4", "8", "16" };
 constexpr int kPeriodCounts[] = { 2, 3, 4, 8, 16 };
 #endif
 
-int indexOfNearest (const int* values, int count, int wanted)
-{
-    int best = 0;
-    int bestDistance = std::numeric_limits<int>::max();
-    for (int i = 0; i < count; ++i)
-    {
-        const int distance = std::abs (values[i] - wanted);
-        if (distance < bestDistance)
-        {
-            bestDistance = distance;
-            best = i;
-        }
-    }
-    return best;
-}
-
 class AudioSettingsViewImpl final : public DuskPanelView
 {
 public:
     AudioSettingsViewImpl (device::DeviceManager& dm, AudioEngine& e, Session& s,
                            AudioSettingsHost hostCallbacks)
-        : deviceManager (dm), engine (e), session (s), host (std::move (hostCallbacks))
+        : deviceManager (dm), engine (e), session (s), host (std::move (hostCallbacks)),
+          generalSettings (appconfig::getTapeStripExpandedDefault(),
+                           appconfig::getAutosaveIntervalSeconds(),
+                           appconfig::getUiScaleOverride(),
+                           { [] (bool value) { appconfig::setTapeStripExpandedDefault (value); },
+                             [] (int seconds) { appconfig::setAutosaveIntervalSeconds (seconds); },
+                             [this] (float scale)
+                             {
+                                 // Between frames, not inside one: a preview re-lays out the
+                                 // whole JUCE tree the panel is floating over, and this is
+                                 // running from the framework's event pump.
+                                 deferred ([this, scale]
+                                 {
+                                     if (host.previewUiScale)
+                                         host.previewUiScale (scale);
+                                 });
+                             },
+                             [] (float scale) { appconfig::setUiScaleOverride (scale); } })
     {
         pluginFolders = pluginpaths::stored();
         selector = std::make_unique<AudioDeviceSelector> (
@@ -140,21 +138,15 @@ public:
             session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed), 0, 3);
         stopBehavior = std::clamp (static_cast<int> (appconfig::getStopBehavior()), 0,
                                    kStopBehaviorCount - 1);
-        // A hand-edited config value snaps to the nearest offered cadence rather than
-        // leaving the dropdown blank.
-        autosave = indexOfNearest (kAutosaveSeconds, 5,
-                                   appconfig::getAutosaveIntervalSeconds());
         renderQuality = static_cast<int> (appconfig::getOfflineRenderQuality());
 
         chaseClock = session.externalSyncChasesTransport.load (std::memory_order_relaxed);
         emitClock = session.syncOutputEmitClock.load (std::memory_order_relaxed);
         chaseTimeCode = session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed);
         emitTimeCode = session.syncOutputEmitTimeCode.load (std::memory_order_relaxed);
-        tapeStripExpanded = appconfig::getTapeStripExpandedDefault();
         followPlayhead = appconfig::getFollowPlayheadDefault();
         softTakeover = appconfig::getMidiSoftTakeover();
         scanOnStartup = appconfig::getScanPluginsOnStartup();
-        uiScale = appconfig::getUiScaleOverride();
         recordOffset = appconfig::getRecordingLatencyOffsetSamples();
         pendingTab = std::clamp (host.initialTab, 0, static_cast<int> (kTabLabels.size()) - 1);
 
@@ -249,6 +241,7 @@ public:
         ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, { ctx.s (8), ctx.s (4) });
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, { ctx.s (12), ctx.s (9) });
 
+        generalSettings.reportFocus (std::nullopt);
         ImGui::SetCursorScreenPos (origin);
         if (! ImGui::BeginChild ("##audio-settings-body", size, ImGuiChildFlags_AlwaysUseWindowPadding,
                                  ImGuiWindowFlags_NoBackground))
@@ -297,7 +290,8 @@ public:
         if (ImGui::BeginChild ("##settings-page", { 0, 0 }, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
         {
             formContext.dl = ImGui::GetWindowDrawList();
-            drawSections (formContext, ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x);
+            drawSections (formContext, ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x,
+                          generalSettings.takeFocusRequest());
         }
         ImGui::EndChild();
         ImGui::PopID();
@@ -313,7 +307,8 @@ public:
     }
 
 private:
-    void drawSections (dw::Context& ctx, ImVec2 content, float bodyW)
+    void drawSections (dw::Context& ctx, ImVec2 content, float bodyW,
+                       std::optional<GeneralSettingsControls::Id> wantedFocus)
     {
         const float left = content.x + ctx.s (kInsetX);
         const float innerW = std::max (ctx.s (100.0f), bodyW - ctx.s (kInsetX) * 2.0f);
@@ -510,15 +505,19 @@ private:
             const float generalToggleX = left + ctx.s (kLabelW + kControlInset);
             {
                 const float top = takeRow (kRowH);
+                bool expanded = generalSettings.tapeDefault();
+                if (wantedFocus == GeneralSettingsControls::Id::tapeDefault)
+                    ImGui::SetKeyboardFocusHere();
                 if (toggleAt (top, generalToggleX, "##tape-strip",
-                              "Expand tape strip by default", tapeStripExpanded))
-                    appconfig::setTapeStripExpandedDefault (tapeStripExpanded);
+                              GeneralSettingsControls::kTapeDefaultName, expanded))
+                    generalSettings.editTapeDefault (expanded);
+                if (ImGui::IsItemFocused())
+                    generalSettings.reportFocus (GeneralSettingsControls::Id::tapeDefault);
                 const auto first = ImGui::GetItemRectMin();
                 const auto last = ImGui::GetItemRectMax();
                 scenarioTape = ImGui::IsItemVisible()
                     ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
-                formTooltip ("When on, the TIMELINE tape strip starts expanded on every app "
-                             "launch. Saved per-machine; takes effect on next launch.");
+                formTooltip (GeneralSettingsControls::kTapeDefaultHelp);
             }
             {
                 const float top = takeRow (kRowH);
@@ -573,28 +572,38 @@ private:
             }
             {
                 const float top = takeRow (kRowH);
-                labelled (top, "Autosave every");
-                if (staticComboAt (top, "##autosave", kAutosaveItems, 5, autosave, 200.0f))
-                    appconfig::setAutosaveIntervalSeconds (kAutosaveSeconds[autosave]);
+                labelled (top, GeneralSettingsControls::kAutosaveName);
+                int choice = generalSettings.autosaveChoice();
+                if (wantedFocus == GeneralSettingsControls::Id::autosave)
+                    ImGui::SetKeyboardFocusHere();
+                if (staticComboAt (top, "##autosave", GeneralSettingsControls::kAutosaveChoices.data(),
+                                   GeneralSettingsControls::kAutosaveChoiceCount, choice, 200.0f))
+                    generalSettings.editAutosave (choice);
+                if (ImGui::IsItemFocused())
+                    generalSettings.reportFocus (GeneralSettingsControls::Id::autosave);
                 const auto first = ImGui::GetItemRectMin();
                 const auto last = ImGui::GetItemRectMax();
                 scenarioAutosave = ImGui::IsItemVisible()
                     ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
-                formTooltip ("How often the session autosaves for crash recovery. Saved "
-                             "per-machine; applies when this panel closes.");
+                formTooltip (GeneralSettingsControls::kAutosaveHelp);
             }
             {
                 const float top = takeRow (kRowH);
-                labelled (top, "UI scale");
+                labelled (top, GeneralSettingsControls::kUiScaleName);
                 const float x = left + ctx.s (kLabelW) + ctx.s (kControlInset);
+                float scale = generalSettings.uiScale();
+                if (wantedFocus == GeneralSettingsControls::Id::uiScale)
+                    ImGui::SetKeyboardFocusHere();
                 const auto moved = formSlider (
                     ctx, "##ui-scale", ImVec2 (x, top + ctx.s (2.0f)),
                     ImVec2 (x + ctx.s (kSliderW) - ctx.s (kControlInset) * 2.0f,
                             top + ctx.s (kRowH) - ctx.s (2.0f)),
-                    uiScale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
+                    scale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
+                if (ImGui::IsItemFocused())
+                    generalSettings.reportFocus (GeneralSettingsControls::Id::uiScale);
                 scenarioScaleFirst = ImGui::IsItemVisible() ? ImGui::GetItemRectMin() : ImVec2 {};
                 scenarioScaleLast = ImGui::IsItemVisible() ? ImGui::GetItemRectMax() : ImVec2 {};
-                applyUiScale (moved);
+                generalSettings.editUiScale (scale, moved.changed, moved.released);
             }
         }
 
@@ -1034,28 +1043,6 @@ private:
         engine.restartDspWhenIdle();
     }
 
-    void applyUiScale (const FormSliderResult& moved)
-    {
-        if (moved.changed)
-            ++uiScaleFrames;
-
-        // 20 Hz rather than every frame: a preview re-lays out the whole window behind
-        // the panel, and the slider has to stay draggable through it.
-        constexpr int kFramesPerPreview = 3;
-        if (! moved.released && uiScaleFrames < kFramesPerPreview)
-            return;
-        if (! moved.changed && ! moved.released)
-            return;
-
-        uiScaleFrames = 0;
-        // Between frames, not inside one: a preview re-lays out the whole JUCE tree the
-        // panel is floating over, and this is running from the framework's event pump.
-        const float scale = uiScale;
-        deferred ([this, scale] { if (host.previewUiScale) host.previewUiScale (scale); });
-        if (moved.released)
-            appconfig::setUiScaleOverride (uiScale);
-    }
-
     void applySyncSource()
     {
         const auto& devices = engine.getMidiInputDevices();
@@ -1183,6 +1170,7 @@ private:
     AudioEngine& engine;
     Session& session;
     AudioSettingsHost host;
+    GeneralSettingsControls generalSettings;
     pluginpaths::Roots pluginFolders;
     GlyphTally nameGlyphs, drawnNameGlyphs;
     std::unique_ptr<AudioDeviceSelector> selector;
@@ -1199,7 +1187,6 @@ private:
     int renderQuality = 0;
     int frameRate = 0;
     int stopBehavior = 0;
-    int autosave = 1;
    #if defined(__linux__)
     int periods = -1;
    #endif
@@ -1208,15 +1195,12 @@ private:
     bool emitClock = false;
     bool chaseTimeCode = false;
     bool emitTimeCode = false;
-    bool tapeStripExpanded = false;
     bool followPlayhead = false;
     bool softTakeover = false;
     bool scanOnStartup = false;
 
-    float uiScale = 1.0f;
     int recordOffset = 0;
     int selectedTab = -1, pendingTab = 0;
-    int uiScaleFrames = 0;
     bool popupOpen = false;
     bool popupWasOpen = false;
     bool keyboardActive = false, keyboardWasActive = false;
