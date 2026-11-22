@@ -1251,9 +1251,10 @@ private:
     std::atomic<std::uint32_t> compStageSnapRequests { 0 };
     std::uint32_t compStageSnapsSeen = 0;                          // audio thread only
     // Bumped by every callback the mixer did not run (suspended, oversized):
-    // the stages' delays and compressors must not replay across that gap.
-    std::atomic<std::uint32_t> compStageGapRequests { 0 };
-    std::uint32_t compStageGapsSeen = 0;                           // audio thread only
+    // what the stages' delays held must not replay across that gap, and their
+    // compressors go on from where they were.
+    std::atomic<std::uint32_t> compStagePauseRequests { 0 };
+    std::uint32_t compStagePausesSeen = 0;                         // audio thread only
     void snapCompStagesFromSession() noexcept;
     void advanceCompStages (bool transportStopped, int numSamples) noexcept;
 

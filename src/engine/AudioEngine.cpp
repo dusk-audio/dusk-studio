@@ -1481,13 +1481,13 @@ void AudioEngine::snapCompStages() noexcept
 
 void AudioEngine::advanceCompStages (bool transportStopped, int numSamples) noexcept
 {
-    if (const auto gaps = compStageGapRequests.load (std::memory_order_relaxed);
-        gaps != compStageGapsSeen)
+    if (const auto pauses = compStagePauseRequests.load (std::memory_order_relaxed);
+        pauses != compStagePausesSeen)
     {
-        compStageGapsSeen = gaps;
-        stripCompStage.markGap();
-        busCompStage.markGap();
-        masterCompStage.markGap();
+        compStagePausesSeen = pauses;
+        stripCompStage.markPause();
+        busCompStage.markPause();
+        masterCompStage.markPause();
     }
     if (const auto snaps = compStageSnapRequests.load (std::memory_order_acquire);
         snaps != compStageSnapsSeen)
@@ -5395,7 +5395,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     masterCompStage.prepare (sr, masterCompLatency);
     snapCompStagesFromSession();
     compStageSnapsSeen = compStageSnapRequests.load (std::memory_order_relaxed);
-    compStageGapsSeen = compStageGapRequests.load (std::memory_order_relaxed);
+    compStagePausesSeen = compStagePauseRequests.load (std::memory_order_relaxed);
     directBusAlign.prepare (bs, busCompLatency);
     for (auto& lane : auxBusAlign) lane.prepare (bs, busCompLatency);
     auxBusAlignHeld.fill (0);
@@ -5967,7 +5967,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if (processingSuspended.load (std::memory_order_seq_cst))
     {
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
-        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
+        compStagePauseRequests.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -5976,7 +5976,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     {
         callbacksInFlight.fetch_sub (1, std::memory_order_acq_rel);
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);
-        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
+        compStagePauseRequests.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -5991,7 +5991,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if ((int) mixL.size() < numSamples)
     {
         phaseContinuityValid = false;
-        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
+        compStagePauseRequests.fetch_add (1, std::memory_order_relaxed);
         silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
                           | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);

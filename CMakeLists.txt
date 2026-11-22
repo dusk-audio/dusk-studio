@@ -953,6 +953,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/clap_state_roundtrip.cpp
     src/engine/scenario/cases/clone_track_keeps_native_state.cpp
     src/engine/scenario/cases/comp_stage_latency.cpp
+    src/engine/scenario/cases/comp_stage_suspension.cpp
     src/engine/scenario/cases/device_clock_follow.cpp
     src/engine/scenario/cases/device_loss.cpp
     src/engine/scenario/cases/engine_muted_midi_track_skips_chain.cpp

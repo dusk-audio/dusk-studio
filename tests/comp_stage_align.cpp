@@ -601,6 +601,72 @@ TEST_CASE ("CompStageAlign: a member that missed blocks or was cut replays nothi
     }
 }
 
+TEST_CASE ("CompStageAlign: a pause plays what a cut plays and keeps the compressor running", "[compressor][comp-stage]")
+{
+    // A pause is the mixer skipping callbacks it then goes on from. FakeComp
+    // holds nothing but its delay, so silencing the latency it held across a
+    // pause leaves exactly what resetting it on a cut does, whatever the
+    // member's and the stage's fades were doing; the pause never resets it.
+    struct Case
+    {
+        const char* name;
+        int block;
+        bool stereo;
+        bool stageSettled;
+        int pauseBlock;
+    };
+    const Case cases[] {
+        { "stage on", kBlock, false, true, 8 },
+        { "stage on, stereo", kBlock, true, true, 8 },
+        { "blocks shorter than the latency", 32, false, true, 64 },
+        { "stage still fading in", kBlock, false, false, 2 },
+    };
+    const int total = 24 * kBlock;
+    const auto in = sine (300.0, 0.5f, total);
+    for (const auto& c : cases)
+    {
+        CAPTURE (c.name);
+        const auto runWith = [&] (bool pause, FakeComp& comp, std::vector<float>& L, std::vector<float>& R)
+        {
+            CompStageClock clock;
+            clock.prepare (kSr, kLatency);
+            if (c.stageSettled) clock.snap (true);
+            CompStageAlign member;
+            member.prepare (c.block, kLatency);
+            L = in;
+            R = in;
+            for (int b = 0; b * c.block < total; ++b)
+            {
+                if (b == c.pauseBlock)
+                {
+                    if (pause) clock.markPause();
+                    else       clock.markGap();
+                }
+                clock.advance (true, false, c.block);
+                const auto at = (std::size_t) (b * c.block);
+                member.process (L.data() + at, c.stereo ? R.data() + at : nullptr, c.block,
+                                clock.block(), true, &comp);
+            }
+            CHECK (member.compressorRunning());
+        };
+        FakeComp pausedComp (kLatency, 0.5f), cutComp (kLatency, 0.5f);
+        std::vector<float> pausedL, pausedR, cutL, cutR;
+        runWith (true, pausedComp, pausedL, pausedR);
+        runWith (false, cutComp, cutL, cutR);
+        CHECK (pausedComp.resets == 0);
+        CHECK (cutComp.resets == 1);
+        CHECK (pausedL == cutL);
+        if (c.stereo) CHECK (pausedR == cutR);
+        if (c.stageSettled)
+        {
+            const int from = c.pauseBlock * c.block;
+            CHECK (worstAgainst (pausedL, from, from + kLatency, [] (int) { return 0.0f; }) <= 0.0f);
+            CHECK (worstAgainst (pausedL, from + kLatency, total,
+                                 [&] (int i) { return 0.5f * in[(std::size_t) (i - kLatency)]; }) <= 0.0f);
+        }
+    }
+}
+
 TEST_CASE ("CompStageAlign: a snapped stage starts aligned, compressor in, with no fade", "[compressor][comp-stage]")
 {
     std::vector<float> in ((std::size_t) (4 * kBlock), 0.0f);
@@ -701,6 +767,103 @@ TEST_CASE ("CompStageAlign: the engage fade onto a compressor that changes nothi
         }
         CAPTURE (worstDb);
         CHECK (worstDb < 0.1);
+    }
+}
+
+TEST_CASE ("CompStageAlign: a Multi-Comp 2 paused while compressing goes on with the gain it had", "[compressor][comp-stage][multicomp]")
+{
+    using duskstudio::CompParamId;
+    using duskstudio::CompStage;
+    // Each mode settles on a hot 1 kHz tone, 10 to 24 dB of reduction, and a
+    // pause lands there. Reset at that point instead, as a cut does, the
+    // compressor came back 10 to 22 dB over its settled level and took 5 ms
+    // (Bus) to 770 ms (FET) to get within 1 dB of it again; fed one block of
+    // silence instead, it rose by under 1 dB.
+    struct Case
+    {
+        const char* name;
+        CompStage kind;
+        int mode;
+        CompParamId control;
+        float value;
+        int channels;
+    };
+    const Case cases[] {
+        { "Opto", CompStage::Strip, 0, CompParamId::OptoPeakReduction, 55.0f, 1 },
+        { "FET",  CompStage::Strip, 1, CompParamId::FetThreshold, -16.0f, 1 },
+        { "VCA",  CompStage::Strip, 2, CompParamId::VcaThreshold, -20.0f, 1 },
+        { "Bus",  CompStage::Bus,   0, CompParamId::BusThreshold, -14.0f, 2 },
+    };
+    static constexpr int kSettleBlocks = 200;
+    static constexpr int kAfterBlocks = 24;
+    static constexpr int kTotal = (kSettleBlocks + kAfterBlocks) * kBlock;
+    static constexpr int kPauseAt = kSettleBlocks * kBlock;
+    const auto tone = sine (1000.0, 0.5f, kTotal);
+    for (const auto& c : cases)
+    {
+        CAPTURE (c.name);
+        int latency = 0;
+        // The tone through a fresh member and compressor, the stage paused
+        // before the block at kPauseAt when asked; from there on the input is
+        // the tone going on, or silence.
+        const auto runOnce = [&] (bool pause, bool silenceAfter)
+        {
+            duskstudio::MultiCompStage comp (c.kind);
+            comp.prepare (kSr, kBlock, c.channels);
+            latency = comp.latencySamples();
+            duskstudio::CompParams params;
+            params.resetToDefaults (c.kind);
+            params.set (c.control, c.value);
+            comp.pushParameters (params, true, c.mode);
+            CompStageClock clock;
+            clock.prepare (kSr, latency);
+            clock.snap (true);
+            CompStageAlign member;
+            member.prepare (kBlock, latency);
+            auto L = tone;
+            if (silenceAfter) std::fill (L.begin() + kPauseAt, L.end(), 0.0f);
+            auto R = L;
+            for (int b = 0; b * kBlock < kTotal; ++b)
+            {
+                if (pause && b * kBlock == kPauseAt) clock.markPause();
+                clock.advance (true, false, kBlock);
+                const auto at = (std::size_t) (b * kBlock);
+                member.process (L.data() + at, c.channels == 2 ? R.data() + at : nullptr, kBlock,
+                                clock.block(), true, &comp);
+            }
+            return L;
+        };
+        const auto playing = runOnce (false, false), paused = runOnce (true, false);
+        const auto stopping = runOnce (false, true), pausedIntoSilence = runOnce (true, true);
+        REQUIRE (latency > 0);
+
+        // What the compressor's delay held from before the pause never plays;
+        // after it the compressor plays what it would have with no pause.
+        const auto zero = [] (int) { return 0.0f; };
+        CHECK (worstAgainst (paused, kPauseAt, kPauseAt + latency, zero) <= 0.0f);
+        CHECK (worstAgainst (paused, kPauseAt + latency, kTotal,
+                             [&] (int i) { return playing[(std::size_t) i]; }) <= 0.0f);
+
+        float settled = 0.0f;
+        for (int i = kPauseAt - 4 * kBlock; i < kPauseAt; ++i)
+            settled = std::max (settled, std::abs (playing[(std::size_t) i]));
+        double worstRiseDb = -200.0;
+        for (int w = kPauseAt + latency; w + 48 <= kTotal; w += 48)
+        {
+            float peak = 0.0f;
+            for (int i = w; i < w + 48; ++i) peak = std::max (peak, std::abs (paused[(std::size_t) i]));
+            worstRiseDb = std::max (worstRiseDb, 20.0 * std::log10 ((double) peak / (double) settled));
+        }
+        CAPTURE (settled, worstRiseDb);
+        CHECK (worstRiseDb < 0.5);
+
+        // Into silence, all that follows the held latency is the plug-in's own
+        // ring-out of what came before the pause, sample for sample what it
+        // plays when its input stops with no pause: one sample 27 dB under the
+        // settled level on Opto, 37 to 40 dB and fading on the others.
+        CHECK (worstAgainst (pausedIntoSilence, kPauseAt, kPauseAt + latency, zero) <= 0.0f);
+        CHECK (worstAgainst (pausedIntoSilence, kPauseAt + latency, kTotal,
+                             [&] (int i) { return stopping[(std::size_t) i]; }) <= 0.0f);
     }
 }
 #endif
