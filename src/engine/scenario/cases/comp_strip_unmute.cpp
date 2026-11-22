@@ -230,6 +230,8 @@ ScenarioResult unmuteKeepsCompression (ScenarioContext& ctx)
         ctx.expect (r.peakDb <= kMaxRiseDb && r.rmsDb <= kMaxRiseDb,
                     leg + ": it came back " + db (r.peakDb) + " peak, " + db (r.rmsDb)
                         + " RMS over the level it had settled at");
+        ctx.expect (r.peakDb >= -kMaxRiseDb,
+                    leg + ": it did not come back to the level it had settled at, peak " + db (r.peakDb));
         ctx.expect (r.heldPeak <= kHeldCeiling,
                     leg + ": the master was not silent for the mix latency after it was heard again, peak "
                         + std::to_string (r.heldPeak));

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -115,13 +116,23 @@ int peakAt (const std::vector<float>& v)
     return (int) best;
 }
 
-// The largest difference between v and `expected(i)` over [from, to).
+// The largest difference between v and `expected(i)` over [from, to). A
+// difference that is not finite is the largest there is: std::max would drop it.
 float worstAgainst (const std::vector<float>& v, int from, int to, const std::function<float (int)>& expected)
 {
     float worst = 0.0f;
     for (int i = from; i < to; ++i)
-        worst = std::max (worst, std::abs (v[(std::size_t) i] - expected (i)));
+    {
+        const float difference = std::abs (v[(std::size_t) i] - expected (i));
+        if (! std::isfinite (difference)) return std::numeric_limits<float>::infinity();
+        worst = std::max (worst, difference);
+    }
     return worst;
+}
+
+bool allFinite (const std::vector<float>& v)
+{
+    return std::all_of (v.begin(), v.end(), [] (float x) { return std::isfinite (x); });
 }
 } // namespace
 
@@ -888,6 +899,9 @@ TEST_CASE ("CompStageAlign: a Multi-Comp 2 paused while compressing goes on with
         const auto playing = runOnce (false, false), paused = runOnce (true, false);
         const auto stopping = runOnce (false, true), pausedIntoSilence = runOnce (true, true);
         REQUIRE (latency > 0);
+        REQUIRE (allFinite (playing));
+        REQUIRE (allFinite (paused));
+        REQUIRE (allFinite (pausedIntoSilence));
 
         // What the compressor's delay held from before the pause never plays;
         // after it the compressor plays what it would have with no pause.
@@ -983,6 +997,8 @@ TEST_CASE ("CompStageAlign: a Multi-Comp 2 muted while compressing comes back wi
         };
         const auto paused = runOnce (true), discarded = runOnce (false);
         REQUIRE (latency > 0);
+        REQUIRE (allFinite (paused));
+        REQUIRE (allFinite (discarded));
 
         float settled = 0.0f;
         for (int i = kBackAt - kOutBlocks * kBlock - 4 * kBlock; i < kBackAt - kOutBlocks * kBlock; ++i)

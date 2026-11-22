@@ -203,6 +203,9 @@ void suspendWhilePlaying (ScenarioContext& ctx, Where where)
     ctx.expect (rise <= kMaxRiseDb,
                 leg + ": after the suspension the compressor came back " + db (rise)
                     + " above the level it had settled at");
+    ctx.expect (rise >= -kMaxRiseDb,
+                leg + ": after the suspension the output did not come back to the level it had settled at, "
+                    + db (rise));
 }
 
 ScenarioResult suspensionKeepsCompression (ScenarioContext& ctx)
@@ -378,6 +381,9 @@ ScenarioResult printAfterSuspensionKeepsCompression (ScenarioContext& ctx)
     ctx.expect (suspended.riseDb <= kMaxRiseDb,
                 "with a callback in Record's suspension the printed take starts " + db (suspended.riseDb)
                     + " above its settled level, against " + db (plain.riseDb) + " with none");
+    ctx.expect (std::abs (suspended.reductionDb - plain.reductionDb) <= kMaxRiseDb,
+                "with a callback in Record's suspension the printed take settles " + db (suspended.reductionDb)
+                    + " under the dry one, against " + db (plain.reductionDb) + " with none");
     return ctx.verdict();
 }
 
