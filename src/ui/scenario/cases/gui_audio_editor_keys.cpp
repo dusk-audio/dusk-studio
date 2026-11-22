@@ -1178,5 +1178,97 @@ const ScenarioRegistrar audioEditorKeys { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorKeys (host, ctx); }
 } };
+
+// A stage change takes down the piano roll, whether Cmd/Ctrl+1 to 4 reaches the
+// window or the roll holding the keyboard: it does not stay over the new page, and
+// MASTERING opens every module. The audio region editor keeps the stage keys, at
+// the window and in its own child, so it stays up on the page it was opened on.
+std::optional<ScenarioResult> runRegionEditorsStageKeys (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    using Stage = GuiHost::Stage;
+    static constexpr int kMidiTrack = 1;
+    if (host.virtualKeyboardOpen()) return ScenarioResult::skip ("requires no virtual keyboard");
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    auto& midi = session.track (kMidiTrack);
+    keepStage (host, ctx);
+    host.switchToStage (Stage::Recording);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    ctx.cleanup ([&host] { host.closeRegionEditors(); });
+    if (! addLevelTake (ctx, track, "Take 1", 0, kTakeCaseLength, kWholeTakeLevel))
+        return ScenarioResult::fail ("could not write take fixture");
+    promoteTakeRange (session, track, track.takes[0], 0, kTakeCaseLength);
+    MidiRegion region;
+    region.lengthInTicks = 1920;
+    region.lengthInSamples = session.ticksToSamples (region.lengthInTicks, engine.getCurrentSampleRate());
+    region.notes = { { 1, 60, 90, 0, 480 } };
+    midi.frozen.store (false);
+    midi.mode.store ((int) Track::Mode::Midi);
+    midi.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+
+    const auto pageClear = [&host] (Stage stage)
+    {
+        if (! host.stageViewMatches (stage) || host.windowDimmed()) return false;
+        const int modules = host.masteringPanelsExpected();
+        return stage != Stage::Mastering || modules <= 0 || host.masteringPanelsOpen() == modules;
+    };
+    const auto rollGone = [&host] { return ! host.pianoRollOpen() && ! host.pianoNativeWindowOpen(); };
+    const auto stageKey = [&host, &ctx] (char digit)
+    {
+        ctx.expect (host.pressPeerKey (commandChord (digit)),
+                    std::string ("the window did not handle the stage key ") + digit);
+    };
+    const auto openRoll = [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (kMidiTrack, 0, true), "the piano roll did not open"); };
+    const auto openEditor = [&host, &ctx]
+    { ctx.expect (host.openAudioEditor (0, 0), "the audio editor did not open"); };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 150, openRoll });
+    steps->push_back ({ 0, [stageKey] { stageKey ('3'); }, [&host] { return host.pianoRollOpen(); },
+        "the piano roll did not open" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('1'); },
+        [rollGone, pageClear] { return rollGone() && pageClear (Stage::Mastering); },
+        "Cmd/Ctrl+3 at the window left the piano roll or its dim over MASTERING, or a module unopened" });
+    steps->push_back ({ 150, openRoll, [pageClear] { return pageClear (Stage::Recording); },
+        "Cmd/Ctrl+1 did not bring the console back clear" });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll ("command + 2"), "the piano roll did not take Cmd/Ctrl+2"); },
+        [&host] { return host.pianoRollOpen(); }, "the piano roll did not open again" });
+    steps->push_back ({ 150, openEditor, [rollGone, pageClear] { return rollGone() && pageClear (Stage::Mixing); },
+        "Cmd/Ctrl+2 in the piano roll left it or its dim over MIXING" });
+    steps->push_back ({ 300, [stageKey] { stageKey ('4'); }, [&host] { return host.audioEditorOpen(); },
+        "the audio editor did not open" });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.audioEditorOpen() && host.stageViewMatches (Stage::Mixing),
+                    "Cmd/Ctrl+4 at the window changed the stage with the audio editor up");
+        ctx.expect (host.pressAudioEditorKey ("command + 3"), "the audio editor did not take Cmd/Ctrl+3");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.audioEditorOpen() && host.stageViewMatches (Stage::Mixing),
+                    "Cmd/Ctrl+3 in the audio editor changed the stage with the editor up");
+        ctx.expect (host.pressPeerKey ("escape"), "the audio editor took no Escape");
+    } });
+    steps->push_back ({ 0, [] {}, [&host, pageClear] { return ! host.audioEditorOpen() && pageClear (Stage::Mixing); },
+        "Escape did not close the audio editor" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar regionEditorsStageKeys { Scenario {
+    "gui.region_editors_stage_keys", { "gui", "keyboard", "editor", "piano", "stage" },
+    Needs::Engine | Needs::Gui, {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRegionEditorsStageKeys (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario::gui

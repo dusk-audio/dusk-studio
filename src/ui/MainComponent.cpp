@@ -2893,9 +2893,10 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     // and leaves the native child hovering over a screen the user can't reach.
     yieldNotepadWindow();
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    // These editors leave the stage keys working and would outlive the console:
-    // their dim stays over the next page and keeps the mastering modules hidden.
+    // These editors leave the stage keys working and would outlive the page they
+    // edit: their dim stays over the next page and keeps the mastering modules hidden.
     closeConsoleEditors();
+    closePianoRoll();
    #endif
 
     std::fprintf (stderr, "[MainComponent] switchToStage(%d) enter\n", (int) s);
