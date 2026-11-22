@@ -3,6 +3,8 @@
 #include "ScenarioControlMap.h"
 #include "../../dsp/PhaseAnalyzer.h"
 
+#include <DearImGui/imgui_internal.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -40,6 +42,7 @@ public:
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! popupWasOpen && ! keyboardWasActive; }
     void closeLists() override { listToClose = true; }
+    void sessionReplaced() override { editToDrop = true; }
 
     // The session's names, "phase_enabled", "phase_bands", "phase_q" and
     // "phase_averaging_ms", and "phase_display", "phase_reset" and "phase_mono", are
@@ -78,6 +81,10 @@ public:
         keyboardWasActive = keyboardActive;
         if (std::exchange (listToClose, false))
             formCloseLists();
+        // A typed value writes on every key, so a field left open would type into
+        // the session just loaded.
+        if (std::exchange (editToDrop, false))
+            ImGui::ClearActiveID();
         displayList.clear();
         controls = {};
         viewport = {};
@@ -468,7 +475,7 @@ private:
     ScenarioControlMap scenarioControls;
     std::vector<ImVec4> displayList;
     int mode = 0, selectedBand = 0;
-    bool popupOpen = false, popupWasOpen = false, listToClose = false;
+    bool popupOpen = false, popupWasOpen = false, listToClose = false, editToDrop = false;
     bool keyboardActive = false, keyboardWasActive = false;
 };
 }

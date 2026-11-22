@@ -567,6 +567,32 @@ TEST_CASE ("the mastering Phase controls wire settings monitoring reset and keyb
         REQUIRE (monoWrites == 0);
         REQUIRE (analyzer.report().broadband.flagged);
     }
+    SECTION ("A value being typed is dropped when another session opens")
+    {
+        const auto control = ImGui::GetIO().ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
+        panel.key (control, true);
+        panel.frame (*view);
+        panel.clickControl (*view, "bands");
+        REQUIRE (view->capturesKeyboard());
+        panel.key (control, false);
+        panel.frame (*view);
+        panel.type ("3");
+        panel.frame (*view);
+        view->sessionReplaced();
+        params.bands.store (16);
+        params.q.store (2.0f);
+        params.averagingMs.store (500.0f);
+        const auto loaded = params.snapshot();
+        panel.type ("2");
+        panel.frame (*view);
+        panel.key (ImGuiKey_Enter, true);
+        panel.frame (*view);
+        panel.key (ImGuiKey_Enter, false);
+        panel.frame (*view);
+        panel.frame (*view);
+        requireUnchanged (params, loaded);
+        REQUIRE_FALSE (view->capturesKeyboard());
+    }
     SECTION ("Q text entry keeps the keyboard and commits the typed value")
     {
         const auto control = ImGui::GetIO().ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
