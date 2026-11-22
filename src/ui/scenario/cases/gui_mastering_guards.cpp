@@ -654,12 +654,14 @@ const ScenarioRegistrar masteringDropdownsKeepModules { Scenario {
 // the keys go back to the shell: Down and Return pick nothing, and Space plays the
 // mix. The panel's child losing the keyboard alone leaves the list open, as an X11
 // window manager takes it on a press inside the child. For the multiband presets,
-// the limiter's mode and the Phase display, in a 1424 x 1120 window.
+// the limiter's mode and the Phase display, in a 1424 x 1120 window. The loudness
+// Target's list there, and the compact picker's in the smallest window, close on a
+// press in the EQ panel, and Down and Return after it pick nothing.
 std::optional<ScenarioResult> runMasteringListsCloseOutside (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto skip = requireMasteringPanels (host, ctx)) return skip;
     const auto size = host.mainWindowSize();
-    if (size.size() < 2) return ScenarioResult::fail ("the window size is unavailable");
+    if (size.size() < 4) return ScenarioResult::fail ("the window size and its limits are unavailable");
     auto& mastering = ctx.session().mastering();
     auto& player = ctx.engine().getMasteringPlayer();
     for (std::size_t i = 0; i < kCompParamCount; ++i)
@@ -765,6 +767,59 @@ std::optional<ScenarioResult> runMasteringListsCloseOutside (GuiHost& host, Scen
             steps->push_back ({ 0, [&player] { player.stop(); }, [&player] { return player.isPlaying(); },
                                "Space did not play the mix after " + dropdown.name + " closed when " + how });
         }
+    // The page's own lists, which a press in a panel's child reaches only through
+    // the panel: no display server but X11 hands the window a copy of it.
+    const int target = mastering.targetPresetIndex.load();
+    const int picked = host.masteringModuleIndex();
+    ctx.cleanup ([&host, target, picked]
+    {
+        drainModals (host);
+        host.restoreMasteringTarget (target);
+        host.restoreMasteringModule (picked);
+    });
+    for (std::size_t d = 3; d < all.size(); ++d)
+    {
+        const auto& dropdown = all[d];
+        std::function<bool()> ready = [&host] { return host.modalStackEmpty(); };
+        if (d == 4)
+        {
+            steps->push_back ({ 0, [&host, &ctx, size]
+            {
+                ctx.expect (host.resizeMainWindow (size[2], size[3]), "could not size the smallest window");
+                host.restoreMasteringModule (0);
+            } });
+            ready = [&host]
+            {
+                return host.modalStackEmpty() && host.masteringModulePickerShown()
+                    && host.panelFrames (kOtherPanel).value_or (0) > 1;
+            };
+        }
+        auto before = std::make_shared<int> (-1);
+        steps->push_back ({ 100, [&host, &ctx, dropdown, before]
+        {
+            *before = dropdown.choice (host, ctx);
+            ctx.expect (dropdown.openPage (host), dropdown.name + " is not on screen");
+        }, ready, "the page was not ready for " + dropdown.name });
+        steps->push_back ({ 100, [&host, &ctx, dropdown]
+        {
+            ctx.expect (host.masteringPanelPointer (kOtherPanel, kOtherControl, 0.5f, true),
+                        "the EQ dial was not on screen beside " + dropdown.name + "'s list");
+        }, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
+           dropdown.name + " did not open its list" });
+        steps->push_back ({ 60, [&host, &ctx]
+        { ctx.expect (host.masteringPanelPointer (kOtherPanel, kOtherControl, 0.5f, false), "the EQ panel lost its dial"); } });
+        steps->push_back ({ 100, [&host]
+        {
+            host.pressPeerKey ("cursor down", 0);
+            host.pressPeerKey ("return", '\r');
+        } });
+        steps->push_back ({ 300, [&host, &ctx, dropdown, before]
+        {
+            ctx.expect (dropdown.choice (host, ctx) == *before,
+                        "Down and Return after a press in the EQ panel moved " + dropdown.name + " from "
+                            + std::to_string (*before) + " to " + std::to_string (dropdown.choice (host, ctx)));
+        }, [&host] { return host.modalStackEmpty(); }, dropdown.name + " stayed open after a press in the EQ panel" });
+    }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -806,8 +861,9 @@ int phaseDisplay (GuiHost& host)
 // straight into its widget: the multiband presets, the limiter's Mode and the Phase
 // display in their panels, and the loudness Target list. Each pick takes. A list in
 // a panel closes, picking nothing, at a press on the page or on another panel, and,
-// under X11, when another window takes the keyboard. Under X11 the compact module
-// picker is picked from too. Runs only with a driver sending the clicks, which
+// under X11, when another window takes the keyboard. The Target list closes at a
+// press on a panel, picking nothing. Under X11 the compact module picker is picked
+// from too. Runs only with a driver sending the clicks, which
 // DUSKSTUDIO_REAL_INPUT_DRIVER names: "x11" or "wayland".
 std::optional<ScenarioResult> runMasteringRealListPicks (GuiHost& host, ScenarioContext& ctx)
 {
@@ -1044,6 +1100,20 @@ std::optional<ScenarioResult> runMasteringRealListPicks (GuiHost& host, Scenario
     steps->push_back ({ 0, [] {}, [&host, &mastering, state]
     { return host.modalStackEmpty() && mastering.targetPresetIndex.load() == state->wanted; },
        "the real click to pick a Target did not take", {}, kBoundMs });
+
+    // A press on a panel closes it, picking nothing, though no display server but
+    // X11 tells the window of a press in a panel's child.
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        const auto at = host.masteringPickerPoint (true);
+        if (ctx.expect (at.size() >= 2, "the Target picker is not on screen"))
+            requestClick (at[0], at[1], "open the Target list again");
+    } });
+    steps->push_back ({ 0, [] {}, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
+       "the real click did not open the Target list again", {}, kBoundMs });
+    clickPanel ("mastering-eq", "eq_band_2_gain_db", "press the EQ panel with the Target list open",
+                [&host, &mastering, state]
+                { return host.modalStackEmpty() && mastering.targetPresetIndex.load() == state->wanted; });
 
     // The compact module picker, under X11, where a window out of full screen still
     // says where it is.

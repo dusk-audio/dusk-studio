@@ -31,6 +31,11 @@ public:
     // ordinary combos are unchanged.
     void setGridBrowser (bool shouldBrowse) noexcept { gridBrowser = shouldBrowse; }
 
+    // Closes the open list as a click outside it does, when nothing is stacked over
+    // it. A press in a native child window reaches no outside-click listener, so the
+    // window holding the child reports it here.
+    static void dismissOpenListForOutsidePress();
+
 private:
     bool gridBrowser = false;
     std::uint64_t popupGeneration = 0;

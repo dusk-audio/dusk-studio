@@ -1286,4 +1286,12 @@ void DuskComboBox::showPopup()
     if (! insideTaggedEditor)
         sharedComboModal().hideEditorsUnderBody();
 }
+
+void DuskComboBox::dismissOpenListForOutsidePress()
+{
+    auto& modal = sharedComboModal();
+    const auto& stack = EmbeddedModal::activeModalStack();
+    if (modal.isOpen() && ! stack.empty() && stack.back() == &modal)
+        modal.close (/*restoreFocus*/ false);
+}
 } // namespace duskstudio

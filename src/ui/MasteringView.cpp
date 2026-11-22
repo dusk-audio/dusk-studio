@@ -533,7 +533,12 @@ void MasteringView::applyNativePanelSync()
         callbacks.pressed = [safeThis, window = panel.window.get()]
         {
             if (auto* const self = safeThis.getComponent())
+            {
                 self->closePanelLists (window);
+                // Closing the list puts back the panels it hid, which must not
+                // happen inside this panel's frame.
+                dusk::callAsync ([] { DuskComboBox::dismissOpenListForOutsidePress(); });
+            }
         };
         callbacks.geometry = [safeThis, proxy]
         {
