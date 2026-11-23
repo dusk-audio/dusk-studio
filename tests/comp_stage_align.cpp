@@ -130,6 +130,13 @@ float worstAgainst (const std::vector<float>& v, int from, int to, const std::fu
     return worst;
 }
 
+void checkSamplesMatch (const std::vector<float>& actual, const std::vector<float>& expected)
+{
+    REQUIRE (actual.size() == expected.size());
+    const float error = worstAgainst (actual, 0, (int) actual.size(), [&] (int i) { return expected[(std::size_t) i]; });
+    CHECK_THAT (error, WithinAbs (0.0f, 1e-7f));
+}
+
 bool allFinite (const std::vector<float>& v)
 {
     return std::all_of (v.begin(), v.end(), [] (float x) { return std::isfinite (x); });
@@ -666,8 +673,8 @@ TEST_CASE ("CompStageAlign: a pause plays what a cut plays and keeps the compres
         runWith (false, cutComp, cutL, cutR);
         CHECK (pausedComp.resets == 0);
         CHECK (cutComp.resets == 1);
-        CHECK (pausedL == cutL);
-        if (c.stereo) CHECK (pausedR == cutR);
+        checkSamplesMatch (pausedL, cutL);
+        if (c.stereo) checkSamplesMatch (pausedR, cutR);
         if (c.stageSettled)
         {
             const int from = c.pauseBlock * c.block;
@@ -721,8 +728,8 @@ TEST_CASE ("CompStageAlign: a member muted while its input goes on keeps its com
         runWith (false, discardedComp, discardedL, discardedR);
         CHECK (pausedComp.resets == 0);
         CHECK (discardedComp.resets == 1);
-        CHECK (pausedL == discardedL);
-        if (stereo) CHECK (pausedR == discardedR);
+        checkSamplesMatch (pausedL, discardedL);
+        if (stereo) checkSamplesMatch (pausedR, discardedR);
         const int back = kOutTo * kBlock;
         CHECK (worstAgainst (pausedL, back, back + kLatency, [] (int) { return 0.0f; }) <= 0.0f);
         CHECK (worstAgainst (pausedL, back + kLatency, total,
@@ -1003,21 +1010,24 @@ TEST_CASE ("CompStageAlign: a Multi-Comp 2 muted while compressing comes back wi
         float settled = 0.0f;
         for (int i = kBackAt - kOutBlocks * kBlock - 4 * kBlock; i < kBackAt - kOutBlocks * kBlock; ++i)
             settled = std::max (settled, std::abs (paused[(std::size_t) i]));
-        const auto worstRiseDb = [&] (const std::vector<float>& v)
-        {
-            double worst = -200.0;
-            for (int w = kBackAt + latency; w + 48 <= kTotal; w += 48)
-            {
-                float peak = 0.0f;
-                for (int i = w; i < w + 48; ++i) peak = std::max (peak, std::abs (v[(std::size_t) i]));
-                worst = std::max (worst, 20.0 * std::log10 ((double) peak / (double) settled));
-            }
-            return worst;
-        };
-        const double pausedRiseDb = worstRiseDb (paused), discardedRiseDb = worstRiseDb (discarded);
-        CAPTURE (settled, pausedRiseDb, discardedRiseDb);
+        REQUIRE (settled > 0.0f);
         CHECK (worstAgainst (paused, kBackAt, kBackAt + latency, [] (int) { return 0.0f; }) <= 0.0f);
-        CHECK (pausedRiseDb < 0.5);
+        static constexpr int kPeriod = 48;
+        REQUIRE (kBackAt + latency + kPeriod <= kTotal);
+        const auto levelDb = [&] (const std::vector<float>& samples, int start)
+        {
+            float peak = 0.0f;
+            for (int i = start; i < start + kPeriod; ++i)
+                peak = std::max (peak, std::abs (samples[(std::size_t) i]));
+            return 20.0 * std::log10 ((double) peak / (double) settled);
+        };
+        double discardedRiseDb = -std::numeric_limits<double>::infinity();
+        for (int w = kBackAt + latency; w + kPeriod <= kTotal; w += kPeriod)
+        {
+            CAPTURE (w, settled);
+            CHECK_THAT (levelDb (paused, w), WithinAbs (0.0, 0.5));
+            discardedRiseDb = std::max (discardedRiseDb, levelDb (discarded, w));
+        }
         CHECK (discardedRiseDb > 5.0);
     }
 }

@@ -356,6 +356,13 @@ TEST_CASE ("A session saved by 0.16.0 loads with its compressors and EQ converte
     CHECK (session->mastering().compEnabled.load());
     inRange (session->mastering().comp, CompStage::Multiband);
 
+    check (session->track (0).strip.comp, { { Id::OptoPeakReduction, 55.0f }, { Id::OptoGain, 38.631250f } });
+    check (session->track (1).strip.comp, { { Id::FetInput, -5.133218f }, { Id::FetOutput, 8.191379f } });
+    check (session->track (2).strip.comp, { { Id::VcaThreshold, -13.039600f }, { Id::VcaCompression, 66.799443f } });
+    check (session->bus (0).strip.comp, { { Id::BusThreshold, 12.376763f }, { Id::BusMakeup, 2.0f } });
+    check (session->master().comp, { { Id::BusThreshold, 14.788412f }, { Id::BusMakeup, 1.5f } });
+    checkDefaults (session->mastering().comp, CompStage::Multiband);
+
     using EqFreq = ChannelStripParams::EqFreq;
     struct Band { EqFreq freq; float lo, hi; };
     static constexpr Band kBands[] {

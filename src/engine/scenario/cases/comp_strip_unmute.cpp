@@ -178,6 +178,13 @@ Result playThrough (ScenarioContext& ctx, const std::function<void()>& cut,
     const auto settledFrom = out.size() - (std::size_t) kMeasured;
     const float settledPeak = peakOf (out, settledFrom, out.size());
     const float settledRms = rmsOf (out, settledFrom, out.size());
+    if (! ctx.expect (std::isfinite (settledPeak) && std::isfinite (settledRms)
+                          && settledPeak > 1.0e-9f && settledRms > 1.0e-9f,
+                      "the settled tone must have a finite peak and RMS above the measurement floor"))
+    {
+        engine.stop();
+        return result;
+    }
     cut();
     session.recomputeRtCounters();
     pump (kCutBlocks);
@@ -187,6 +194,9 @@ Result playThrough (ScenarioContext& ctx, const std::function<void()>& cut,
     auto from = heard + (std::size_t) skip;
     pump ((skip + 2 * kMeasured) / kFrames + 4);
     engine.stop();
+    if (! ctx.expect (std::all_of (out.begin(), out.end(), [] (float x) { return std::isfinite (x); }),
+                      "the output contains a non-finite sample"))
+        return result;
     result.heldPeak = peakOf (out, heard, heard + (std::size_t) engine.getMixLatencySamples());
     if (fromSound)
         while (from < out.size() && std::abs (out[from]) < 1.0e-3f) ++from;

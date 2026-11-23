@@ -324,9 +324,9 @@ TEST_CASE ("tape unit Auto comp takes the drive back off the output and override
                                                  { "outputGain", 0.0f } });
     INFO ("Auto comp on: " << dbOf (flat.rms, dry) << " dB flat, " << dbOf (driven.rms, dry) << " dB driven; "
           "off: " << dbOf (open.rms, dry) << " dB flat, " << dbOf (hot.rms, dry) << " dB driven");
-    CHECK (std::abs (dbOf (flat.rms, dry)) < 1.5);
-    CHECK (std::abs (dbOf (flat.rms, open.rms)) < toleranceDb);
-    CHECK (std::abs (dbOf (driven.rms, hot.rms) + driveDb) < toleranceDb);
+    CHECK_THAT (dbOf (flat.rms, dry), WithinAbs (0.0, 1.5));
+    CHECK_THAT (dbOf (flat.rms, open.rms), WithinAbs (0.0, toleranceDb));
+    CHECK_THAT (dbOf (driven.rms, hot.rms), WithinAbs (-driveDb, toleranceDb));
 
     const auto trimmed = renderTone (amplitude, { { "autoComp", 0.0f }, { "inputGain", 0.0f },
                                                   { "outputGain", -12.0f } });
