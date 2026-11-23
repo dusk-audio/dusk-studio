@@ -254,11 +254,13 @@ TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by relea
     REQUIRE_FALSE (original["mastering"].contains ("phase_bands"));
     REQUIRE_FALSE (original["mastering"].contains ("phase_q"));
     REQUIRE_FALSE (original["mastering"].contains ("phase_averaging_ms"));
+    REQUIRE_FALSE (original["mastering"].contains ("phase_enabled"));
 
     auto loaded = std::make_unique<Session>();
     loaded->mastering().phase.bands.store (64);
     loaded->mastering().phase.q.store (8.0f);
     loaded->mastering().phase.averagingMs.store (5000.0f);
+    loaded->mastering().phase.enabled.store (false);
     SessionLoadError error;
     REQUIRE (SessionSerializer::load (*loaded, fixture, &error));
     REQUIRE (error.failure == SessionLoadFailure::None);
@@ -268,6 +270,7 @@ TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by relea
     CHECK (loaded->mastering().phase.bands.load() == 16);
     CHECK_THAT (loaded->mastering().phase.q.load(), WithinAbs (2.0f, 1.0e-6f));
     CHECK_THAT (loaded->mastering().phase.averagingMs.load(), WithinAbs (500.0f, 1.0e-6f));
+    CHECK (loaded->mastering().phase.enabled.load());
     CHECK_FALSE (loaded->mastering().eqEnabled.load());
     CHECK_FALSE (loaded->mastering().compEnabled.load());
     CHECK (loaded->mastering().limiterEnabled.load());

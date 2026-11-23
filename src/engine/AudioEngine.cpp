@@ -1481,13 +1481,13 @@ void AudioEngine::snapCompStages() noexcept
 
 void AudioEngine::advanceCompStages (bool transportStopped, int numSamples) noexcept
 {
-    if (const auto gaps = compStageGapRequests.load (std::memory_order_relaxed);
-        gaps != compStageGapsSeen)
+    if (const auto pauses = compStagePauseRequests.load (std::memory_order_relaxed);
+        pauses != compStagePausesSeen)
     {
-        compStageGapsSeen = gaps;
-        stripCompStage.markGap();
-        busCompStage.markGap();
-        masterCompStage.markGap();
+        compStagePausesSeen = pauses;
+        stripCompStage.markPause();
+        busCompStage.markPause();
+        masterCompStage.markPause();
     }
     if (const auto snaps = compStageSnapRequests.load (std::memory_order_acquire);
         snaps != compStageSnapsSeen)
@@ -5395,7 +5395,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     masterCompStage.prepare (sr, masterCompLatency);
     snapCompStagesFromSession();
     compStageSnapsSeen = compStageSnapRequests.load (std::memory_order_relaxed);
-    compStageGapsSeen = compStageGapRequests.load (std::memory_order_relaxed);
+    compStagePausesSeen = compStagePauseRequests.load (std::memory_order_relaxed);
     directBusAlign.prepare (bs, busCompLatency);
     for (auto& lane : auxBusAlign) lane.prepare (bs, busCompLatency);
     auxBusAlignHeld.fill (0);
@@ -5967,7 +5967,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if (processingSuspended.load (std::memory_order_seq_cst))
     {
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
-        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
+        compStagePauseRequests.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -5976,7 +5976,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     {
         callbacksInFlight.fetch_sub (1, std::memory_order_acq_rel);
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);
-        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
+        compStagePauseRequests.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -5991,7 +5991,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if ((int) mixL.size() < numSamples)
     {
         phaseContinuityValid = false;
-        compStageGapRequests.fetch_add (1, std::memory_order_relaxed);
+        compStagePauseRequests.fetch_add (1, std::memory_order_relaxed);
         silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
                           | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);
@@ -7154,7 +7154,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 = std::numeric_limits<double>::quiet_NaN();
         hostedTransport.publish (&stopped);
         const auto block = masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
-        const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead;
+        const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead
+                               && session.mastering().phase.enabled.load (std::memory_order_relaxed);
         const auto gatedBlocks = getGatedBlockCount();
         if (capturePhase && (! phaseContinuityValid || gatedBlocks != phaseGatedBlockCount
             || block.revision != previousPhaseBlock.revision
@@ -8514,17 +8515,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // What the input capture keeps of this block, so a printed track keeps
     // the same input samples, passes and positions when its strip delivers
     // them.
+    bool captureKeepsInput = false;
     if (recordManagerActive && anyPrintCapture)
     {
         if (loopRecordingActive)
-            forEachRecordCaptureSpan ([this] (const RecordManager::LoopCaptureSpan& span) noexcept
+            forEachRecordCaptureSpan ([this, &captureKeepsInput] (const RecordManager::LoopCaptureSpan& span) noexcept
             {
                 captureSchedule.add ({ captureClock + span.inputOffset, span.numSamples, span.passOrdinal,
                                        span.timelineStart, span.startsPass, span.endsPass });
+                captureKeepsInput = true;
             });
         else if (linearCaptureLength > 0)
+        {
             captureSchedule.add ({ captureClock + linearCaptureOffset, linearCaptureLength, 0,
                                    blockStartSamples + linearCaptureOffset, false, false });
+            captureKeepsInput = true;
+        }
     }
 
     // Post-DSP serial tail: metering + recording (audio thread).
@@ -8574,9 +8580,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // Recording capture - armed tracks always commit their input to
         // disk while recording. By default the raw deviceInput is written;
-        // when the take prints (PRINT was on at its start), the post-EQ/
-        // post-comp buffer that the strip just produced is written instead,
-        // "printing" the channel-strip processing to the WAV.
+        // when the take prints (PRINT was on when Record was pressed), the
+        // post-EQ/post-comp buffer that the strip just produced is written
+        // instead, "printing" the channel-strip processing to the WAV.
         if (isRecording && job.armed && job.deviceInput != nullptr)
         {
             // Default sources: deviceInput on L; deviceInputR on R for stereo
@@ -8598,13 +8604,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     if (job.stereoInput)
                         recR = strip.getLastProcessedR();  // may be nullptr -> recorder duplicates L
                 }
-                if (print.delay < 0)
+                // A count-in, a pre-roll or the wait for a punch-in keeps no
+                // input, and the strip's delay can still move in it, so the
+                // take's delay is the one the strip has in the first block
+                // whose input the capture keeps.
+                if (print.delay < 0 && captureKeepsInput)
                 {
                     print.delay = (int) std::min<std::int64_t> (strip.getProcessedLatencySamples(),
                                                                 CaptureSchedule::kHorizonSamples);
                     longestPrintDelay = std::max (longestPrintDelay, print.delay);
                 }
-                capturePrinted (t, recL, recR, print, numSamples, loopRecordingActive);
+                if (print.delay >= 0)
+                    capturePrinted (t, recL, recR, print, numSamples, loopRecordingActive);
             }
             else if (loopRecordingActive)
             {

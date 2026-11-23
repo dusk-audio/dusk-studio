@@ -898,7 +898,9 @@ std::optional<ScenarioResult> runSunsetReopenKeepsEdit (GuiHost& host, ScenarioC
     if (! host.canEmbedPluginEditors())
         return ScenarioResult::skip ("requires a window the unit's editor can embed into");
     static constexpr std::uint8_t kProgram = 5;
-    static constexpr float kPresetCutoffHz = 2000.0f;
+    // No factory preset sets this, so a cutoff that leaves it is the preset's
+    // own, whatever value the plug-in's voicing gives it.
+    static constexpr float kUnpresetCutoffHz = 11111.0f;
     auto& engine = ctx.engine();
     auto& track = ctx.session().track (0);
     auto& strip = engine.getChannelStrip (0);
@@ -946,9 +948,13 @@ std::optional<ScenarioResult> runSunsetReopenKeepsEdit (GuiHost& host, ScenarioC
 
     const auto cutoffHz = [&strip, cutoff] { return strip.getBuiltinSlot().getParamValue (cutoff); };
     const auto editorUp = [&host] { auto* s = host.strip (0); return s != nullptr && s->hasOpenBuiltinEditor(); };
+    strip.getBuiltinSlot().setParamValue (cutoff, kUnpresetCutoffHz);
+    if (std::abs (cutoffHz() - kUnpresetCutoffHz) >= 1.0f)
+        return ScenarioResult::fail ("Sunset did not take a filterCutoff of " + std::to_string (kUnpresetCutoffHz) + " Hz");
+    auto preset = std::make_shared<float> (0.0f);
     auto edited = std::make_shared<float> (0.0f);
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 0, [&engine]
+    steps->push_back ({ 100, [&engine]
     {
         dusk::MidiBuffer midi;
         const std::uint8_t program[] = { 0xc0, kProgram };
@@ -957,14 +963,16 @@ std::optional<ScenarioResult> runSunsetReopenKeepsEdit (GuiHost& host, ScenarioC
     } });
     steps->push_back ({ 0, [&host, &ctx]
     { ctx.expect (host.clickInsert (0, false), "insert button unavailable"); },
-                       [cutoffHz] { return std::abs (cutoffHz() - kPresetCutoffHz) < 1.0f; },
+                       [cutoffHz] { return std::abs (cutoffHz() - kUnpresetCutoffHz) >= 1.0f; },
                        "the program change did not load preset 5" });
-    steps->push_back ({ 500, [&host, &ctx, cutoffHz, edited]
+    steps->push_back ({ 500, [&host, &ctx, cutoffHz, preset, edited]
     {
+        *preset = cutoffHz();
+        ctx.note ("preset 5 set filterCutoff to " + std::to_string (*preset) + " Hz");
         ctx.expect (host.builtinPointer (0, "filterCutoff", 0.25f, true)
                     && host.builtinPointer (0, "filterCutoff", 0.25f, false), "the editor took no filterCutoff edit");
         *edited = cutoffHz();
-        ctx.expect (std::abs (*edited - kPresetCutoffHz) > 100.0f, "the edit did not move filterCutoff off the preset");
+        ctx.expect (std::abs (*edited - *preset) > 100.0f, "the edit did not move filterCutoff off the preset");
     }, editorUp, "the editor did not open" });
     steps->push_back ({ 500, [&host, &ctx, cutoffHz, edited]
     {

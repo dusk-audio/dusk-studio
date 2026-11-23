@@ -627,6 +627,7 @@ private:
     std::uint64_t pianoRollGeneration = 0;
     void finishPianoRollClose();
     void closeNativePanelsForModal (bool keepPianoRoll = false);
+    void closeConsoleEditors();
    #endif
     int pianoRollTrackIdx  = -1;
     int pianoRollRegionIdx = -1;

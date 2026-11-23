@@ -46,14 +46,6 @@ constexpr float kVcaKnobY = 212.0f, kVcaKnobRadius = 34.0f, kVcaCompressionRadiu
 // BusFaceplateLayout.
 constexpr float kBusRatioX = 536.0f, kBusMakeupX = 663.0f, kBusMixX = 949.0f;
 constexpr float kBusRow1Y = 152.0f, kBusKnobRadius = 23.0f;
-// ModernFaceLayout's Multiband half. With all four bands shown the crossover
-// faders sit on the slot boundaries and span the band meters' top to the
-// faders' foot; the selected band's knobs sit right of the divider.
-constexpr float kBandsX0 = 144.0f, kBandsX1 = 600.0f;
-constexpr float kBandMeterTop = 170.0f, kFaderBottom = 326.0f;
-constexpr float kBandKnobRow1Y = 180.0f, kBandKnobRow2Y = 294.0f, kBandKnobRadius = 22.0f;
-constexpr float bandKnobX (float column) { return 812.0f + 92.0f * column; }
-constexpr float crossoverX (int boundary) { return kBandsX0 + (float) (boundary + 1) * (kBandsX1 - kBandsX0) / 4.0f; }
 
 constexpr float tabCentreX (int slot) { return kTabLeft + (float) slot * (kTabWidth + kTabGap) + 0.5f * kTabWidth; }
 constexpr float kModeRowCentreY = 0.5f * (kModeRowY0 + kModeRowY1);
@@ -176,13 +168,12 @@ struct Editor
     ScenarioContext& ctx;
     Kind kind;
     int index;
-    bool mastering;
     std::string name;
 
     Pixels read() const
     {
         const auto ppm = ctx.tempDir() / "face.ppm";
-        auto pixels = mastering ? host.masteringCompEditorPixels (ppm) : host.compEditorPixels (kind, index, ppm);
+        auto pixels = host.compEditorPixels (kind, index, ppm);
         ctx.expect (pixels.status == Pixels::Status::read,
                     "the " + name + " editor's face was not read back (status "
                         + std::to_string ((int) pixels.status) + ")");
@@ -194,8 +185,7 @@ struct Editor
     bool pointer (const Pixels& size, float x, float y, int button) const
     {
         const Face face (size.width, size.height);
-        const bool sent = mastering ? host.masteringCompEditorPointer (face.x (x), face.y (y), button)
-                                    : host.compEditorPointer (kind, index, face.x (x), face.y (y), button);
+        const bool sent = host.compEditorPointer (kind, index, face.x (x), face.y (y), button);
         return ctx.expect (sent, "the pointer did not reach the " + name + " editor");
     }
 };
@@ -263,7 +253,7 @@ std::optional<ScenarioResult> runCompEditorStripFace (GuiHost& host, ScenarioCon
     track.strip.compModePicked.store (false);
     comp.set (CompParamId::VcaThreshold, -45.0f);
 
-    auto editor = std::make_shared<Editor> (Editor { host, ctx, Kind::Channel, kStripIndex, false, "strip" });
+    auto editor = std::make_shared<Editor> (Editor { host, ctx, Kind::Channel, kStripIndex, "strip" });
     auto before = std::make_shared<Pixels>();
     auto values = std::make_shared<CompParams>();
     const auto threshold = around (mc2::kVcaThresholdX, mc2::kVcaKnobY, mc2::kVcaKnobRadius + 8.0f, "THRESHOLD");
@@ -378,7 +368,7 @@ std::optional<ScenarioResult> runCompEditorBusFace (GuiHost& host, ScenarioConte
     bus.compEnabled.store (false);
     comp.set (CompParamId::BusMakeup, 0.0f);
 
-    auto editor = std::make_shared<Editor> (Editor { host, ctx, Kind::Bus, kBus, false, "bus" });
+    auto editor = std::make_shared<Editor> (Editor { host, ctx, Kind::Bus, kBus, "bus" });
     auto before = std::make_shared<Pixels>();
     auto values = std::make_shared<CompParams>();
     const auto makeup = around (mc2::kBusMakeupX, mc2::kBusRow1Y, mc2::kBusKnobRadius + 8.0f, "MAKE-UP");
@@ -439,102 +429,5 @@ const ScenarioRegistrar compEditorBusFace { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runCompEditorBusFace (host, ctx); }
 } };
 
-// The mastering page's Multiband face against the session both ways, all four
-// bands shown and LOW selected. Session to editor: a LOW threshold change
-// redraws its THRESHOLD knob and leaves MIX and the band meters alone. Editor
-// to session: a drag on the LOW / LOW-MID crossover fader moves the low split
-// alone and leaves the compressor as it was; a click on BYPASS switches it in.
-std::optional<ScenarioResult> runMasteringCompEditorFace (GuiHost& host, ScenarioContext& ctx)
-{
-   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
-    (void) host;
-    (void) ctx;
-    return ScenarioResult::skip ("requires the native UI and the Dusk DSP");
-   #else
-    if (! faceReadable (host)) return ScenarioResult::skip (kNoReadBack);
-    auto& engine = ctx.engine();
-    auto& mastering = ctx.session().mastering();
-    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying() || ! host.modalStackEmpty())
-        return ScenarioResult::skip ("requires stopped transport and mastering player and no modal");
-    if (! host.canEmbedPluginEditors())
-        return ScenarioResult::skip ("requires a window the compressor editor can embed into");
-    const auto size = host.mainWindowSize();
-    if (size.size() < 2) return ScenarioResult::fail ("the window size is unavailable");
-
-    auto& comp = mastering.comp;
-    keepComp (ctx, comp);
-    ctx.keep (mastering.compEnabled);
-    keepStage (host, ctx);
-    ctx.cleanup ([&host, size]
-    {
-        host.closeMasteringCompEditor();
-        drainModals (host);
-        host.resizeMainWindow (size[0], size[1]);
-    });
-    if (! host.resizeMainWindow (std::max (1440, size[0]), std::max (900, size[1])))
-        return ScenarioResult::fail ("could not widen the mastering workspace");
-    host.switchToStage (GuiHost::Stage::Mastering);
-    mastering.compEnabled.store (false);
-    for (int band = 0; band < kCompBandCount; ++band)
-        comp.set (compBandParam (band, CompBandField::Enabled), 1.0f);
-    comp.set (compBandParam (0, CompBandField::Threshold), -20.0f);
-    const auto lowThreshold = compBandParam (0, CompBandField::Threshold);
-
-    auto editor = std::make_shared<Editor> (Editor { host, ctx, Kind::Master, 0, true, "Multiband" });
-    auto before = std::make_shared<Pixels>();
-    auto values = std::make_shared<CompParams>();
-    const auto thresholdKnob = around (mc2::bandKnobX (-1.5f), mc2::kBandKnobRow1Y, mc2::kBandKnobRadius + 8.0f, "LOW THRESHOLD");
-    const auto mixKnob = around (mc2::bandKnobX (1.0f), mc2::kBandKnobRow2Y, mc2::kBandKnobRadius + 8.0f, "MIX");
-    const Area bands { mc2::kBandsX0, mc2::kBandMeterTop, mc2::kBandsX1, mc2::kFaderBottom, "the band meters" };
-    const float faderY = 0.5f * (mc2::kBandMeterTop + mc2::kFaderBottom);
-
-    auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen"); } });
-    steps->push_back ({ 0, [] {}, [&host] { return host.masteringCompEditorDrawn(); },
-                        "the Multiband face never drew a frame" });
-    steps->push_back ({ 300, [editor, before, &comp, lowThreshold]
-    {
-        *before = editor->read();
-        comp.set (lowThreshold, -50.0f);
-    } });
-    steps->push_back ({ 300, [editor, before, &ctx, &comp, values, thresholdKnob, mixKnob, bands]
-    {
-        const auto after = editor->read();
-        expectRedrawn (ctx, *before, after, "the LOW threshold set in the session", thresholdKnob, { mixKnob, bands });
-        *before = after;
-        values->copyFrom (comp);
-    } });
-    drag (*steps, editor, before, mc2::crossoverX (0), faderY, 40.0f, [&ctx, &mastering, values, &comp]
-    {
-        expectOnly (ctx, CompStage::Multiband, comp, *values, CompParamId::MbCrossover1,
-                    "a drag on the low crossover fader in the face");
-        ctx.expect (comp.get (CompParamId::MbCrossover1) > values->get (CompParamId::MbCrossover1),
-                    "a drag up the low crossover fader lowered the split");
-        ctx.expect (! mastering.compEnabled.load(), "a drag on a crossover fader engaged the compressor");
-        values->copyFrom (comp);
-    });
-    click (*steps, editor, before, mc2::kBypassCentreX, mc2::kModeRowCentreY, [&ctx, &mastering, values, &comp]
-    {
-        ctx.expect (mastering.compEnabled.load(), "a click on BYPASS in the face left the compressor out");
-        for (const auto id : compStageParams (CompStage::Multiband))
-            ctx.expect (std::abs (comp.get (id) - values->get (id)) < 1.0e-6f,
-                        std::string ("a click on BYPASS moved ") + compParamSpec (id).symbol);
-    });
-    runSteps (ctx, steps, [&host, &ctx]
-    {
-        host.closeMasteringCompEditor();
-        ctx.waitUntil ([&host] { return ! host.masteringCompEditorOpen(); }, kSettleBoundMs,
-                       [&ctx] { ctx.complete (ctx.verdict()); }, "the Multiband face did not close");
-    });
-    return std::nullopt;
-   #endif
-}
-
-const ScenarioRegistrar masteringCompEditorFace { Scenario {
-    "gui.mastering_comp_editor_face", { "gui", "mastering", "comp" }, Needs::Engine | Needs::Gui,
-    {}, {}, 30000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompEditorFace (host, ctx); }
-} };
 } // namespace
 } // namespace duskstudio::scenario::gui

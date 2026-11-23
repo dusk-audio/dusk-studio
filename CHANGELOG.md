@@ -58,6 +58,26 @@ canonical source.
   was still running after about 3 seconds. A terminal line says which. The
   count turns the readout amber, and the double-click that resets the other
   counters resets it.
+- **The multiband compressor's panel.** On the MASTERING page every control of
+  the multiband compressor is on the page, with nothing to open. A band
+  display from 20 Hz to 20 kHz shows each band's stretch in its colour, its
+  gain reduction on a 0 to -20 dB scale and the three crossovers, which drag
+  sideways and sit where the compressor plays them. Below it the four bands
+  sit side by side, each with **ON**, **S** and **BYP** and its **THRESH**,
+  **RATIO**, **ATTACK**, **RELEASE** and **MAKEUP** dials, and **MIX**,
+  **OUTPUT** and **AUTO MAKEUP** run along the bottom. The last two bands
+  that are on stay on, and switching a band off clears its solo. **S** is
+  unavailable on a band that does not play. A double-click resets a dial or
+  a crossover, and Cmd-click on macOS or Ctrl-click elsewhere types a value.
+  Only the **MULTIBAND COMP** header engages the compressor. The **PRESET**
+  picker sits under the header, and its list opens inside the panel with
+  every preset showing. Picking the name it shows applies that preset again,
+  and it reads **Select preset...** again once another session opens.
+- **PHASE switches off.** The **PHASE** header's status light is a switch,
+  on by default and saved with the session. Off, nothing is analysed, the
+  readings blank and **Mono** is released and greyed out; held minima and
+  warnings are kept. Switched on again it starts a fresh analysis window. Lit,
+  the light is green with a reading and amber while it waits for one.
 - **Experimental native Wayland for source builds.** A source build with
   shared Wayland embedding support can run its main window without Xwayland
   when started with `DUSKSTUDIO_NATIVE_WAYLAND=1`. X11 plug-in editors still
@@ -71,8 +91,9 @@ canonical source.
   in, so a setting sounds as it does in the plug-in. A channel strip offers
   its Opto, FET and VCA modes, the buses and the master its Bus mode, and
   the mastering chain its Multiband mode. **COMP** on a strip, a bus or the
-  master and **MULTIBAND COMP** on the mastering page open the plug-in's
-  own editor, which replaces Dusk Studio's old compressor panels. The strip
+  master opens the plug-in's own editor, which replaces Dusk Studio's old
+  compressor panels. The mastering page's multiband compressor keeps every
+  control on the page in a panel of its own. The strip
   faces keep the controls that fit: the threshold handle moves Opto's peak
   reduction, FET's input or VCA's threshold, and the knobs are the mode's
   own, with the plug-in's ranges, readouts and defaults. On a bus and the
@@ -118,8 +139,8 @@ canonical source.
   with each band on the marking that plays where it played, or at the end of
   its knob when no marking reaches that far.
 - **Built-in units at their plug-ins' released versions.** DuskVerb 2, Tape
-  Echo 2, Tape Machine 2 and Sunset now build from DuskVerb 2 1.0.1, Tape
-  Echo 2 1.0.9, Tape Machine 2 1.0.12 and Sunset Circuits 1.1.0. DuskVerb 2
+  Echo 2, Tape Machine 2 and Sunset now build from DuskVerb 2 1.0.2, Tape
+  Echo 2 1.0.9, Tape Machine 2 1.0.13 and Sunset Circuits 1.1.0. DuskVerb 2
   gains a **Nonlinear** engine with four presets of its own and **MIX LOCK**,
   which keeps Dry / Wet and Bus Mode where they are when a preset or **INIT**
   is recalled; its editor is smaller, and **FREEZE** is hidden on the Reverse
@@ -128,7 +149,12 @@ canonical source.
   switch for 60 or 50 Hz mains. Sunset reports the same 13 samples of latency
   at every **Oversampling** setting, where it reported none at 1x and more at
   4x than at 2x. The DuskVerb 2 and Tape Echo 2 editors show the version that
-  is built in, where they showed 0.1.0 and 1.0.1 whatever it was.
+  is built in, where they showed 0.1.0 and 1.0.1 whatever it was. Tape
+  Machine 2 uses less CPU, morphs over about 60 ms when the machine, the
+  speed or the calibration changes, loads a preset without a burst, makes
+  Gain Link the exact inverse of Input and aliases less on hot presets; its
+  latency goes from 56 to 62 samples. Five of DuskVerb 2's presets are
+  retuned.
   A MIDI binding on DuskVerb 2's **Algorithm** or on a Sunset mod-matrix
   destination covers the plug-in's longer list of choices, so a controller
   value that picked one engine or destination in 0.16 can pick another:
@@ -196,6 +222,35 @@ canonical source.
 
 ### Fixed
 
+- **A damaged session from an earlier version no longer crashes on opening.**
+  A `session.json` saved by an earlier version, holding a value nested
+  hundreds of thousands of levels deep inside a track, as only a damaged or
+  hand-made file does, could run Dusk Studio out of stack while the session
+  was converted. The track, bus or aux lane holding it now opens at its
+  defaults, as it already did in a session saved in the current format.
+- **Auto makeup gives back heavy compression.** A compressor's **AUTO
+  MAKEUP** now makes up as much as 24 dB. It stopped at 12 dB, so a track,
+  bus or master compressed by more than that came out quieter than it went
+  in, by everything past 12 dB. It also reaches its level within a second
+  of playback starting, where it took 10 seconds and more under heavy
+  compression, so a bounce no longer fades in.
+- **A drop-down on the MASTERING page leaves every module up.** The loudness
+  target list took the limiter and Phase off the screen while it was open,
+  and in a compact window the module picker's list took the shown module off,
+  though each list covered only a sliver of them. Both lists now open above
+  their picker, or over it, where a list below it would lie over a module.
+  Over its picker a list puts the current choice on the picker, so a second
+  click there keeps that choice. The rule holds for every drop-down in the
+  app whose list would lie over a native panel or an open plug-in editor:
+  an aux lane panel, the MIXING page's mini timeline or a plug-in editor.
+  A list left open in the multiband, limiter or Phase panel now closes at a
+  click anywhere else on the page. It used to keep the keyboard, so
+  **Space** did nothing and Down and Return could pick an entry out of
+  sight.
+- **Editors left over another stage.** **Cmd/Ctrl+1** to **4** with the
+  master's tape editor, a channel strip's DuskVerb 2, Tape Echo 2 or Sunset
+  editor, or the piano roll open changed the stage and left the editor and
+  its dim over the new page until **Escape**. Changing stage now closes them.
 - **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
   SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
   stayed silent until the audio device restarted, for example after a buffer
@@ -210,6 +265,16 @@ canonical source.
   window and each loop pass hold what was played in them. PRINT is read when
   Record is pressed, a take keeps the delay it started with, and at Stop a
   printed take ends that delay before a dry one.
+- **A bus compressor jumped when its bus was heard again.** Unmuting a bus, or
+  un-soloing another, while playing started the bus compressor again from
+  rest, so the bus came back for a moment as loud as the compressor's gain
+  reduction: 15 dB over its settled level on a bus compressed by 16 dB. The
+  compressor now keeps the gain reduction it had while the bus was out.
+- **A bus-routed track came back around its bus.** For the 20 ms a track
+  routed to a bus takes to fade back in after a mute or a solo, part of it
+  went straight to the master instead of through the bus, uncompressed by the
+  bus compressor: 7 dB over the settled level on a bus compressed by 16 dB. It
+  now fades back in through its bus alone.
 - **Mastering multiband compressor on the audio thread** (#1045). It
   allocated memory in every block it processed, which the audio thread must
   never do. Multi-Comp 2, which replaces it, does not.

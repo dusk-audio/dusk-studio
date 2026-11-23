@@ -604,7 +604,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool pressKey (const std::string& description, char text) override
     {
-        if (owner.masteringView != nullptr && owner.masteringView->phaseKeyForScenario (description))
+        if (owner.masteringView != nullptr && owner.masteringView->panelKeyForScenario (description))
             return true;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
@@ -924,7 +924,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool holdPeerKey (const std::string& description, char text) override
     {
-        if (owner.masteringView != nullptr && owner.masteringView->phaseKeyForScenario (description))
+        if (owner.masteringView != nullptr && owner.masteringView->panelKeyForScenario (description))
             return true;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
@@ -2030,6 +2030,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto bounds = peer->getBounds();
         return { bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), peer->isFullScreen() ? 1 : 0 };
     }
+    std::vector<int> pointerInMainWindow() const override
+    {
+        const auto at = owner.getMouseXYRelative();
+        return { at.x, at.y };
+    }
     void restoreMainWindowBounds (const std::vector<int>& saved) override
     {
         auto* window = owner.getTopLevelComponent();
@@ -2322,7 +2327,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             if (compEditorOpen (StripKind::Channel, t)) return true;
         for (int b = 0; b < Session::kNumBuses; ++b)
             if (compEditorOpen (StripKind::Bus, b)) return true;
-        return compEditorOpen (StripKind::Master, 0) || masteringCompEditorOpen();
+        return compEditorOpen (StripKind::Master, 0);
     }
     std::string stripCompLabel (int track) const override
     {
@@ -2370,6 +2375,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (! anyCompEditorOpen()) return false;
         const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
         return clickAt (corner.x, corner.y, 1);
+    }
+    bool windowDimmed() const override
+    {
+        const auto dimmed = [] (const auto& parent)
+        {
+            for (const auto* child : parent.getChildren())
+                if (dynamic_cast<const DimOverlay*> (child) != nullptr && child->isVisible())
+                    return true;
+            return false;
+        };
+        const auto* top = owner.getTopLevelComponent();
+        return (top != nullptr && dimmed (*top)) || dimmed (owner);
     }
     bool clickInsert (int track, bool right) override
     {
@@ -2684,15 +2701,6 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (view, view->targetPointForScenario()).toFloat();
         return clickAt (point.x, point.y, 1);
     }
-    bool clickMasteringCompPreset() override
-    {
-        auto* view = owner.masteringView.get();
-        if (view == nullptr || ! view->isShowing() || ! view->compPresetShownForScenario())
-            return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (
-            view, view->compPresetPointForScenario()).toFloat();
-        return clickAt (point.x, point.y, 1);
-    }
     bool masteringPhasePointer (const std::string& control, float position, bool pressed, int modifiers) override
     {
         return owner.masteringView != nullptr
@@ -2741,87 +2749,72 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.masteringView != nullptr ? owner.masteringView->nativePanelsOpenForScenario() : 0;
     }
-    int masteringCompPanelUnpaintedPixels() override
+    int masteringPanelsExpected() const override
     {
-        return owner.masteringView != nullptr ? owner.masteringView->unpaintedCompPanelPixelsForScenario() : -1;
+        return MasteringView::nativePanelsExpectedForScenario();
     }
-    bool clickMasteringCompHeader (bool label) override
+    int masteringSideBySideWidth() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->sideBySideWindowWidthForScenario() : 0;
+    }
+    bool masteringPanelPointer (const std::string& panel, const std::string& control, float position, bool pressed,
+                                int modifiers) override
+    {
+        return owner.masteringView != nullptr
+            && owner.masteringView->panelPointerForScenario (panel, control, position, pressed, modifiers);
+    }
+    bool masteringPanelCapturesKeyboard (const std::string& panel) const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->panelCapturesKeyboardForScenario (panel);
+    }
+    std::vector<int> masteringPickerPoint (bool target) const override
     {
         auto* view = owner.masteringView.get();
-        auto* header = view != nullptr && view->isShowing() ? view->compHeaderForScenario() : nullptr;
-        if (header == nullptr || ! header->isShowing()) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (
-            header, header->getLocalBounds().getRelativePoint (label ? 0.6f : 0.1f, 0.5f)).toFloat();
-        return clickAt (point.x, point.y, 1);
+        if (view == nullptr || ! view->isShowing() || (! target && ! view->compactModuleShownForScenario()))
+            return {};
+        const auto point = owner.getLocalPoint (view, target ? view->targetPointForScenario()
+                                                             : view->compactModulePointForScenario());
+        return { point.x, point.y };
     }
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    imgui::CompEditorHost* masteringCompEditor() const
+    std::vector<int> masteringPanelArea (const std::string& panel) const override
     {
-        return owner.masteringView != nullptr ? owner.masteringView->compEditorForScenario() : nullptr;
+        return owner.masteringView != nullptr ? owner.masteringView->panelAreaForScenario (panel, owner)
+                                              : std::vector<int> {};
     }
-   #endif
-    bool masteringCompEditorOpen() const override
+    int masteringCompPreset() const override
     {
-        return owner.masteringView != nullptr && owner.masteringView->isCompEditorOpen();
+        return owner.masteringView != nullptr ? owner.masteringView->compPresetForScenario() : -1;
     }
-    bool masteringCompEditorDrawn() const override
+    void restoreMasteringCompPreset (int choice) override
     {
-       #if DUSKSTUDIO_HAS_NATIVE_UI
-        auto* editor = masteringCompEditor();
-        return editor != nullptr && editor->isOpen() && editor->hasRenderedFrame();
-       #else
-        return false;
-       #endif
+        if (owner.masteringView != nullptr) owner.masteringView->restoreCompPresetForScenario (choice);
     }
-    bool masteringCompEditorEdit (const std::string& paramSymbol, float value) override
+    bool doubleClickMasteringComp (const std::string& control) override
     {
-       #if DUSKSTUDIO_HAS_NATIVE_UI
-        auto* editor = masteringCompEditor();
-        return editor != nullptr && editor->isOpen() && editor->editForScenario (paramSymbol, value);
-       #else
-        (void) paramSymbol; (void) value;
-        return false;
-       #endif
+        return owner.masteringView != nullptr && owner.masteringView->compDoubleClickForScenario (control);
     }
-    std::optional<float> masteringCompEditorShows (const std::string& paramSymbol) const override
+    std::optional<std::array<float, 2>> masteringControl (const std::string& panel, const std::string& control,
+                                                          float position) const override
     {
-       #if DUSKSTUDIO_HAS_NATIVE_UI
-        auto* editor = masteringCompEditor();
-        return editor != nullptr && editor->isOpen() ? editor->shownValueForScenario (paramSymbol) : std::nullopt;
-       #else
-        (void) paramSymbol;
-        return std::nullopt;
-       #endif
+        return owner.masteringView != nullptr ? owner.masteringView->controlForScenario (panel, control, position)
+                                              : std::nullopt;
     }
-    const MultiCompStage* masteringCompEditorStage() const override
+    bool typeInMasteringComp (const std::string& text) override
     {
-       #if DUSKSTUDIO_HAS_NATIVE_UI
-        auto* editor = masteringCompEditor();
-        return editor != nullptr ? editor->shownStage() : nullptr;
-       #else
-        return nullptr;
-       #endif
+        return owner.masteringView != nullptr && owner.masteringView->compTypeForScenario (text);
     }
-    std::vector<int> masteringCompEditorBounds() const override
+    bool masteringCompCapturesKeyboard() const override
     {
-       #if DUSKSTUDIO_HAS_NATIVE_UI
-        return owner.masteringView != nullptr ? owner.masteringView->compEditorBoundsForScenario() : std::vector<int> {};
-       #else
-        return {};
-       #endif
-    }
-    void closeMasteringCompEditor() override
-    {
-        if (owner.masteringView != nullptr) owner.masteringView->closeCompEditorPopup();
+        return owner.masteringView != nullptr && owner.masteringView->compCapturesKeyboardForScenario();
     }
     // The window of an open compressor editor, or 0.
-    std::uintptr_t compEditorWindow (StripKind kind, int index, bool mastering) const
+    std::uintptr_t compEditorWindow (StripKind kind, int index) const
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
-        auto* editor = mastering ? masteringCompEditor() : compEditorHost (kind, index);
+        auto* editor = compEditorHost (kind, index);
         return editor != nullptr && editor->isOpen() ? editor->nativeWindow() : 0;
        #else
-        (void) kind; (void) index; (void) mastering;
+        (void) kind; (void) index;
         return 0;
        #endif
     }
@@ -2855,11 +2848,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     FacePixels compEditorPixels (StripKind kind, int index, const std::filesystem::path& ppm) override
     {
-        return readFace (compEditorWindow (kind, index, false), ppm);
-    }
-    FacePixels masteringCompEditorPixels (const std::filesystem::path& ppm) override
-    {
-        return readFace (compEditorWindow (StripKind::Master, 0, true), ppm);
+        return readFace (compEditorWindow (kind, index), ppm);
     }
     bool facePointer (std::uintptr_t window, float x, float y, int button)
     {
@@ -2877,11 +2866,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool compEditorPointer (StripKind kind, int index, float x, float y, int button) override
     {
-        return facePointer (compEditorWindow (kind, index, false), x, y, button);
-    }
-    bool masteringCompEditorPointer (float x, float y, int button) override
-    {
-        return facePointer (compEditorWindow (StripKind::Master, 0, true), x, y, button);
+        return facePointer (compEditorWindow (kind, index), x, y, button);
     }
     std::string masteringTargetText() const override
     {
@@ -3300,6 +3285,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int consoleFocusedStrip() const override
     {
         return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
+    }
+    int consoleBank() const override
+    {
+        return owner.consoleView != nullptr ? owner.consoleView->getBank() : -1;
     }
     void restoreTrackFocus (int tapeTrack, int consoleStrip) override
     {
@@ -3931,7 +3920,6 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         for (int b = 0; b < Session::kNumBuses; ++b)
             if (compEditorOpen (StripKind::Bus, b)) lines.push_back ("bus " + std::to_string (b + 1) + " compressor editor open");
         if (compEditorOpen (StripKind::Master, 0)) lines.push_back ("master compressor editor open");
-        if (masteringCompEditorOpen()) lines.push_back ("mastering compressor editor open");
         if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
         if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
         if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
@@ -3998,7 +3986,6 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeTuner();
         closeMasterTape();
         closeCompEditor (StripKind::Master, 0);
-        closeMasteringCompEditor();
         for (int b = 0; b < Session::kNumBuses; ++b)
             closeCompEditor (StripKind::Bus, b);
         for (int track = 0; track < Session::kNumTracks; ++track)

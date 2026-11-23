@@ -470,9 +470,18 @@ void ChannelStrip::updateGainTargets() noexcept
     panGainL.setTargetValue (std::cos (angle));
     panGainR.setTargetValue (std::sin (angle));
 
+    // The master gets what the buses leave (1 - the largest bus gain), so a
+    // route ramping in under the fader's fade-in would put part of a bus-routed
+    // strip on the master around its bus. With the fader at zero nothing the
+    // strip sends is heard: it takes its route at once, after a prepare or a
+    // route changed while it was out.
+    const bool silent = faderGain.getCurrentValue() <= 0.0f;
     for (int i = 0; i < kNumBuses; ++i)
-        busGain[(size_t) i].setTargetValue (
-            paramsRef->busAssign[(size_t) i].load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+    {
+        const float route = paramsRef->busAssign[(size_t) i].load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+        if (silent) busGain[(size_t) i].setCurrentAndTargetValue (route);
+        else        busGain[(size_t) i].setTargetValue (route);
+    }
 
     // Aux sends - per-knob linear gain. Reads liveAuxSendDb (engine routes
     // manual or lane through it) - same pattern as liveFaderDb / livePan.
@@ -495,11 +504,6 @@ void ChannelStrip::parkGainSmoothers (int numSamples) noexcept
 {
     faderGain.setTargetValue (0.0f);
     faderGain.skip (numSamples);
-    for (auto& s : busGain)
-    {
-        s.setTargetValue (0.0f);
-        s.skip (numSamples);
-    }
     for (auto& s : auxSendGain)
     {
         s.setTargetValue (0.0f);
@@ -1051,8 +1055,6 @@ void ChannelStrip::drainPdcForSkip() noexcept
     }
     // A closed gate is a silent gap even when the current delay is zero.
     pdcSilentRun = std::max (pdcSilentRun, std::int64_t { 1 });
-    // The compressor stage's delay holds audio from before the skip too.
-    compAlign.discard();
 }
 
 // The MIDI dispatch below hands the block's MIDI to whichever slot is loaded,
@@ -1263,7 +1265,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // whole bail, so the held PDC / oversampler tail is dropped rather than
         // replayed on resume, and the drained latch lets a latency retarget
         // requested while stopped land click-free on the next full pass.
+        // With no input there is no programme going on for the compressor to
+        // keep up with (a stopped transport, a locate), so it starts again
+        // from rest.
         drainPdcForSkip();
+        compAlign.discard();
         return;
     }
 
@@ -1307,8 +1313,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // and FIR history once and mark them drained, which also lets
         // relatchPdcIfDrained take a pending latency retarget click-free on
         // the next full pass. pdcSilentRun doubles as the once-latch - the
-        // full path zeroes it again on the first loud block.
+        // full path zeroes it again on the first loud block. The compressor
+        // keeps its gain reduction for the input that goes on playing.
         drainPdcForSkip();
+        compAlign.pause();
         return;
     }
 

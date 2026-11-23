@@ -2450,6 +2450,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
     const auto phase = s.mastering().phase.snapshot();
+    mast["phase_enabled"]      = s.mastering().phase.enabled.load();
     mast["phase_bands"]        = phase.bands;
     mast["phase_q"]            = phase.q;
     mast["phase_averaging_ms"] = phase.averagingMs;
@@ -2643,8 +2644,19 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
                       fileVersion, kFormatVersion);
         return fail (SessionLoadFailure::NewerVersion);
     }
-    if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
-        return fail (SessionLoadFailure::MigrationFailed);
+    if (fileVersion < kFormatVersion)
+    {
+        // The migrations copy parts of a slot, and a copy recurses once per
+        // nesting level. A slot past the bound loads as the default whole, so
+        // it is dropped before they run.
+        for (const auto* section : { "tracks", "buses", "aux_lanes" })
+            if (const auto slots = root.find (section); slots != root.end() && slots->is_array())
+                for (auto& slot : *slots)
+                    if (! withinSlotDepth (slot))
+                        slot = nullptr;
+        if (! migrateSession (root, fileVersion))
+            return fail (SessionLoadFailure::MigrationFailed);
+    }
 
     // First write to the Session, and past every return above it: a caller that
     // has to undo a failed load (the session directory moves before this runs)
@@ -3116,6 +3128,7 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
                                                        kMasteringDefaults.limiterMode.load()), 0, 2));
         m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
                                                   kMasteringDefaults.limiterStereoLink.load()));
+        m.phase.enabled.store (json::getBool (mast, "phase_enabled", true));
         m.phase.bands.store (std::clamp (json::getInt (mast, "phase_bands", 16),
                                         MasteringPhaseSettings::kMinBands, MasteringPhaseSettings::kMaxBands));
         storeFiniteClampedFloat (m.phase.q, mast, "phase_q", 2.0f,

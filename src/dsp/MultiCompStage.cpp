@@ -21,6 +21,7 @@ namespace
 constexpr const char* kBypassSymbol        = "daf_bypass";
 constexpr const char* kModeSymbol          = "mode";
 constexpr const char* kGainReductionSymbol = "gr_meter";
+constexpr const char* kBandGainReductionSymbols[kCompBandCount] = { "gr_low", "gr_lowmid", "gr_highmid", "gr_high" };
 
 // Multi-Comp 2's modes (its duskaudio::MultiCompMode): Opto, FET Black and VCA
 // are the strip's three, Bus is the console bus compressor, 7 the multiband.
@@ -131,6 +132,7 @@ struct MultiCompStage::Impl
     std::vector<int> idByIndex;
 
     int modeIndex = -1, bypassIndex = -1, grIndex = -1;
+    std::array<int, kCompBandCount> bandGrIndex { -1, -1, -1, -1 };
     float pushedMode = kUnsent, pushedBypass = kUnsent;
     // The plug-in's own bypass as the last push asked for it.
     float wantBypass = 0.0f;
@@ -227,6 +229,9 @@ MultiCompStage::MultiCompStage (CompStage kind) : impl (std::make_unique<Impl> (
     impl->modeIndex   = resolve (kModeSymbol);
     impl->bypassIndex = resolve (kBypassSymbol);
     impl->grIndex     = resolve (kGainReductionSymbol);
+    if (kind == CompStage::Multiband)
+        for (int band = 0; band < kCompBandCount; ++band)
+            impl->bandGrIndex[(std::size_t) band] = resolve (kBandGainReductionSymbols[band]);
 
     // A symbol the plug-in lacks would leave its session value unplayed.
     assert (impl->unresolved == nullptr);
@@ -327,6 +332,13 @@ float MultiCompStage::gainReductionDb() const noexcept
 {
     if (impl->grIndex < 0) return 0.0f;
     return impl->plugin->getParameterValue ((std::uint32_t) impl->grIndex);
+}
+
+float MultiCompStage::bandGainReductionDb (int band) const noexcept
+{
+    if (band < 0 || band >= kCompBandCount) return 0.0f;
+    const int index = impl->bandGrIndex[(std::size_t) band];
+    return index < 0 ? 0.0f : impl->plugin->getParameterValue ((std::uint32_t) index);
 }
 
 builtin::DafPlugin& MultiCompStage::plugin() noexcept

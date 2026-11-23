@@ -299,6 +299,7 @@ TEST_CASE ("Appendix A: mastering defaults and load ranges", "[session][appendix
         { "/mastering/eq_enabled", &p.eqEnabled },
         { "/mastering/comp/enabled", &p.compEnabled },
         { "/mastering/limiter_enabled", &p.limiterEnabled, true },
+        { "/mastering/phase_enabled", &p.phase.enabled, true },
     });
 
     for (const auto& entry : std::vector<std::pair<Json, int>> {

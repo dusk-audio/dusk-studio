@@ -1,6 +1,8 @@
 #include "PanelControls.h"
 #include "PanelTextItems.h"
 
+#include <DearImGui/imgui_internal.h>
+
 #include <algorithm>
 
 namespace duskstudio::imgui
@@ -132,8 +134,11 @@ void formRule (const dw::Context& ctx, ImVec2 at, float width)
 }
 
 bool formCombo (dw::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
-                const char* const* items, int count, int& selected, bool enabled)
+                const char* const* items, int count, int& selected, bool enabled,
+                std::vector<ImVec4>* openItems, bool repick)
 {
+    if (openItems != nullptr)
+        openItems->clear();
     ++ctx.widgets;
     const ScopedRowHeight rowHeight (ctx, br.y - tl.y);
     ImGui::BeginDisabled (! enabled);
@@ -148,10 +153,15 @@ bool formCombo (dw::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
         {
             const bool isSelected = i == selected;
             ImGui::PushID (i);
-            if (textSelectable ("##choice", items[i], isSelected) && i != selected)
+            if (textSelectable ("##choice", items[i], isSelected) && (i != selected || repick))
             {
                 selected = i;
                 picked = true;
+            }
+            if (openItems != nullptr)
+            {
+                const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                openItems->push_back ({ min.x, min.y, max.x, max.y });
             }
             if (isSelected)
                 ImGui::SetItemDefaultFocus();
@@ -159,9 +169,39 @@ bool formCombo (dw::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
         }
         ImGui::EndCombo();
     }
+    // The pick closed the list, though this frame still drew its entries.
+    if (picked && openItems != nullptr)
+        openItems->clear();
     comboPreviewText (preview);
     ImGui::EndDisabled();
     return picked;
+}
+
+std::optional<std::size_t> formListEntry (const std::string& name, std::size_t count)
+{
+    static constexpr const char* kPrefix = "list:";
+    static constexpr std::size_t kPrefixLength = 5;
+    if (name.size() <= kPrefixLength || name.compare (0, kPrefixLength, kPrefix) != 0)
+        return std::nullopt;
+    std::size_t entry = 0;
+    for (std::size_t i = kPrefixLength; i < name.size(); ++i)
+    {
+        if (name[i] < '0' || name[i] > '9')
+            return std::nullopt;
+        entry = entry * 10 + static_cast<std::size_t> (name[i] - '0');
+        if (entry >= count)
+            return std::nullopt;
+    }
+    return entry;
+}
+
+void formCloseLists()
+{
+    // A button held in the panel is the user working in it, whatever focus change
+    // a window manager made of the press.
+    if (ImGui::IsAnyMouseDown())
+        return;
+    ImGui::ClosePopupsOverWindow (nullptr, false);
 }
 
 void ComboModel::clear()

@@ -202,6 +202,36 @@ TEST_CASE ("MultiCompStage: an engaged stage reduces a hot sine and reports it",
     }
 }
 
+TEST_CASE ("MultiCompStage: a Multiband stage reports each band's reduction, and only that band's", "[compressor][multicomp]")
+{
+    MultiCompStage stage (CompStage::Multiband);
+    stage.prepare (kSr, kBlock, 2);
+    CompParams comp;
+    // A low tone over a threshold only the low band has.
+    for (int band = 0; band < duskstudio::kCompBandCount; ++band)
+        comp.set (duskstudio::compBandParam (band, duskstudio::CompBandField::Threshold), band == 0 ? -40.0f : 0.0f);
+    stage.pushParameters (comp, true, 0);
+    for (int band = 0; band < duskstudio::kCompBandCount; ++band)
+        CHECK_THAT (stage.bandGainReductionDb (band), WithinAbs (0.0f, 0.0f));
+
+    const int total = (int) kSr;
+    auto L = sine (60.0, 0.5f, total), R = L;
+    run (stage, L, &R);
+    CHECK (stage.bandGainReductionDb (0) < -3.0f);
+    for (int band = 1; band < duskstudio::kCompBandCount; ++band)
+    {
+        CAPTURE (band);
+        CHECK (stage.bandGainReductionDb (band) > -0.5f);
+        CHECK (stage.bandGainReductionDb (band) <= 0.0f);
+    }
+    CHECK_THAT (stage.bandGainReductionDb (-1), WithinAbs (0.0f, 0.0f));
+    CHECK_THAT (stage.bandGainReductionDb (duskstudio::kCompBandCount), WithinAbs (0.0f, 0.0f));
+
+    MultiCompStage bus (CompStage::Bus);
+    for (int band = 0; band < duskstudio::kCompBandCount; ++band)
+        CHECK_THAT (bus.bandGainReductionDb (band), WithinAbs (0.0f, 0.0f));
+}
+
 TEST_CASE ("MultiCompStage: a mono layout reads one channel and matches a stereo run's left", "[compressor][multicomp]")
 {
     for (int mode = 0; mode < 3; ++mode)

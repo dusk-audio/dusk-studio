@@ -578,7 +578,7 @@ Only one stage is visible at a time. RECORDING, MIXING and AUX share the mix eng
 
 Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has the plain number keys **1 through 8**, so a modified digit changes stage and a plain digit changes the visible page of strips. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
-Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window.
+Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window. It closes an editor open over the page as well: a compressor editor, the master's tape editor, a channel strip's built-in unit editor or the piano roll, so none stays over the new page. A bank key leaves a strip's editor open, even when it banks that strip out of view.
 
 ## The transport bar
 
@@ -859,7 +859,7 @@ The strip shows the mode's controls. The triangle handle on the right edge of th
 
 Each of these is one of Multi-Comp 2's own controls: it travels the plug-in's whole range, reads as the plug-in prints it, and a double-click returns it to the plug-in's default. Every knob takes a vertical drag; hold **Shift** while dragging for fine adjustment, and use the scroll wheel for small steps. Dragging the handle or moving a knob engages the compressor, and so does switching **LIMIT** on; switching it off does not. A double-click on the handle returns only that control to its default and leaves the status light alone. Right-click the handle to MIDI Learn it.
 
-**The editor.** **COMP** opens Multi-Comp 2's own editor over a dimmed window, scaled down if the window is too small to hold it. The tabs along its top, **OPTO**, **FET BLACK** and **VCA**, pick the mode as the COMP menu does. **AUTO MAKEUP** replaces the face's own make-up or output control with an automatic one, and **BYPASS** is the same switch as the status light. The editor opens on the compressor's settings as they stand, **BYPASS** included, whether or not the track has played since they changed. The face holds the mode's controls the strip has no room for as well, among them **MIX**, the sidechain filter (**SC HP** on Opto, **PULL/SC** on VCA) and the meter switches. A tab leaves the status light alone; any other control engages the compressor, as on the strip. Click outside the editor or press **Escape** to close it. The plug-in's settings drawer is not offered: stereo link, drive, the sidechain EQ and listen, true peak, analog noise and the FET's threshold, transient and curve stay at the plug-in's defaults, and a FET threshold carried over from an older session keeps playing with no control of its own.
+**The editor.** **COMP** opens Multi-Comp 2's own editor over a dimmed window, scaled down if the window is too small to hold it. The tabs along its top, **OPTO**, **FET BLACK** and **VCA**, pick the mode as the COMP menu does. **AUTO MAKEUP** replaces the face's own make-up or output control with an automatic one: it matches the output's level to the input's, measured over about two seconds, by as much as 24 dB either way, and reaches that level within about a second of playback starting. **BYPASS** is the same switch as the status light. The editor opens on the compressor's settings as they stand, **BYPASS** included, whether or not the track has played since they changed. The face holds the mode's controls the strip has no room for as well, among them **MIX**, the sidechain filter (**SC HP** on Opto, **PULL/SC** on VCA) and the meter switches. A tab leaves the status light alone; any other control engages the compressor, as on the strip. Click outside the editor or press **Escape** to close it. The plug-in's settings drawer is not offered: stereo link, drive, the sidechain EQ and listen, true peak, analog noise and the FET's threshold, transient and curve stay at the plug-in's defaults, and a FET threshold carried over from an older session keeps playing with no control of its own.
 
 **Oversampling and latency.** The compressor always runs at Multi-Comp 2's own 2× oversampling, whatever **Effect Oversampling** is set to: that is the setting its sound was matched to the plug-in at. A bypassed compressor is not run at all. While any channel's compressor is engaged, every channel carries the compressor's delay, about 73 samples at 44.1 and 48 kHz and 79 at 96 kHz, so the tracks stay lined up whichever of them are compressed. The delay stays until the transport is stopped with every channel's compressor bypassed, so switching one in or out while playing never moves the timing; the first compressor engaged fades in once the delay is in place. Delay compensation covers it, bounces and freezes trim it out, and a take recorded with **PRINT** on is placed without it (see *Print mode* under Recording).
 
@@ -931,6 +931,8 @@ Below the fader:
 - **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode.
 - **Ø** (phase invert). Lights yellow when on. Inverts the polarity of the channel's audio before the insert.
 
+A track that is heard again after a mute or a solo while playing fades back in over 20 ms, through its bus alone when it is routed to one, and its compressor keeps the gain reduction it had while the track was out, so the track comes back at the level the compressor was holding it to.
+
 ## Bus assigns
 
 Each channel can be routed to any combination of the four mix buses. Right-click the fader area for a bus-assign menu. Bus routing is **exclusive with the master send**: as soon as a channel is assigned to one or more buses, its direct send to master is removed and the signal reaches master only via the bus (which sums into master through its own fader and processing). With every bus deassigned, the channel sends directly to master as normal. This prevents the same signal arriving at master twice (once direct, once via the bus) and the +3 dB doubling that would otherwise occur.
@@ -991,7 +993,7 @@ A 2:1 ratio with a 10ms attack and Auto release is a classic drum-bus setting. A
 
 ## Pan, fader, mute, solo
 
-Identical in function to the channel strip versions. Bus solos follow the same additive solo-in-place rule.
+Identical in function to the channel strip versions. Bus solos follow the same additive solo-in-place rule. A bus compressor likewise keeps its gain reduction while its bus is muted or soloed out.
 
 ## Meters
 
@@ -1018,10 +1020,10 @@ master input → program EQ → master bus compressor → tape saturation → ma
 The master tape is Dusk Audio's Tape Machine 2 plug-in, compiled into Dusk Studio and running the plug-in's own DSP, so a setting sounds the same here as in the plug-in.
 
 - **Bypass / engage**: click the left status light to toggle the tape stage in or out of the signal path. The editor's **BYPASS** switch is the same switch.
-- **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**. Tape Machine 2's own editor opens over a dimmed window, the same editor its VST3, CLAP and AU builds show, scaled down if the window is too small to hold it. Click outside it, click **TAPE** again or press **Escape** to dismiss it. It holds the machine (Swiss or American), tape speed and formulation, signal path, EQ standard and calibration, input drive, bias, high/low-pass filters, wow, flutter, noise and output level, **Auto cal** (calibrates bias for the selected tape type and speed; disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness; overrides Output). The American deck adds its head width and its crosstalk, wow-and-flutter and transformer switches, and the **ADVANCED** page holds the repro-head EQ. Touching any control engages the tape stage.
+- **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**. Tape Machine 2's own editor opens over a dimmed window, the same editor its VST3, CLAP and AU builds show, scaled down if the window is too small to hold it. Click outside it, click **TAPE** again or press **Escape** to dismiss it. It holds the machine (Swiss or American), tape speed and formulation, signal path, EQ standard and calibration, input drive, bias, high/low-pass filters, wow, flutter, noise and output level, **Auto cal**, the editor's **AUTO BIAS** (calibrates bias for the selected tape type and speed; disables the Bias knob), and **Auto comp**, its **GAIN LINK** (sets Output to the exact opposite of Input, so the gain added going in is taken off coming out; what the tape itself does to the level stays, so a loud source driven hard comes out lower as the tape compresses; overrides Output). The American deck adds its head width and its crosstalk, wow-and-flutter and transformer switches, and the **ADVANCED** page holds the repro-head EQ. Touching any control engages the tape stage.
 - **Presets**: the editor's preset bar holds the plug-in's factory presets and any you save yourself. Every setting, a preset's included, is saved with the session.
 
-- **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 56 samples of latency, which delay compensation covers.
+- **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 62 samples of latency, which delay compensation covers.
 
 ![The tape-machine editor.](docs/images/fx-03-tape.png)
 
@@ -1108,7 +1110,7 @@ Lists every channel that is sending to this aux, with its send level and a small
 
 # The mastering stage
 
-![Mastering chain with EQ, comp, and limiter engaged.](docs/images/mm-02-mastering-chain.png)
+![The mastering chain: the EQ, the multiband compressor, the limiter and Phase, every control on the page.](docs/images/mm-02-mastering-chain.png)
 
 The **MASTERING** stage is a separate signal path. It does not play your tracks; it plays a single stereo audio file through a dedicated mastering chain. Switching into or out of MASTERING force-stops the transport, because the mix engine and the mastering engine cannot run simultaneously.
 
@@ -1129,9 +1131,11 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 
 ## Mastering chain
 
-The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
+The digital EQ, the multiband compressor, the limiter and the **PHASE** panel each switch on and off from the status light in their header. **PHASE** measures the stereo output after the limiter. Every control of every module is on the page; none of them waits behind a click. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
 
-Wide windows give the EQ the most width, with additional space for the limiter meters and Phase frequency display; the compressor's slot is narrower, because its controls open in an editor of their own. The panels share header height and spacing.
+An open dropdown never takes a module off the page. The lists of the multiband presets, the limiter's mode and the Phase display open inside their own panel. A click anywhere else on the page closes such a list without picking from it, and the keys go back to the transport, so **Space** plays. The loudness target list and the compact picker's list open above their picker, or over it, when a list below it would lie over a module. A list that opens over its picker puts the current choice on the picker, so a second click there keeps that choice and closes the list. A click in a module's panel closes either list too, without picking from it.
+
+Wide windows give the EQ and the compressor's four band columns most of the width, and share the rest between the limiter meters and the Phase frequency display. The panels share header height and spacing.
 
 ### Digital 5-band EQ
 
@@ -1151,11 +1155,22 @@ the **FFT** button in the panel's top-left.
 
 Multi-Comp 2's Multiband mode: four frequency bands, Low, Low-Mid, High-Mid and High, split by three crossovers, each band with its own dynamics controls. The bus compressor settings do not apply to this stage.
 
-The compressor's slot holds the **MULTIBAND COMP** header, the preset picker and an overview of the bands: the crossovers, each band's threshold and ratio (or off, with BYP or SOLO when set), and the output. Click the header's status light to engage or bypass the compressor. Click the **MULTIBAND COMP** label to open Multi-Comp 2's Multiband face over the dimmed window, at its design size, scaled down if the window is too small to hold it. The face holds every band control, the crossovers, **MIX** and **OUTPUT**, and its **BYPASS** is the header's status light. Editing the face leaves the compressor as it is: only **BYPASS** and the status light switch it. What you set stays on the face while the compressor is bypassed. Press **Escape** or click outside the face to close it; it also closes when a dialog opens over the window and when you leave the MASTERING stage. Every band setting is saved with the session.
+Every control is on the page. Click the **MULTIBAND COMP** header, its status light or its label, to engage or bypass the compressor. Nothing else switches it: the band controls, **MIX**, **OUTPUT**, **AUTO MAKEUP** and the presets leave it engaged or bypassed as it was, so you can set it up while it is out.
+
+Under the header and the preset picker is the band display, 20 Hz to 20 kHz from left to right. Each band that plays fills its stretch of the display in its colour, and its gain-reduction bar hangs from the top on a 0 to −20 dB scale. Three crossover handles, labelled with their frequency, sit along the bottom: drag one sideways to move that split. The display draws each crossover where the compressor plays it. The compressor keeps every crossover at least 1.5 times the one below, so a crossover set closer than that to the one below it plays, and is drawn, at 1.5 times that one. A band that is off has no stretch of its own: the band beside it is drawn across it, and the crossover that no longer splits anything turns dashed. A bypassed band's stretch is dimmed and reads **BYP**; a soloed band is outlined and reads **SOLO**. With the compressor bypassed the display reads **BYPASS**, and the bars and readouts rest at 0.
+
+Below the display, the four band columns sit side by side: **LOW**, **LOW-MID**, **HIGH-MID** and **HIGH**. Each shows its band's gain reduction in dB beside the name, then three switches and five dials:
+
+- **ON** switches the band on or off. At least two bands stay on: with only two left, their **ON** switches are locked. Switching a band off also clears its solo.
+- **S** solos the band. It is unavailable on a band that does not play.
+- **BYP** bypasses the band, which then passes unprocessed.
+- **THRESH**, **RATIO**, **ATTACK**, **RELEASE** and **MAKEUP** set its dynamics.
+
+Along the bottom are **MIX**, the blend of the compressed and the dry signal, **OUTPUT**, and **AUTO MAKEUP**, which matches the output's level to the input's, measured over about two seconds, by as much as 24 dB either way, and reaches that level within about a second of playback starting. Drag or scroll a dial. Double-click a dial or a crossover handle to put it back to its default, and Cmd-click it on macOS (Ctrl-click elsewhere) to type a value. Every band setting is saved with the session.
 
 The compressor runs at Multi-Comp 2's own 2×. Its delay is part of the chain's latency whether it is in or out, and while it is out the plug-in does not run.
 
-**Presets** (the **PRESET** dropdown under the header): nine genre starting points transcribed from a hardware portastudio's multiband compression chart: Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. The chart has three bands. Picking a preset writes its Low, Mid and High bands, with their threshold, ratio, attack, release and makeup, into Low, Low-Mid and High, sets the crossovers from the chart's two splits, switches High-Mid off and turns **AUTO MAKEUP** off. **MIX** and **OUTPUT** keep their values. It is a one-shot apply: the picked name stays showing when you change a band afterwards.
+**Presets** (the **PRESET** dropdown under the header, which reads **Select preset...** until you pick one): nine genre starting points transcribed from a hardware portastudio's multiband compression chart: Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. The chart has three bands. Picking a preset writes its Low, Mid and High bands, with their threshold, ratio, attack, release and makeup, into Low, Low-Mid and High, sets the crossovers from the chart's two splits, switches High-Mid off and turns **AUTO MAKEUP** off. **MIX** and **OUTPUT** keep their values. The list opens inside the compressor's panel and shows every preset at once, and the other modules stay drawn while it is open. The panel shows the new settings at once. It is a one-shot apply: the picked name stays showing when you change a band afterwards, picking that name again applies the preset again, and the picker reads **Select preset...** again once another session opens.
 
 ### Brickwall limiter
 
@@ -1172,7 +1187,9 @@ The lookahead adds latency (set by the Lookahead control) on the mastering outpu
 
 ### Phase module
 
-The **PHASE** panel measures the post-limiter stereo signal without changing it or adding latency. It refreshes at 30 Hz while the mastering view is visible. Its analysis settings save in the session; readings, held values, warnings, the selected display mode and the **Mono** monitor switch do not.
+The **PHASE** panel measures the post-limiter stereo signal without changing it or adding latency. It refreshes at 30 Hz while the mastering view is visible. Its on and off switch and its analysis settings save in the session; readings, held values, warnings, the selected display mode and the **Mono** monitor switch do not.
+
+Click the **PHASE** header, its status light or its label, to switch the module on or off. It is on by default. Lit, the light is green while there is a reading and amber while it waits for one. Off, nothing is analysed: the readings show **--**, the graph reads **PHASE is off**, and **Mono** is released and greyed out until **PHASE** is on again. The held minima and warnings are kept for when it comes back, and **Bands**, **Q**, **Average**, the display mode and **Reset** still work. Switched back on, it starts a fresh analysis window, and **Mono** stays off until you switch it on.
 
 - **Bands**: 4 to 64 logarithmic frequency bands from 20 Hz to 20 kHz, default **16**. Frequencies above the device's Nyquist limit are unavailable.
 - **Q**: **0.25 to 8**, default **2**. Higher values select narrower frequency regions; lower values give wider overlapping bands.
@@ -1258,9 +1275,9 @@ When you record an audio take, you choose whether to print the channel processin
 
 The channel delays what passes through it: by the compressors' 73 samples at 44.1 and 48 kHz and 79 at 96 kHz while any channel compressor is engaged, by the EQ at 2× and 4× **Effect Oversampling**, by an insert plugin's latency and by the track's delay compensation (see *Latency compensation*). A printed take is placed with that delay taken out, so it lands on the timeline where a dry take of the same input lands, to the sample. At 4× the EQ's delay is 26.5 samples, and the take is placed to the nearest sample. A punch window holds what you played inside it, and each loop pass holds what you played in that pass, up to the wrap.
 
-PRINT is read when you press Record: switching it during a take changes the next take, not this one.
+PRINT is read when you press Record: switching it during a take changes the next take, not this one. Pressing Record while playing pauses the audio for a moment, and the channel's compressor keeps the gain reduction it had through it, so a take printed through it starts at the level it was compressing to.
 
-A take keeps the delay the channel had when you pressed Record, so it never jumps. If the delay changes during the take, the rest of the take lands later or earlier by the difference: engaging the first channel compressor while recording, for instance, puts the rest of the take 73 samples late at 48 kHz. Engage the compressor before you press Record; its delay then stays until the transport is stopped with every channel compressor bypassed.
+A take keeps the delay the channel had when it started recording, so it never jumps. The count-in, the pre-roll and the stretch before a punch-in record nothing, so a delay that changes in them is the take's delay from its first sample. If the delay changes during the take, the rest of the take lands later or earlier by the difference: engaging the first channel compressor while recording, for instance, puts the rest of the take 73 samples late at 48 kHz. Engage the compressor before the take starts recording; its delay then stays until the transport is stopped with every channel compressor bypassed.
 
 When you press Stop, what you played in the last moments is still inside the channel, so a printed take ends that much earlier than a dry take of the same input: by the channel's delay, 73 samples or about 1.5 ms at 48 kHz with a compressor engaged.
 
@@ -1959,13 +1976,13 @@ Dusk Audio's Tape Machine 2 plug-in, the same one the master tape runs, compiled
 | Low Cut / High Cut | 20 Hz to 500 Hz / 3 kHz to 20 kHz | 20 Hz / 20 kHz | Filters on the output. |
 | Wow / Flutter | 0% to 100% | 7% / 3% | Transport instability. |
 | Noise | 0% to 100% | 0% | Tape hiss. |
-| Auto Cal / Auto Comp | Off / On | On | Level compensation, so changing speed or calibration does not change loudness. |
+| Auto Cal / Auto Comp | Off / On | On | The editor's **AUTO BIAS** and **GAIN LINK**. Auto Cal sets the bias for the tape and speed itself and ignores the Bias knob. Auto Comp sets Output to the exact opposite of Input and ignores the Output knob: the gain added going in comes off coming out, and what the tape does to the level stays, so a loud source driven hard comes out a few dB lower. |
 | Head Width | 1/4″ / 1/2″ / 1″ | 1/2″ | The American deck's head stack. Ignored on the Swiss deck. |
 | Crosstalk / Wow & Flutter / Transformer | Off / On | On | The American deck's front-panel switches. Ignored on the Swiss deck. |
 | Repro EQ | −12 dB to +12 dB | 0 dB | The **ADVANCED** page's repro-head LF, LMF, HMF and HF bands. |
 | Bypass | Off / On | Off | The plug-in's own bypass. |
 
-The editor's preset bar holds the plug-in's factory presets and any you save yourself. The unit reports **56 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Tape unit load into Tape Machine 2 with their settings.
+The editor's preset bar holds the plug-in's factory presets and any you save yourself. The unit reports **62 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Tape unit load into Tape Machine 2 with their settings.
 
 ![The Tape Machine 2 unit's editor.](docs/images/bi-04-tape.png)
 
@@ -2358,7 +2375,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 ## Save commands
 
-- **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. The audio pauses for a moment while Dusk Studio reads each plug-in's settings, then carries on where it was: playback keeps rolling, and the loudness readings on the **MASTERING** stage are left as they were. **Save As…** does the same. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
+- **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file. The audio pauses for a moment while Dusk Studio reads each plug-in's settings, then carries on where it was: playback keeps rolling, every compressor keeps the gain reduction it had, and the loudness readings on the **MASTERING** stage are left as they were. **Save As…** does the same. A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, has no `session.json` of its own yet, so Save opens the Save As browser instead, even when a session you once saved as `Untitled` already sits in that folder.
 - **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder. A mastering mix kept in the session folder is copied along, and the **MASTERING** stage carries on with the copy from where it was, still playing if it was playing. If the Save As fails partway, for example when the notes or `session.json` cannot be written, the session stays in its old folder exactly as it was, and the copies already made in the new folder are removed again.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its `session.json` file.
 - **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Kick / Snare / Drums OH / Bass / Gtr 1 / Gtr 2 / Keys / Lead Vox / BG Vox), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Ac Gtr L / Ac Gtr R / Bass / Synth / Drums). Templates set each track's name, colour and type (mono, stereo or MIDI); they don't add plugins or audio. A new session needs a folder that holds no session's files, so **New** refuses one with a `session.json`, an autosave, notes, a `midi/` or a `backups/` folder in it, or whose contents cannot be checked; nothing is changed and the status bar says "A session already exists at: [folder name]".
@@ -2666,7 +2683,7 @@ An open chord slot takes the keys instead:
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
 - While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, **Recover from autosave?**, **Session won't open**, **Session needs a newer Dusk Studio**, and the Startup dialog, which decides which session there is to work on. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows.
 - Every other dialog, menu and popup lets through only these keys: **Space**, **R**, **Home**, **.**, **L**, **P**, **[**, **]**, **Shift+[**, **Shift+]** and **F11**, then **Cmd+Z**, **Cmd+Shift+Z** and **Cmd+Y** (Undo and Redo), **Cmd+S** (Save), **Cmd+Shift+S** (Save As) and **Cmd+Q** (Quit). So do the EQ, aux and plug-in editors that open over the window, Utility's knob panel, **Audio settings** and the tuner, whether you last clicked in them or not; **U** or **Esc** closes the tuner. A browser or prompt that Save, Save As or Quit brings up closes Utility's knob panel and Audio settings first, so it is not hidden behind them, and one that comes up over a file browser, such as the quit prompt **Cmd+Q** raises there, opens above it. A dialog keeps every other key to itself, even after a click on the dimmed window behind it: **M**, **C** or **T** typed into a file browser or the import target picker does nothing behind it, and **Tab** moves only between its own controls. In a file browser **Cmd+S** and **Cmd+Shift+S** do nothing either: answer the browser first. The Import browser's **file:** box lists the files you have picked and takes no typing, the transport keys included; to go to another folder, type it into the path box at the top and press Enter.
-- A few windows keep rules of their own. The audio region editor and the notepad give theirs with them. The piano roll takes the keys it uses and leaves every other shortcut working, so **K** still opens the virtual keyboard for step entry. The virtual keyboard plays a note on every letter and digit in its layout, with or without **Cmd**, so while it is up **Cmd+Z**, **Cmd+S**, **Cmd+Q** and **Cmd+B** play notes instead of acting on the session; of the keys outside its layout it lets through only the transport keys above, and **K** or **Esc** closes it. Opened over the piano roll, on Linux and macOS it still keeps the keys in its layout, and the piano roll keeps its own editing keys while it has the focus. The SoundFont preset picker filters as you type and lets no shortcut through, Undo, Save and Quit included, until you pick a preset or close it. The editors DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open, and Multi-Comp 2's compressor editors, leave every shortcut working, but whatever opens over the window closes them first, so nothing comes up hidden behind them: the virtual keyboard (**K**), the tuner (**U**) and every dialog or menu. An editor drawn inside an aux lane steps aside while the tuner is up and comes back when it closes.
+- A few windows keep rules of their own. The audio region editor and the notepad give theirs with them. The piano roll takes the keys it uses and leaves every other shortcut working, so **K** still opens the virtual keyboard for step entry. The virtual keyboard plays a note on every letter and digit in its layout, with or without **Cmd**, so while it is up **Cmd+Z**, **Cmd+S**, **Cmd+Q** and **Cmd+B** play notes instead of acting on the session; of the keys outside its layout it lets through only the transport keys above, and **K** or **Esc** closes it. Opened over the piano roll, on Linux and macOS it still keeps the keys in its layout, and the piano roll keeps its own editing keys while it has the focus. The SoundFont preset picker filters as you type and lets no shortcut through, Undo, Save and Quit included, until you pick a preset or close it. The editors DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset open, and Multi-Comp 2's compressor editors, leave every shortcut working, but whatever opens over the window closes them first, so nothing comes up hidden behind them: the virtual keyboard (**K**), the tuner (**U**) and every dialog or menu. One open over the console also closes when the stage changes, and so does the piano roll, which leaves **Cmd+1** to **4** working. An editor drawn inside an aux lane steps aside while the tuner is up and comes back when it closes.
 
 \newpage
 
@@ -3209,6 +3226,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Limiter   | Ceiling                          | −12 to 0 dB   | −0.3 dB     |
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
 | Limiter   | Release                          | 10–1000 ms     | 100 ms      |
+| Phase     | Enabled                          | Off / On      | On          |
 | Phase     | Bands                            | 4–64          | 16          |
 | Phase     | Q                                | 0.25–8        | 2           |
 | Phase     | Average                          | 50–5000 ms    | 500 ms      |
@@ -3216,7 +3234,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Phase     | Mono monitor                     | Off / On      | Off         |
 | Phase     | Reset                            | Clear minima and warnings |             |
 
-The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled: with fewer, all four play. Auto makeup is off by default. Every multiband setting is saved with the session.
+The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low, Low-Mid, High-Mid and High. These are the ranges of the controls on the MASTERING page; the DSP keeps each crossover at least 1.5 times the preceding crossover. The page keeps at least two bands enabled by locking the last two on; a session that holds fewer plays the bands it has on, made up to two with the lowest of the others. Every multiband setting is saved with the session.
 
 | Multiband control | Range | Default |
 | ----------------- | ----- | ------- |
@@ -3225,6 +3243,7 @@ The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low,
 | Crossover 3 | 2–16 kHz | 8 kHz |
 | Each band: enable | Off / On | On |
 | Each band: solo | Off / On | Off |
+| Each band: bypass | Off / On | Off |
 | Each band: threshold | −60 to 0 dB | −20 dB |
 | Each band: ratio | 1:1–20:1 | 4:1 |
 | Each band: attack | 0.1–100 ms | 10 ms |
@@ -3232,6 +3251,7 @@ The multiband compressor is Multi-Comp 2's Multiband mode, with four bands: Low,
 | Each band: makeup | −12 to +12 dB | 0 dB |
 | Output | −24 to +24 dB | 0 dB |
 | Mix | 0–100% | 100% |
+| Auto makeup | Off / On | Off |
 
 \newpage
 

@@ -39,10 +39,13 @@ struct CompStageBlock
     std::uint32_t serial = 0;
     // Changes when the stage snaps to its target with no fade.
     std::uint32_t snap = 0;
-    // Changes when the mixer stopped running for a while (a suspension, the
-    // mastering stage): what any member held, its compressor included, is
-    // dropped.
+    // Changes when the mixer stopped running for a while (the mastering
+    // stage): what any member held, its compressor included, is dropped.
     std::uint32_t cut = 0;
+    // Changes when the mixer skipped callbacks and goes on from where it was
+    // (a suspension): members drop the audio they held, and a compressor keeps
+    // its state, as it does across a sleep.
+    std::uint32_t pause = 0;
 
     bool settledOn() const noexcept { return alignDir == 0 && alignAt == rampSamples; }
 };
@@ -62,8 +65,11 @@ public:
     // To on (when engaged and the stage has a latency) or off, with no fade.
     void snap (bool engaged) noexcept;
     void advance (bool anyEngaged, bool transportStopped, int numSamples) noexcept;
-    // For blocks the mixer did not run: members drop what they held.
+    // For a stretch the mixer did not run: members drop what they held.
     void markGap() noexcept { ++cuts; current.cut = cuts; }
+    // For callbacks the mixer skipped: members drop the audio they held and
+    // their compressors carry on.
+    void markPause() noexcept { ++pauses; current.pause = pauses; }
 
     const CompStageBlock& block() const noexcept { return current; }
     // The latency the stage holds once its fades settle. Audio thread.
@@ -89,6 +95,7 @@ private:
     std::uint32_t serial = 0;
     std::uint32_t snaps = 0;
     std::uint32_t cuts = 0;
+    std::uint32_t pauses = 0;
     CompStageBlock current;
     std::atomic<int> reported { 0 };
 };
@@ -99,7 +106,8 @@ private:
 // delay of its input), and crossfades between the two, time-aligned, when the
 // compressor is switched. Nothing runs while the stage is off.
 //
-// prepare allocates; process and discard are audio-thread and lock-free.
+// prepare allocates; process, discard and pause are audio-thread and
+// lock-free.
 class CompStageAlign
 {
 public:
@@ -112,9 +120,15 @@ public:
     void process (float* L, float* R, int numSamples, const CompStageBlock& stage,
                   bool engaged, CompStageProcessor* compressor) noexcept;
 
-    // The member's output was cut (gated, muted or bailed): the audio it holds
-    // must not play when it next runs.
+    // The member's output was cut and what comes next is not what it was
+    // playing (a strip with no input, a block it could not take): the audio it
+    // holds must not play when it next runs, and its compressor starts again
+    // from rest.
     void discard() noexcept;
+    // The member's output was cut while its input went on (its strip muted or
+    // soloed out, its bus muted): the audio it holds must not play when it
+    // next runs, and its compressor keeps its state, as across a sleep.
+    void pause() noexcept { pauseHeld = true; }
 
     // The compressor runs now and may be heard; its meter means something.
     bool compressorRunning() const noexcept { return running != nullptr; }
@@ -124,6 +138,7 @@ public:
 private:
     void stop() noexcept;
     void clearRing() noexcept;
+    void silenceHeld (float* L, float* R, int n) noexcept;
     void push (const float* L, const float* R, int n) noexcept;
     void pushAndRead (const float* L, const float* R, float* outL, float* outR, int n, int latency) noexcept;
     void runChunk (float* L, float* R, int n, int offset, const CompStageBlock& stage) noexcept;
@@ -141,12 +156,17 @@ private:
     int runSamples = 0;
     int mixAt = 0;
     int mixDir = 0;
+    // Samples of the running compressor's output still to be silenced: what
+    // its delay held when the member or the mixer paused.
+    int heldToSilence = 0;
 
     int heldLatency = 0;
     std::uint32_t lastSerial = 0;
     std::uint32_t lastSnap = 0;
     std::uint32_t lastCut = 0;
+    std::uint32_t lastPause = 0;
     bool resync = true;
     bool dropHeld = false;
+    bool pauseHeld = false;
 };
 } // namespace duskstudio

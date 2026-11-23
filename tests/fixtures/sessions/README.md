@@ -32,6 +32,25 @@ MIDI, markers, mastering source or personal session data. It covers the actual
 released writer's schema, the nondefault mixer value, rate and defaults for
 fields introduced later. It does not supply released MIDI or marker coverage.
 
+# Format-11 session as 0.16.0 writes it
+
+`v0.16.0-format11.json` is written by hand from the v0.16.0 serializer, not
+saved by a 0.16.0 binary. The authority for every key is
+`src/session/SessionSerializer.cpp` at tag `v0.16.0` (commit
+`1371711e91d29b85a636fea900f606aea5f9f939`). Its serializer differs from
+v0.15.1's only in the format number, the mastering chain's `phase_bands`,
+`phase_q` and `phase_averaging_ms`, the transport's `midi_merge_enabled`, and
+keys a session without MIDI or managed SFZ instruments does not write, so
+the fixture is `v0.15.1-format10.json` with those keys added at the places
+0.16.0 writes them, at their 0.16.0 defaults.
+
+It keeps the first five of the 24 tracks 0.16.0 writes. Away from their
+defaults: an Opto, a FET and a VCA track with the compressor on, a track with
+it off, brown and black channel EQs with every band moved, an HPF and an
+LPF, and the compressors of the first bus, the master and the mastering
+chain. 0.16.0 never saved the multiband's band settings. There is no audio,
+MIDI, plug-in or personal data.
+
 # Hand-written format-11 compressor fixture
 
 `format11-compressors.json` is written by hand, not by a released binary. It

@@ -118,6 +118,7 @@ void CompStageClock::emit() noexcept
     current.serial      = serial;
     current.snap        = snaps;
     current.cut         = cuts;
+    current.pause       = pauses;
 }
 
 void CompStageAlign::prepare (int blockSize, int maxLatency)
@@ -140,9 +141,11 @@ void CompStageAlign::prepare (int blockSize, int maxLatency)
     runSamples = 0;
     mixAt = 0;
     mixDir = 0;
+    heldToSilence = 0;
     heldLatency = 0;
     resync = true;
     dropHeld = false;
+    pauseHeld = false;
 }
 
 void CompStageAlign::discard() noexcept
@@ -166,6 +169,16 @@ void CompStageAlign::stop() noexcept
         running = nullptr;
     }
     runSamples = 0;
+    heldToSilence = 0;
+}
+
+void CompStageAlign::silenceHeld (float* L, float* R, int n) noexcept
+{
+    const int k = std::min (n, heldToSilence);
+    if (k <= 0) return;
+    std::fill (L, L + k, 0.0f);
+    if (R != nullptr) std::fill (R, R + k, 0.0f);
+    heldToSilence -= k;
 }
 
 void CompStageAlign::clearRing() noexcept
@@ -230,13 +243,16 @@ void CompStageAlign::process (float* L, float* R, int numSamples, const CompStag
     // did not run: it was asleep on silence or cut, so its delay holds nothing
     // to replay, and a compressor that drained into that silence keeps its
     // state. One that stayed put is a stage nobody advances (a fixed one),
-    // which is no gap either. A cut drops the compressor's state as well.
+    // which is no gap either. A cut drops the compressor's state as well; a
+    // pause keeps it.
     const bool snapped = resync || stage.snap != lastSnap;
     const bool cut = dropHeld || stage.cut != lastCut;
-    const bool gap = snapped || cut || (std::uint32_t) (stage.serial - lastSerial) > 1u;
-    resync = dropHeld = false;
+    const bool paused = pauseHeld || stage.pause != lastPause;
+    const bool gap = snapped || cut || paused || (std::uint32_t) (stage.serial - lastSerial) > 1u;
+    resync = dropHeld = pauseHeld = false;
     lastSnap = stage.snap;
     lastCut = stage.cut;
+    lastPause = stage.pause;
     lastSerial = stage.serial;
     heldLatency = latency;
 
@@ -263,12 +279,16 @@ void CompStageAlign::process (float* L, float* R, int numSamples, const CompStag
     }
     if (gap)
     {
-        // Nothing the member held is heard any more (it was skipped, cut or
-        // the stage just snapped), so its engage fade goes straight to where
-        // it is heading. A compressor started here runs from rest, as the
-        // cleared delay beside it does, and both play the same silence first.
+        // Nothing the member held is heard any more (it was skipped, cut,
+        // paused or the stage just snapped), so its engage fade goes straight
+        // to where it is heading. A compressor started here runs from rest, as
+        // the cleared delay beside it does, and both play the same silence
+        // first. One kept across a pause plays that silence over the latency
+        // of input from before the pause still in its delay, then goes on
+        // with the gain it had.
         if (wantsCompressor)
         {
+            if (paused && running != nullptr) heldToSilence = latency;
             if (running == nullptr) running = compressor;
             runSamples = latency;
             mixAt = stage.rampSamples;
@@ -329,6 +349,7 @@ void CompStageAlign::runChunk (float* L, float* R, int n, int offset, const Comp
         // Fully compressed: the plug-in's output as it is, the dry kept warm.
         push (L, R, n);
         running->process (L, R, n);
+        silenceHeld (L, R, n);
         return;
     }
 
@@ -339,6 +360,7 @@ void CompStageAlign::runChunk (float* L, float* R, int n, int offset, const Comp
         std::copy (L, L + n, wetL.begin());
         if (R != nullptr) std::copy (R, R + n, wetR.begin());
         running->process (wetL.data(), R != nullptr ? wetR.data() : nullptr, n);
+        silenceHeld (wetL.data(), R != nullptr ? wetR.data() : nullptr, n);
     }
 
     // The delayed path is the delayed dry crossfaded with the plug-in, both a

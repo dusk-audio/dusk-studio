@@ -25,6 +25,7 @@
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <memory>
+#include <string>
 
 namespace duskstudio
 {
@@ -491,6 +492,36 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     const auto upgraded = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     CHECK (upgraded["version"].get<int>() == 12);
+
+    dir.deleteRecursively();
+}
+
+// Written as text, and nested far past what any thread's stack holds one frame
+// per level for: the v9 -> v10 step copies a region's take_provenance onto the
+// take it makes. The loader takes a slot nested past its depth bound as the
+// default whole.
+TEST_CASE ("A v9 track whose take provenance nests past the depth bound loads as the default track",
+           "[session][serializer][migration][take-provenance]")
+{
+    static constexpr std::size_t kDepth = 400000;
+    const auto text = R"({"version":9,"tracks":[{"name":"Deep","regions":[{"file":"audio/a.wav","length":64,)"
+                      R"("take_provenance":{"captured_at_ms":5,"loop_pass":)"
+                    + std::string (kDepth, '[') + std::string (kDepth, ']')
+                    + R"(}}]},{"name":"Kept"}]})";
+
+    const auto dir = makeTempMigrationDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeRaw (target, juce::String (text));
+
+    auto session = std::make_unique<duskstudio::Session>();
+    session->track (0).name = "Stale";
+    REQUIRE (duskstudio::SessionSerializer::load (*session, target));
+
+    const auto defaults = std::make_unique<duskstudio::Session>();
+    CHECK (session->track (0).name == defaults->track (0).name);
+    CHECK (session->track (0).regions.empty());
+    CHECK (session->track (0).takes.empty());
+    CHECK (session->track (1).name == "Kept");
 
     dir.deleteRecursively();
 }

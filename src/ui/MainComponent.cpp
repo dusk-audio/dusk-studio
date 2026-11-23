@@ -1419,7 +1419,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             static_cast<std::uint32_t> (key.getTextCharacter())))
         return true;
     if (! modalUp && masteringView != nullptr && masteringView->isShowing()
-        && masteringView->offerPhaseKey (key.getTextDescription().toStdString(),
+        && masteringView->offerPanelKey (key.getTextDescription().toStdString(),
                                         static_cast<std::uint32_t> (key.getTextCharacter())))
         return true;
     if (! modalUp && consoleView != nullptr)
@@ -1523,11 +1523,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (audioEditorShowing())
         {
             closeAudioEditor();
-            return true;
-        }
-        if (masteringView != nullptr && masteringView->isCompEditorOpen())
-        {
-            masteringView->closeCompEditorPopup();
             return true;
         }
         if (consoleView != nullptr)
@@ -2897,6 +2892,12 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     // A stage swap under the notepad re-adds a fullscreen view above the dim
     // and leaves the native child hovering over a screen the user can't reach.
     yieldNotepadWindow();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // These editors leave the stage keys working and would outlive the page they
+    // edit: their dim stays over the next page and keeps the mastering modules hidden.
+    closeConsoleEditors();
+    closePianoRoll();
+   #endif
 
     std::fprintf (stderr, "[MainComponent] switchToStage(%d) enter\n", (int) s);
     std::fflush (stderr);
@@ -5245,7 +5246,11 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // leaves the player empty, the page reports it as failing to load, and
     // the load above already listed it with the missing audio files.
     MasteringView::loadSessionSource (engine, session);
-    if (masteringView != nullptr) masteringView->followSource();
+    if (masteringView != nullptr)
+    {
+        masteringView->sessionReplaced();
+        masteringView->followSource();
+    }
     refreshSnapUi();   // snap on/off + resolution are serialized - reflect the loaded values
     resized();
     // resized()'s indirect refresh of the tape strip (setConsoleVisibleRange /
@@ -6824,22 +6829,24 @@ void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
     closeAudioSettings();
     closeAudioEditor();
     if (! keepPianoRoll) closePianoRoll();
-    if (masteringView != nullptr) masteringView->closeCompEditorPopup();
-    if (consoleView != nullptr)
-    {
-        for (int t = 0; t < Session::kNumTracks; ++t)
-            if (auto* strip = consoleView->getStripComponent (t))
-            {
-                strip->closeCompEditorPopup();
-                strip->closeBuiltinEditorPopup();
-            }
-        for (int b = 0; b < Session::kNumBuses; ++b)
-            if (auto* bus = consoleView->getBusComponent (b)) bus->closeCompEditorPopup();
-        if (auto* master = consoleView->getMasterStripComponent())
+    closeConsoleEditors();
+}
+
+void MainComponent::closeConsoleEditors()
+{
+    if (consoleView == nullptr) return;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (auto* strip = consoleView->getStripComponent (t))
         {
-            master->closeTapeEditor();
-            master->closeCompEditorPopup();
+            strip->closeCompEditorPopup();
+            strip->closeBuiltinEditorPopup();
         }
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        if (auto* bus = consoleView->getBusComponent (b)) bus->closeCompEditorPopup();
+    if (auto* master = consoleView->getMasterStripComponent())
+    {
+        master->closeTapeEditor();
+        master->closeCompEditorPopup();
     }
 }
 #endif

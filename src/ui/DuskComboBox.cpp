@@ -343,6 +343,17 @@ public:
     // combo at the screen edge; the flat list stays anchored to its combo.
     bool prefersCentred() const noexcept { return useGrid; }
 
+    // How far below the panel's top the ticked row's centre sits; -1 without one.
+    int tickedRowCentre() const noexcept
+    {
+        if (useGrid) return -1;
+        for (int i = 0; i < flat.count(); ++i)
+            if (flat.rows[(size_t) i].isTicked)
+                return kBorder + titleHeight() + flat.rowTop (i) - (int) std::lround (flat.scrollOffset)
+                     + flat.rowExtent (i) / 2;
+        return -1;
+    }
+
     void resized() override
     {
         if (useGrid)
@@ -1195,6 +1206,7 @@ void DuskComboBox::showPopup()
     // far from the click - confusing and easy to miss. The wide grid
     // browser is the exception: it stays centred (see repositionBody below).
     const bool centred = panel->prefersCentred();
+    const int tickedCentre = panel->tickedRowCentre();
     const int panelW = panel->getWidth();
     const int panelH = panel->getHeight();
     const auto comboScreen = getScreenBounds();
@@ -1239,9 +1251,31 @@ void DuskComboBox::showPopup()
     // grid browser opts out and keeps show()'s centring.
     if (! centred)
     {
-        const auto localTopLeft = parent->getLocalPoint (nullptr,
-                                                            juce::Point<int> (sx, sy));
-        sharedComboModal().repositionBody (localTopLeft);
+        const auto placeAt = [parent, sx] (int y)
+        {
+            sharedComboModal().repositionBody (parent->getLocalPoint (nullptr, juce::Point<int> (sx, y)));
+        };
+        placeAt (sy);
+        // A native editor child would have to leave the screen whole for a list
+        // that lies over a sliver of it, so a list that would is opened above the
+        // combo, or over it, when one of those leaves every editor drawn. Over it,
+        // the current choice lies on the combo, as a pop-up button opens: a second
+        // press where the first one was picks that choice again and changes nothing.
+        // Without a current choice no row belongs there, and it does not open over it.
+        if (! insideTaggedEditor && sharedComboModal().bodyCoversEditor())
+        {
+            const int candidates[] = { comboScreen.getY() - panelH - 2, comboScreen.getCentreY() - tickedCentre };
+            const int usable = tickedCentre >= 0 ? 2 : 1;
+            bool clear = false;
+            for (int i = 0; i < usable && ! clear; ++i)
+            {
+                const int y = candidates[i];
+                if (y < parentScreen.getY() + 8 || y + panelH > parentScreen.getBottom() - 8) continue;
+                placeAt (y);
+                clear = ! sharedComboModal().bodyCoversEditor();
+            }
+            if (! clear) placeAt (sy);
+        }
     }
 
     // Now that the popup owns its final rectangle, take down the plugin editors
@@ -1251,5 +1285,13 @@ void DuskComboBox::showPopup()
     // sees as the panel disappearing until the menu closes.
     if (! insideTaggedEditor)
         sharedComboModal().hideEditorsUnderBody();
+}
+
+void DuskComboBox::dismissOpenListForOutsidePress()
+{
+    auto& modal = sharedComboModal();
+    const auto& stack = EmbeddedModal::activeModalStack();
+    if (modal.isOpen() && ! stack.empty() && stack.back() == &modal)
+        modal.close (/*restoreFocus*/ false);
 }
 } // namespace duskstudio

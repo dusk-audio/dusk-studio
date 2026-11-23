@@ -429,15 +429,22 @@ std::optional<ScenarioResult> runMasteringPanelsOnDemand (GuiHost& host, Scenari
     ctx.keep (mastering.eqBandGainDb[2]);
     ctx.keep (mastering.limiterCeilingDb);
     ctx.keep (mastering.phase.bands);
+    const auto lowThreshold = compBandParam (0, CompBandField::Threshold);
+    ctx.keep (mastering.comp.atom (lowThreshold));
     host.switchToStage (GuiHost::Stage::Mastering);
 
-    const Panels all { "mastering-eq", "mastering-limiter", "mastering-phase" };
+    const Panels all { "mastering-eq", "mastering-comp", "mastering-limiter", "mastering-phase" };
     auto steps = std::make_shared<std::vector<Step>>();
-    pushOpened (host, *steps, all, [&host] { return host.masteringPanelsOpen() == 3; }, "the mastering panels");
+    pushOpened (host, *steps, all, [&host] { return host.masteringPanelsOpen() == host.masteringPanelsExpected(); }, "the mastering panels");
     pushStaysStill (host, ctx, *steps, all, "the idle mastering panels");
     pushDrawsOn (host, ctx, *steps, { "mastering-eq" }, "an EQ band's gain changing", [&mastering]
     {
         mastering.eqBandGainDb[2].store (mastering.eqBandGainDb[2].load() + 3.0f);
+        return true;
+    });
+    pushDrawsOn (host, ctx, *steps, { "mastering-comp" }, "a band threshold changing", [&mastering, lowThreshold]
+    {
+        mastering.comp.set (lowThreshold, mastering.comp.get (lowThreshold) > -30.0f ? -40.0f : -20.0f);
         return true;
     });
     pushDrawsOn (host, ctx, *steps, { "mastering-limiter" }, "the limiter ceiling changing", [&mastering]

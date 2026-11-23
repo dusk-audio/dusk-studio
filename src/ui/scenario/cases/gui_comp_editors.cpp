@@ -1,6 +1,5 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../dsp/MultiCompStage.h"
-#include "../../../dsp/MultibandCompPresets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -440,179 +439,6 @@ const ScenarioRegistrar compEditorBusMaster { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runCompEditorBusMaster (host, ctx); }
 } };
 
-// The MULTIBAND COMP label on the mastering page opens Multi-Comp 2's own
-// Multiband face over the dimmed window, drawing the mastering chain's
-// compressor at the face's design size where the window holds it. A band
-// control lands in the session and leaves the compressor as it was, and with
-// the compressor out its plug-in still holds what the face set, which the face
-// reads back; BYPASS is the header's status light, both ways; a preset picked
-// on the page shows on the face. Escape and a click on the dim close it.
-std::optional<ScenarioResult> runMasteringCompEditor (GuiHost& host, ScenarioContext& ctx)
-{
-   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
-    (void) host;
-    (void) ctx;
-    return ScenarioResult::skip ("requires the native UI and the Dusk DSP");
-   #else
-    static constexpr int kPopPreset = 1;
-    auto& engine = ctx.engine();
-    auto& mastering = ctx.session().mastering();
-    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying() || ! host.modalStackEmpty())
-        return ScenarioResult::skip ("requires stopped transport and mastering player and no modal");
-    if (! host.canEmbedPluginEditors())
-        return ScenarioResult::skip ("requires a window the compressor editor can embed into");
-    const auto size = host.mainWindowSize();
-    if (size.size() < 2) return ScenarioResult::fail ("the window size is unavailable");
-
-    keepComp (ctx, mastering.comp);
-    ctx.keep (mastering.compEnabled);
-    const auto originalStage = engine.getStage();
-    ctx.cleanup ([&host, size, originalStage]
-    {
-        host.closeMasteringCompEditor();
-        drainModals (host);
-        host.resizeMainWindow (size[0], size[1]);
-        host.switchToStage (guiStage (originalStage));
-    });
-    if (! host.resizeMainWindow (std::max (1440, size[0]), std::max (900, size[1])))
-        return ScenarioResult::fail ("could not widen the mastering workspace");
-    host.switchToStage (GuiHost::Stage::Mastering);
-    mastering.compEnabled.store (false);
-
-    auto& compressor = engine.getMasteringChain().getCompressor();
-    const MultiCompStage* stage = &compressor;
-    const auto design = std::vector<int> { (int) compressor.plugin().editorWidth(),
-                                           (int) compressor.plugin().editorHeight() };
-    // Pop, as the picker writes it.
-    auto pop = std::make_shared<CompParams>();
-    if (! mbpresets::apply (kPopPreset, compressor, *pop))
-        return ScenarioResult::fail ("the Pop preset did not convert");
-
-    // Drawn and handed its values: on native Wayland the first frame can come
-    // before the host's first push.
-    const auto drawn = [&host]
-    {
-        return host.masteringCompEditorDrawn() && host.masteringCompEditorShows ("mode").has_value();
-    };
-    const auto shows = [&host] (const char* symbol, float value)
-    {
-        const auto shown = host.masteringCompEditorShows (symbol);
-        return shown && std::abs (*shown - value) < 1.0e-4f;
-    };
-    const auto band1Threshold = compBandParam (1, CompBandField::Threshold);
-    // The face reads the crossovers back from the plug-in itself every frame,
-    // not from the values the host hands it, so the plug-in is what it shows.
-    const auto indexOf = [&compressor] (const char* symbol)
-    {
-        const auto& params = compressor.plugin().params();
-        for (std::size_t i = 0; i < params.size(); ++i)
-            if (params[i].symbol == symbol) return (int) i;
-        return -1;
-    };
-    const int crossover1Index = indexOf ("mb_crossover_1");
-    const int band1ThresholdIndex = indexOf ("mb_threshold_1");
-    if (crossover1Index < 0 || band1ThresholdIndex < 0)
-        return ScenarioResult::fail ("the Multiband plug-in lacks a crossover or band threshold");
-    static constexpr float kCrossover1 = 0.6f;
-
-    auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen"); } });
-    steps->push_back ({ 0, [&host, &ctx, &mastering, stage, design, shows, band1Threshold]
-    {
-        ctx.expect (host.masteringCompEditorStage() == stage, "the face does not draw the mastering compressor");
-        const auto bounds = host.masteringCompEditorBounds();
-        ctx.expect (bounds.size() == 4 && bounds[2] == design[0] && bounds[3] == design[1],
-                    "the face opened at " + (bounds.size() == 4 ? std::to_string (bounds[2]) + " x "
-                                                                    + std::to_string (bounds[3]) : std::string ("nothing"))
-                        + ", not its " + std::to_string (design[0]) + " x " + std::to_string (design[1]));
-        ctx.expect (shows ("mode", 7.0f), "the face does not show the Multiband mode");
-        ctx.expect (shows ("daf_bypass", 1.0f), "BYPASS does not show a compressor switched off");
-        ctx.expect (host.masteringCompEditorEdit ("mb_threshold_1", -33.0f), "the face took no band threshold edit");
-        ctx.expect (std::abs (mastering.comp.get (band1Threshold) + 33.0f) < 1.0e-4f,
-                    "the threshold edit left the session at " + std::to_string (mastering.comp.get (band1Threshold)));
-        ctx.expect (host.masteringCompEditorEdit ("mb_crossover_1", kCrossover1), "the face took no crossover edit");
-        ctx.expect (! mastering.compEnabled.load(), "a band control engaged the compressor");
-    }, drawn, "the Multiband face never drew a frame" });
-    steps->push_back ({ 300, [&host, &ctx, &mastering, stage, crossover1Index, band1ThresholdIndex]
-    {
-        // Still out: the plug-in has not run, yet it holds what the face set.
-        ctx.expect (! mastering.compEnabled.load(), "the compressor engaged before BYPASS was touched");
-        const float crossover = stage->editorReading (crossover1Index);
-        ctx.expect (std::abs (crossover - kCrossover1) < 2.0e-3f,
-                    "with the compressor out the face reads its low split back as " + std::to_string (crossover)
-                        + ", not the " + std::to_string (kCrossover1) + " it set");
-        const float threshold = stage->editorReading (band1ThresholdIndex);
-        ctx.expect (std::abs (threshold + 33.0f) < 1.0e-3f,
-                    "with the compressor out the plug-in holds the band threshold at " + std::to_string (threshold));
-        ctx.expect (host.masteringCompEditorEdit ("daf_bypass", 0.0f), "the face took no BYPASS edit");
-        ctx.expect (mastering.compEnabled.load(), "BYPASS off on the face did not engage the compressor");
-    } });
-    steps->push_back ({ 300, [&ctx, &mastering, shows]
-    {
-        ctx.expect (shows ("daf_bypass", 0.0f), "BYPASS did not follow the engage");
-        // What the header's status light writes.
-        mastering.compEnabled.store (false);
-    } });
-    steps->push_back ({ 300, [&host, &ctx, shows]
-    {
-        ctx.expect (shows ("daf_bypass", 1.0f), "the status light did not reach BYPASS");
-        ctx.expect (host.pressPeerKey ("escape"), "the window did not handle Escape");
-    } });
-    steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.clickMasteringCompHeader (false), "the MULTIBAND COMP status light is not on screen"); },
-        [&host] { return ! host.masteringCompEditorOpen(); }, "Escape left the Multiband face open" });
-    steps->push_back ({ 100, [&host, &ctx, &mastering]
-    {
-        ctx.expect (mastering.compEnabled.load(), "the status light did not engage the compressor");
-        ctx.expect (host.clickMasteringCompPreset(), "the preset picker is not on screen");
-    } });
-    steps->push_back ({ 100, [&host, &ctx]
-    {
-        ctx.expect (host.pressPeerKey ("home", 0), "the preset list took no Home");
-        ctx.expect (host.pressPeerKey ("cursor down", 0), "the preset list took no Down");
-        ctx.expect (host.pressPeerKey ("cursor down", 0), "the preset list took no second Down");
-        ctx.expect (host.pressPeerKey ("return", '\r'), "the preset list took no Return");
-    }, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
-        "the preset picker did not take the keyboard" });
-    steps->push_back ({ 200, [&host, &ctx, &mastering, pop]
-    {
-        for (const auto id : compStageParams (CompStage::Multiband))
-        {
-            if (id == CompParamId::MbMix || id == CompParamId::MbOutput) continue;
-            const bool highMidLevel = id >= compBandParam (2, CompBandField::Threshold)
-                                   && id <= compBandParam (2, CompBandField::Makeup);
-            if (highMidLevel) continue;
-            ctx.expect (std::abs (mastering.comp.get (id) - pop->get (id)) < 1.0e-6f,
-                        std::string ("the Pop preset left ") + compParamSpec (id).symbol + " at "
-                            + std::to_string (mastering.comp.get (id)));
-        }
-        ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen");
-    }, [&host] { return host.modalStackEmpty(); }, "the preset picker stayed open" });
-    steps->push_back ({ 0, [&host, &ctx, &mastering, shows]
-    {
-        const float split = mastering.comp.get (CompParamId::MbCrossover3);
-        ctx.expect (shows ("mb_crossover_3", split), "the face does not show the preset's high split");
-        ctx.expect (shows ("mb_enabled_2", 0.0f), "the face does not show high-mid out");
-        ctx.expect (shows ("daf_bypass", 0.0f), "BYPASS does not show the engage the status light made");
-        ctx.expect (host.clickCompEditorDim(), "the dim behind the Multiband face took no click");
-    }, drawn, "the Multiband face did not reopen" });
-    runSteps (ctx, steps, [&host, &ctx]
-    {
-        ctx.waitUntil ([&host] { return ! host.masteringCompEditorOpen(); }, 3000,
-                       [&ctx] { ctx.complete (ctx.verdict()); },
-                       "a click on the dim left the Multiband face open");
-    });
-    return std::nullopt;
-   #endif
-}
-
-const ScenarioRegistrar masteringCompEditor { Scenario {
-    "gui.mastering_comp_editor", { "gui", "mastering", "comp" }, Needs::Engine | Needs::Gui,
-    {}, {}, 30000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompEditor (host, ctx); }
-} };
-
 // A press anywhere on a channel strip selects its track and focuses the strip.
 void keepTrackFocus (GuiHost& host, ScenarioContext& ctx)
 {
@@ -941,75 +767,158 @@ const ScenarioRegistrar compBusMasterFace { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runCompBusMasterFace (host, ctx); }
 } };
 
-// The Multiband face closes when a dialog opens over the window, Save As here,
-// and when the MASTERING stage is left, both from the keyboard the face leaves
-// with the window.
-std::optional<ScenarioResult> runMasteringCompEditorCloses (GuiHost& host, ScenarioContext& ctx)
+// A stage change takes down the editors that open over the console: a
+// compressor editor on a strip, a bus or the master, the master's tape editor
+// and a strip's built-in unit editor, whether the change comes from Cmd/Ctrl+1
+// to 4 or a stage button.
+// Nothing of them stays over the new page, MASTERING opens every module, and
+// back on the console COMP opens its editor again. A bank key leaves a strip's
+// editor up on the strip it was opened from, banked out of view or not.
+std::optional<ScenarioResult> runEditorsCloseOnStageChange (GuiHost& host, ScenarioContext& ctx)
 {
-   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
     (void) host;
     (void) ctx;
-    return ScenarioResult::skip ("requires the native UI and the Dusk DSP");
+    return ScenarioResult::skip ("requires the native UI");
    #else
+    using Stage = GuiHost::Stage;
+    static constexpr int kBus = 0;
     auto& engine = ctx.engine();
-    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying() || ! host.modalStackEmpty())
-        return ScenarioResult::skip ("requires stopped transport and mastering player and no modal");
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
     if (! host.canEmbedPluginEditors())
         return ScenarioResult::skip ("requires a window the compressor editor can embed into");
-    const auto size = host.mainWindowSize();
-    if (size.size() < 2) return ScenarioResult::fail ("the window size is unavailable");
-
-    keepComp (ctx, ctx.session().mastering().comp);
-    ctx.keep (ctx.session().mastering().compEnabled);
-    keepStage (host, ctx);
-    ctx.cleanup ([&host, size]
+    if (session.track (kStripIndex).frozen.load()) return ScenarioResult::skip ("requires an unfrozen first track");
+    auto& dsp = engine.getChannelStrip (kStripIndex);
+    if (dsp.getPluginSlot().isLoaded() || dsp.isBuiltinLoaded() || dsp.isNativeClapLoaded()
+        || dsp.isNativeLv2Loaded() || dsp.isNativeVst3Loaded() || dsp.isNativeAuLoaded()
+        || dsp.isNativeMultisampleLoaded() || dsp.builtinReloadFailed())
+        return ScenarioResult::skip ("requires an empty first insert");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    keepCarriedInsert (ctx, session.track (kStripIndex));
+    ctx.cleanup ([&host, &engine, &dsp, mode = dsp.insertMode.load()]
     {
-        host.closeMasteringCompEditor();
+        host.closeBuiltin (kStripIndex);
+        engine.suspendProcessing();
+        dsp.unloadBuiltin();
+        dsp.insertMode.store (mode);
+        engine.resumeProcessing();
+        if (auto* handle = host.strip (kStripIndex)) handle->refreshInsertButton();
+    });
+    {
+        std::string error;
+        engine.suspendProcessing();
+        const bool loaded = dsp.loadBuiltin ("dusk.builtin.reverb", error);
+        if (loaded) dsp.insertMode.store (ChannelStrip::kInsertPlugin);
+        engine.resumeProcessing();
+        if (! loaded) return ScenarioResult::fail ("could not load DuskVerb 2: " + error);
+        if (auto* handle = host.strip (kStripIndex)) handle->refreshInsertButton();
+    }
+    ctx.keep (session.activeBank);
+    ctx.keep (session.mcu.bank);
+    ctx.cleanup (host.preserveKeyboardFocus());
+    ctx.cleanup ([&host]
+    {
+        host.closeCompEditor (Kind::Channel, kStripIndex);
+        host.closeCompEditor (Kind::Bus, kBus);
+        host.closeCompEditor (Kind::Master, 0);
+        host.closeMasterTape();
         drainModals (host);
-        host.resizeMainWindow (size[0], size[1]);
     });
-    if (! host.resizeMainWindow (std::max (1440, size[0]), std::max (900, size[1])))
-        return ScenarioResult::fail ("could not widen the mastering workspace");
-    host.switchToStage (GuiHost::Stage::Mastering);
 
-    const auto drawn = [&host]
+    const auto pageClear = [&host] (Stage stage)
     {
-        return host.masteringCompEditorDrawn() && host.masteringCompEditorShows ("mode").has_value();
+        if (! host.stageViewMatches (stage) || host.windowDimmed()) return false;
+        const int modules = host.masteringPanelsExpected();
+        return stage != Stage::Mastering || modules <= 0 || host.masteringPanelsOpen() == modules;
     };
-    const auto saveAsUp = [&host] { return host.modalText().rfind ("Save session as...", 0) == 0; };
+    const auto stageKey = [&host, &ctx] (char digit)
+    {
+        ctx.expect (host.pressPeerKey (commandChord (digit)),
+                    std::string ("the window did not handle the stage key ") + digit);
+    };
+    const auto stageButton = [&host, &ctx] (Stage stage)
+    { ctx.expect (host.clickStage (stage), "the stage button is not on screen"); };
+
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen"); } });
-    steps->push_back ({ 300, [&host, &ctx] { ctx.expect (host.pressPeerKey ("command + shift + S"), "the window took no Cmd+Shift+S"); },
-        drawn, "the Multiband face never drew a frame" });
-    steps->push_back ({ 0, [] {}, saveAsUp, "Cmd+Shift+S over the Multiband face did not bring up Save As" });
-    steps->push_back ({ 0, [&host, &ctx, saveAsUp]
+    steps->push_back ({ 200, [&host] { host.openCompEditor (Kind::Channel, kStripIndex); } });
+    steps->push_back ({ 0, [stageKey] { stageKey ('3'); },
+        [&host] { return host.compEditorDrawn (Kind::Channel, kStripIndex); },
+        "the strip's compressor editor never drew a frame" });
+    steps->push_back ({ 0, [stageButton] { stageButton (Stage::Mixing); },
+        [&host, pageClear] { return ! host.compEditorOpen (Kind::Channel, kStripIndex) && pageClear (Stage::Mastering); },
+        "Cmd/Ctrl+3 left the strip's compressor editor or its dim over MASTERING, or a module unopened" });
+    steps->push_back ({ 0, [&host] { host.openCompEditor (Kind::Bus, kBus); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "the MIXING button did not bring the console back clear" });
+    steps->push_back ({ 0, [stageButton] { stageButton (Stage::Aux); },
+        [&host] { return host.compEditorDrawn (Kind::Bus, kBus); }, "the bus compressor editor never drew a frame" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [&host, pageClear] { return ! host.compEditorOpen (Kind::Bus, kBus) && pageClear (Stage::Aux); },
+        "the AUX button left the bus compressor editor or its dim over AUX" });
+    steps->push_back ({ 0, [&host] { host.openCompEditor (Kind::Master, 0); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('1'); },
+        [&host] { return host.compEditorDrawn (Kind::Master, 0); }, "the master compressor editor never drew a frame" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [&host, pageClear] { return ! host.compEditorOpen (Kind::Master, 0) && pageClear (Stage::Recording); },
+        "Cmd/Ctrl+1 left the master compressor editor or its dim over RECORDING" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickMasterTape (true), "the master TAPE label is not on screen"); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('3'); },
+        [&host] { return host.masterTapeEditorDrawn(); }, "the master tape editor never drew a frame" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [&host, pageClear] { return ! host.masterTapeEditorOpen() && pageClear (Stage::Mastering); },
+        "Cmd/Ctrl+3 left the master tape editor or its dim over MASTERING, or a module unopened" });
+    const auto unitEditorUp = [&host]
     {
-        ctx.expect (saveAsUp(), "Save As went down before the Multiband face closed");
-        host.closeTopModal();
-    }, [&host] { return ! host.masteringCompEditorOpen(); }, "Save As opened over the Multiband face and left it open",
-       {}, kSettleBoundMs });
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen after Save As"); },
-        [&host] { return host.modalStackEmpty(); }, "Save As did not close" });
-    steps->push_back ({ 300, [&host, &ctx] { ctx.expect (host.pressPeerKey ("command + 2"), "the window took no Cmd+2"); },
-        drawn, "the Multiband face did not reopen" });
-    steps->push_back ({ 0, [] {}, [&host] { return host.stageViewMatches (GuiHost::Stage::Mixing); },
-                       "Cmd+2 over the Multiband face did not switch to MIXING", {}, kSettleBoundMs });
-    runSteps (ctx, steps, [&host, &ctx]
+        auto* strip = host.strip (kStripIndex);
+        return strip != nullptr && strip->hasOpenBuiltinEditor();
+    };
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickInsert (kStripIndex, false), "the strip's insert is not on screen"); },
+        [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 500, [stageKey] { stageKey ('4'); }, unitEditorUp, "DuskVerb 2's editor did not open" });
+    steps->push_back ({ 0, [stageKey] { stageKey ('2'); },
+        [unitEditorUp, pageClear] { return ! unitEditorUp() && pageClear (Stage::Aux); },
+        "Cmd/Ctrl+4 left the strip's DuskVerb 2 editor or its dim over AUX" });
+    // At its narrowest the window shows one page of strips, so a bank key banks
+    // the strip away.
+    steps->push_back ({ 0, [&host, &ctx]
     {
-        ctx.waitUntil ([&host] { return ! host.masteringCompEditorOpen(); }, kSettleBoundMs,
-                       [&ctx] { ctx.complete (ctx.verdict()); },
-                       "leaving the MASTERING stage left the Multiband face open");
-    });
+        const auto size = host.mainWindowSize();
+        if (size.size() < 4) return;
+        ctx.cleanup ([&host, size] { host.resizeMainWindow (size[0], size[1]); });
+        if (! host.resizeMainWindow (size[2], size[1]))
+            ctx.note ("the window would not take its smallest width");
+    }, [pageClear] { return pageClear (Stage::Mixing); }, "Cmd/Ctrl+2 did not bring the console back clear" });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (kStripIndex, 1, true, false), "the strip's COMP label is not on screen"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        const auto* shown = host.compEditorStage (Kind::Channel, kStripIndex);
+        const int page = host.consoleBank();
+        ctx.expect (host.pressPeerKey ("2", '2'), "the window did not handle the bank key 2");
+        if (host.consoleBank() == page)
+            ctx.note ("the window shows every strip at once, so the bank key changed nothing");
+        ctx.expect (host.compEditorOpen (Kind::Channel, kStripIndex) && host.compEditorStage (Kind::Channel, kStripIndex) == shown,
+                    "a bank key took the strip's compressor editor off its strip");
+        ctx.expect (host.pressPeerKey ("escape"), "the window did not handle Escape");
+    }, [&host] { return host.compEditorDrawn (Kind::Channel, kStripIndex); },
+       "COMP did not reopen the strip's compressor editor after the stage changes" });
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.pressPeerKey ("1", '1'), "the window did not handle the bank key 1"); },
+        [&host] { return ! host.compEditorOpen (Kind::Channel, kStripIndex) && ! host.windowDimmed(); },
+        "Escape did not close the editor of a strip banked out of view" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
 }
 
-const ScenarioRegistrar masteringCompEditorCloses { Scenario {
-    "gui.mastering_comp_editor_closes", { "gui", "mastering", "comp" }, Needs::Engine | Needs::Gui,
-    {}, {}, 30000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompEditorCloses (host, ctx); }
+const ScenarioRegistrar editorsCloseOnStageChange { Scenario {
+    "gui.comp_editors_close_on_stage_change", { "gui", "master", "comp", "stage" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEditorsCloseOnStageChange (host, ctx); }
 } };
+
 } // namespace
 } // namespace duskstudio::scenario::gui

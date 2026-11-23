@@ -46,7 +46,7 @@ void compEditorEdit (const MultiCompStage& stage, const CompEditorTarget& target
         return;
     }
     const auto id = stage.sessionParam (index);
-    if (! id || ! target.editsEngage)
+    if (! id)
         return;
     const bool engages = target.engagedOnlyBy ? *id == *target.engagedOnlyBy
                                               : ! switchTurnedOff (*id, value);

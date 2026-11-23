@@ -209,6 +209,14 @@ leg_native_gui_scenarios() {
     native_session_run scripts/regress/native-gui-scenarios.sh "$APP_BIN" --without-x11
 }
 
+# Every MASTERING list picked from with the compositor's own pointer, under native
+# Wayland and under X11 through Xwayland: the scenario harness's own clicks go
+# straight into a panel's widget and never meet the window system.
+leg_native_mastering_lists() {
+    native_leg_preflight "$NATIVE_SESSION_PATH" "$NATIVE_GTK_CHECK" mutter dbus-run-session Xwayland || return $?
+    native_session_run scripts/regress/native-mastering-lists.sh "$APP_BIN"
+}
+
 # The Windows runner refuses a GUI catalog of any size but the one lib.ps1
 # names, and only a package run reaches that phase, so a source run holds the
 # number to the registry this build lists.
@@ -694,10 +702,12 @@ if [[ -x "$APP_BIN" ]]; then
                 regress_skip "native-wayland-embedding" "source-only lifecycle probe"
                 regress_skip "native-window-activation" "source-only native Wayland opt-in"
                 regress_skip "native-gui-scenarios" "source-only native Wayland opt-in"
+                regress_skip "native-mastering-lists" "source-only native Wayland opt-in"
             else
                 regress_leg "native-wayland-embedding" leg_native_wayland_embedding
                 regress_leg "native-window-activation" leg_native_window_activation
                 regress_leg "native-gui-scenarios" leg_native_gui_scenarios
+                regress_leg "native-mastering-lists" leg_native_mastering_lists
             fi
             regress_scenarios_run "$APP_BIN" --gui
             if ((!PACKAGE_MODE)); then
@@ -732,7 +742,7 @@ else
     if ((RUN_SCENARIOS)); then
         missing_legs+=("${SCENARIO_LEG_NAMES[@]}")
         if ((GUI_SCENARIOS)); then
-            missing_legs+=(native-wayland-embedding native-window-activation native-gui-scenarios scenarios-gui gui-plugin-picker gui-settings-defaults)
+            missing_legs+=(native-wayland-embedding native-window-activation native-gui-scenarios native-mastering-lists scenarios-gui gui-plugin-picker gui-settings-defaults)
             ((PACKAGE_MODE)) || missing_legs+=(windows-gui-catalog)
         fi
         missing_legs+=(bb-idle-wakeups)

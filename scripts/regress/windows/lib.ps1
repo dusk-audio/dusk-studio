@@ -300,7 +300,7 @@ function Get-RegressGuiCatalog([string]$text, $exitCode) {
 # The ordinary GUI scenarios every build registers. Only a package run reaches
 # the phase that checks it, so the Linux windows-gui-catalog leg compares it
 # with the registry on every source run with GUI scenarios.
-function Get-RegressWindowsGuiCatalogCount { return 350 }
+function Get-RegressWindowsGuiCatalogCount { return 357 }
 
 function Get-RegressWindowsGuiSkips {
     return [ordered]@{
@@ -312,7 +312,9 @@ function Get-RegressWindowsGuiSkips {
         'gui.fresh_sandbox_crash_saves_clean' = 'needs sandboxed plug-ins and a child that can be killed by pid'
         'gui.lv2_editor_reflects_state' = 'missing fixture: file_state.lv2'
         'gui.lv2_midi_learn' = 'missing fixture: file_state.lv2'
-        'gui.mastering_comp_editor_face' = 'reads the editor window back through the X server'
+        'gui.mastering_comp_panel_painted' = 'reads the editor window back through the X server'
+        'gui.mastering_panels_filled' = 'reads the editor window back through the X server'
+        'gui.mastering_real_list_picks' = 'requires a driver sending real pointer input'
         'gui.midi_io_selectors' = 'virtual MIDI destination fixture requires ALSA sequencer'
         'gui.piano_keyboard_midi_output' = 'virtual MIDI destination fixture requires ALSA sequencer'
         'gui.native_wayland_foreign_editors' = 'requires a native Wayland main window'

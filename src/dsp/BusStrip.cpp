@@ -55,7 +55,7 @@ void BusStrip::discardPendingDrain() noexcept
 {
     if (! hasPendingDrain()) return;
     toneEq.reset();
-    compAlign.discard();
+    compAlign.pause();
     drainQuietRemaining = 0;
     vuRmsLinL = vuRmsLinR = 0.0f;
     if (paramsRef != nullptr)
