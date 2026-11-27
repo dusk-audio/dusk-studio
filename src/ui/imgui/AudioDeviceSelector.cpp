@@ -182,10 +182,11 @@ void AudioDeviceSelector::applyTypeChange()
         onDeviceChanged();
 }
 
-void AudioDeviceSelector::applySetupChange (bool deviceChanged)
+void AudioDeviceSelector::applySetupChange (Pick pick)
 {
-    // From the chosen setup, so the list the user did not touch sends what is
-    // saved for it and not the clock a graph runs.
+    // From the chosen setup, and only the list the user picked from is read:
+    // the other one keeps what is saved for it. Its selection can be the
+    // running value standing in for a saved one this device does not list.
     auto setup = deviceManager.getChosenSetup();
 
     setup.outputDeviceName = outputs.selected > 0 ? outputs.label (outputs.selected)
@@ -193,19 +194,21 @@ void AudioDeviceSelector::applySetupChange (bool deviceChanged)
     setup.inputDeviceName = inputs.selected > 0 ? inputs.label (inputs.selected)
                                                 : std::string();
 
-    if (deviceChanged)
+    if (pick == Pick::device)
     {
         // A new device may not support the previous one's rate and buffer, so both go
         // back to "pick a valid default" rather than failing the open.
         setup.sampleRate = 0.0;
         setup.bufferSize = 0;
     }
-    else
+    else if (pick == Pick::rate)
     {
         if (rates.selected >= 0 && rates.selected < static_cast<int> (rateValues.size()))
             setup.sampleRate = rateValues[static_cast<std::size_t> (rates.selected)];
-        if (buffers.selected >= 0 && buffers.selected < static_cast<int> (bufferValues.size()))
-            setup.bufferSize = bufferValues[static_cast<std::size_t> (buffers.selected)];
+    }
+    else if (buffers.selected >= 0 && buffers.selected < static_cast<int> (bufferValues.size()))
+    {
+        setup.bufferSize = bufferValues[static_cast<std::size_t> (buffers.selected)];
     }
 
     setup.useDefaultOutputChannels = false;
@@ -262,12 +265,12 @@ void AudioDeviceSelector::draw (dw::Context& ctx, ImVec2 at, float width)
     if (row ("Audio backend", "##audio-backend", types, true))
         deferred ([this] { applyTypeChange(); });
     if (row ("Output device", "##audio-output", outputs, true))
-        deferred ([this] { applySetupChange (/*deviceChanged*/ true); });
+        deferred ([this] { applySetupChange (Pick::device); });
     if (row ("Input device", "##audio-input", inputs, true))
-        deferred ([this] { applySetupChange (/*deviceChanged*/ true); });
+        deferred ([this] { applySetupChange (Pick::device); });
     if (row ("Sample rate", "##audio-rate", rates, haveDevice))
-        deferred ([this] { applySetupChange (/*deviceChanged*/ false); });
+        deferred ([this] { applySetupChange (Pick::rate); });
     if (row ("Buffer size", "##audio-buffer", buffers, haveDevice))
-        deferred ([this] { applySetupChange (/*deviceChanged*/ false); });
+        deferred ([this] { applySetupChange (Pick::buffer); });
 }
 } // namespace duskstudio::imgui
