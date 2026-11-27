@@ -6,11 +6,16 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <system_error>
 #include <thread>
 #include <vector>
+
+#if defined(__APPLE__)
+ #include <sys/mount.h>
+#endif
 
 namespace duskstudio::filebrowser
 {
@@ -39,16 +44,26 @@ FolderCheckGate& folderCheckGate()
     return *gate;
 }
 
+bool folderChecksHeld()
+{
+    auto& gate = folderCheckGate();
+    const std::lock_guard<std::mutex> lock (gate.mutex);
+    return gate.held;
+}
+
+void waitWhileFolderChecksHeld()
+{
+    static constexpr auto kLongestHold = std::chrono::seconds (3);
+    auto& gate = folderCheckGate();
+    std::unique_lock<std::mutex> lock (gate.mutex);
+    gate.released.wait_for (lock, kLongestHold, [&gate] { return ! gate.held; });
+}
+
 // Opens the nearest folder that exists at or above `folder`, the one the browser
 // would go on to list.
 void openNearestFolder (std::filesystem::path folder)
 {
-    {
-        static constexpr auto kLongestHold = std::chrono::seconds (3);
-        auto& gate = folderCheckGate();
-        std::unique_lock<std::mutex> lock (gate.mutex);
-        gate.released.wait_for (lock, kLongestHold, [&gate] { return ! gate.held; });
-    }
+    waitWhileFolderChecksHeld();
     std::error_code error;
     while (! std::filesystem::is_directory (folder, error))
     {
@@ -57,6 +72,36 @@ void openNearestFolder (std::filesystem::path folder)
         folder = std::move (parent);
     }
     const std::filesystem::directory_iterator firstEntry (folder, error);
+}
+
+// Whether anything is mounted under /Volumes, read from the mount table, which
+// looks at none of it.
+bool volumesMounted()
+{
+   #if defined(__APPLE__)
+    struct statfs* mounts = nullptr;
+    const int count = getmntinfo (&mounts, MNT_NOWAIT);
+    for (int i = 0; i < count; ++i)
+        if (std::strncmp (mounts[i].f_mntonname, "/Volumes/", 9) == 0)
+            return true;
+   #endif
+    return false;
+}
+
+// Looks at each folder under /Volumes, as the framework's browser does when it
+// lists the places it offers.
+void lookAtVolumes()
+{
+    waitWhileFolderChecksHeld();
+   #if defined(__APPLE__)
+    std::error_code listing;
+    for (std::filesystem::directory_iterator volume ("/Volumes", listing), end;
+         ! listing && volume != end; volume.increment (listing))
+    {
+        std::error_code ignored;
+        (void) volume->is_directory (ignored);
+    }
+   #endif
 }
 
 class ScanBrowser final : public juce::FileBrowserComponent
@@ -210,20 +255,8 @@ public:
           multiResultFn (std::move (onMultiResult))
     {
         ++liveCount();
-        const bool multi = (multiResultFn != nullptr);
         setOpaque (true);
         setWantsKeyboardFocus (true);
-
-        // Build the FileBrowserComponent. Flag bitmask follows juce's
-        // contract: openMode/saveMode + canSelectFiles or canSelectDirectories.
-        int browserFlags = (opts.mode == Mode::Save)
-                        ? (int) ScanBrowser::saveMode
-                        : (int) ScanBrowser::openMode;
-        browserFlags |= opts.selectDirectories
-                    ? (int) ScanBrowser::canSelectDirectories
-                    : (int) ScanBrowser::canSelectFiles;
-        if (multi)
-            browserFlags |= (int) ScanBrowser::canSelectMultipleItems;
 
         // Filter: simple wildcard filter. Empty pattern = any file.
         if (opts.filePatternsAllowed.isNotEmpty())
@@ -231,34 +264,16 @@ public:
                         opts.filePatternsAllowed, juce::String(),
                         opts.filePatternsAllowed);
 
-        // From $HOME (USERPROFILE on Windows), which a sandboxed run points at
-        // its own folder. JUCE asks the OS for the home folder and would start
-        // in the real one.
-        const juce::File home (dusk::fs::userHomeDir().u8string());
-        auto initial = opts.initialFileOrDirectory.getFullPathName().isNotEmpty()
-                           ? opts.initialFileOrDirectory
-                           : home;
-        // The browser takes a start path that isn't there as a file already
-        // chosen, and keeps it after the user moves to another folder. For
-        // Open, start in the nearest folder that exists instead.
-        if (opts.mode == Mode::Open)
-        {
-            while (! initial.exists() && initial.getParentDirectory() != initial)
-                initial = initial.getParentDirectory();
-            if (! initial.exists())
-                initial = home;
-        }
-        browser = std::make_unique<ScanBrowser> (browserFlags, initial, filter.get());
-        browser->addListener (this);
-        addAndMakeVisible (*browser);
-
-        // FileBrowserComponent doesn't expose its filename label; retitle it
-        // for save dialogs where "file:" reads wrong next to a name field.
-        if (opts.mode == Mode::Save)
-            for (auto* child : browser->getChildren())
-                if (auto* l = dynamic_cast<juce::Label*> (child))
-                    if (l->getText() == TRANS ("file:"))
-                        l->setText (TRANS ("Name:"), juce::dontSendNotification);
+        // macOS asks the user before an app may look at a network share or an
+        // external disk, and holds the call that looks until they answer. The
+        // framework's browser looks at every volume as it is built, here on the
+        // message thread, so with one mounted they are looked at from a thread
+        // of their own first. The panel is up meanwhile, and its browser is
+        // built once macOS has its answer.
+        if (volumesMounted() || folderChecksHeld())
+            buildBrowserAfterVolumes();
+        else
+            buildBrowser();
 
         titleLabel.setText (opts.title.isNotEmpty() ? opts.title
                                                        : (opts.mode == Mode::Save ? "Save file"
@@ -478,6 +493,72 @@ private:
         if (cb) cb (file);
     }
 
+    void buildBrowser()
+    {
+        // Flag bitmask follows juce's contract: openMode/saveMode +
+        // canSelectFiles or canSelectDirectories.
+        int browserFlags = (opts.mode == Mode::Save)
+                        ? (int) ScanBrowser::saveMode
+                        : (int) ScanBrowser::openMode;
+        browserFlags |= opts.selectDirectories
+                    ? (int) ScanBrowser::canSelectDirectories
+                    : (int) ScanBrowser::canSelectFiles;
+        if (multiResultFn != nullptr)
+            browserFlags |= (int) ScanBrowser::canSelectMultipleItems;
+
+        // From $HOME (USERPROFILE on Windows), which a sandboxed run points at
+        // its own folder. JUCE asks the OS for the home folder and would start
+        // in the real one.
+        const juce::File home (dusk::fs::userHomeDir().u8string());
+        auto initial = opts.initialFileOrDirectory.getFullPathName().isNotEmpty()
+                           ? opts.initialFileOrDirectory
+                           : home;
+        // The browser takes a start path that isn't there as a file already
+        // chosen, and keeps it after the user moves to another folder. For
+        // Open, start in the nearest folder that exists instead.
+        if (opts.mode == Mode::Open)
+        {
+            while (! initial.exists() && initial.getParentDirectory() != initial)
+                initial = initial.getParentDirectory();
+            if (! initial.exists())
+                initial = home;
+        }
+        browser = std::make_unique<ScanBrowser> (browserFlags, initial, filter.get());
+        browser->addListener (this);
+        // Behind the title and the buttons, where a browser built with the
+        // panel sits.
+        addAndMakeVisible (*browser, 0);
+
+        // FileBrowserComponent doesn't expose its filename label; retitle it
+        // for save dialogs where "file:" reads wrong next to a name field.
+        if (opts.mode == Mode::Save)
+            for (auto* child : browser->getChildren())
+                if (auto* l = dynamic_cast<juce::Label*> (child))
+                    if (l->getText() == TRANS ("file:"))
+                        l->setText (TRANS ("Name:"), juce::dontSendNotification);
+        resized();
+    }
+
+    void buildBrowserAfterVolumes()
+    {
+        try
+        {
+            std::thread ([panel = this, stillHere = std::weak_ptr<int> (alive)]
+            {
+                lookAtVolumes();
+                dusk::callAsync ([panel, stillHere]
+                {
+                    if (! stillHere.expired())
+                        panel->buildBrowser();
+                });
+            }).detach();
+        }
+        catch (const std::system_error&)
+        {
+            buildBrowser();
+        }
+    }
+
     bool accepts (const juce::File& f) const
     {
         return isAcceptableChoice (f.getFullPathName().toStdString(), opts.mode,
@@ -534,6 +615,8 @@ private:
     juce::TextButton newFolderBtn { "New folder..." }, createFolderBtn { "Create" };
     juce::TextEditor newFolderName;
     juce::File chosen;
+    // Gone with the panel, which a volume check still out then finds.
+    std::shared_ptr<int> alive = std::make_shared<int> (0);
 
     // Members are destroyed in reverse, so the browser goes before the filter it reads.
     struct Retired

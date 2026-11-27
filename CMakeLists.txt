@@ -438,6 +438,15 @@ if(APPLE)
         COMMAND plutil -replace LSMinimumSystemVersion -string
                 "${CMAKE_OSX_DEPLOYMENT_TARGET}"
                 "$<TARGET_BUNDLE_DIR:DuskStudio>/Contents/Info.plist"
+        # The file browser lists every mounted volume among its places, and
+        # macOS asks before an app may look at a network share or an external
+        # disk. Without these the prompt gives no reason.
+        COMMAND plutil -replace NSNetworkVolumesUsageDescription -string
+                "Dusk Studio lists network volumes in its file browser, so you can open and save sessions and audio on them."
+                "$<TARGET_BUNDLE_DIR:DuskStudio>/Contents/Info.plist"
+        COMMAND plutil -replace NSRemovableVolumesUsageDescription -string
+                "Dusk Studio lists external disks in its file browser, so you can open and save sessions and audio on them."
+                "$<TARGET_BUNDLE_DIR:DuskStudio>/Contents/Info.plist"
         # Pass --entitlements pointing at JUCE's generated plist so the
         # allow-jit / allow-unsigned-executable-memory / disable-library-
         # validation flags stay attached. Without this, the resigning
