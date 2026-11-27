@@ -347,6 +347,9 @@ DeviceSetup DeviceManager::getSetup() const
     return d;
 }
 
+// No graph sets these devices' clock: what runs is what was chosen.
+DeviceSetup DeviceManager::getChosenSetup() const { return getSetup(); }
+
 std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
 {
     auto s = impl->mgr.getAudioDeviceSetup();

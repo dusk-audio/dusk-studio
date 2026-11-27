@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "engine/device/LeasedCallback.h"
 
@@ -255,3 +256,90 @@ TEST_CASE ("A stream stopped and started while its device thread runs cycles nev
     REQUIRE (engine.wrongBlocks.load() == 0);
     REQUIRE (engine.blocks.load() >= kRestarts / 2);
 }
+
+namespace
+{
+// Records where each block says it sits in its cycle.
+class PlaceRecorder final : public IODeviceCallback
+{
+public:
+    struct Block { int samples, cycleOffset, cycleSamples; std::uint32_t cycleSerial; bool offline; };
+
+    void audioDeviceAboutToStart (IODevice*) override {}
+    void audioDeviceStopped() override {}
+
+    void audioDeviceIOCallback (const float* const*, int, float* const*, int,
+                                int numSamples, const CallbackContext& context) override
+    {
+        blocks.push_back ({ numSamples, context.cycleOffset, context.cycleSamples, context.cycleSerial,
+                            context.offlineRender });
+    }
+
+    std::vector<Block> blocks;
+};
+} // namespace
+
+// Live MIDI is placed by the time a block runs at, and the blocks of a split
+// cycle all run when the cycle starts: each has to say where in it it plays.
+TEST_CASE ("A block of a split device cycle carries its place in the cycle", "[audio][device]")
+{
+    LeasedCallback callback;
+    ClockWatch clock;
+    PlaceRecorder recorder;
+    CycleBuffers buffers;
+    CallbackContext context;
+    context.offlineRender = true;
+    const float* in[] = { buffers.input.data() };
+    float* out[] = { buffers.left.data(), buffers.right.data() };
+
+    SECTION ("split in four")
+    {
+        clock.prepare (128, 48000);
+        callback.attach (&recorder);
+        REQUIRE (dispatchCycle (callback, clock, in, 1, out, 2, kCycle, context));
+        REQUIRE (recorder.blocks.size() == 4);
+        for (int b = 0; b < 4; ++b)
+        {
+            const auto& block = recorder.blocks[(std::size_t) b];
+            CHECK (block.samples == 128);
+            CHECK (block.cycleOffset == 128 * b);
+            CHECK (block.cycleSamples == kCycle);
+            CHECK (block.cycleSerial == recorder.blocks[0].cycleSerial);
+            CHECK (block.offline);
+        }
+
+        // The next cycle's blocks carry another number, so a callback that sat
+        // some blocks out knows it is back in a different cycle.
+        REQUIRE (dispatchCycle (callback, clock, in, 1, out, 2, kCycle, context));
+        REQUIRE (recorder.blocks.size() == 8);
+        for (int b = 4; b < 8; ++b)
+            CHECK (recorder.blocks[(std::size_t) b].cycleSerial == recorder.blocks[4].cycleSerial);
+        CHECK (recorder.blocks[4].cycleSerial != recorder.blocks[0].cycleSerial);
+    }
+
+    SECTION ("a last block that is short")
+    {
+        clock.prepare (200, 48000);
+        callback.attach (&recorder);
+        REQUIRE (dispatchCycle (callback, clock, in, 1, out, 2, kCycle, context));
+        REQUIRE (recorder.blocks.size() == 3);
+        CHECK (recorder.blocks[2].samples == 112);
+        CHECK (recorder.blocks[2].cycleOffset == 400);
+        CHECK (recorder.blocks[2].cycleSamples == kCycle);
+    }
+
+    SECTION ("a whole cycle")
+    {
+        const int prepared = GENERATE (kCycle, 2 * kCycle);
+        clock.prepare (prepared, 48000);
+        callback.attach (&recorder);
+        REQUIRE (dispatchCycle (callback, clock, in, 1, out, 2, kCycle, context));
+        REQUIRE (recorder.blocks.size() == 1);
+        CHECK (recorder.blocks[0].samples == kCycle);
+        CHECK (recorder.blocks[0].cycleOffset == 0);
+        CHECK (recorder.blocks[0].cycleSamples == 0);
+        CHECK (recorder.blocks[0].offline);
+    }
+    callback.detach();
+}
+

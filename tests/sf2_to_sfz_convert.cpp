@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -303,38 +302,41 @@ TEST_CASE ("Sf2ToSfz separates malformed sample bounds from extraction finalizat
    #endif
 }
 
-TEST_CASE("Sf2ToSfz: converts preset 0 of a real SF2 bank to SFZ + WAVs", "[sf2conv][.fixture]")
+TEST_CASE("Sf2ToSfz: converts a preset to SFZ regions and the WAVs they name", "[sf2conv]")
 {
-    const char* bankPath = std::getenv("DUSKSTUDIO_TEST_SF2");
-    if (bankPath == nullptr || *bankPath == '\0')
-        SKIP("DUSKSTUDIO_TEST_SF2 is not set; point it at an SF2 bank such as FluidR3_GM_GS.sf2");
-    const juce::File bank { juce::String::fromUTF8(bankPath) };
-    REQUIRE(bank.existsAsFile());
+    const auto bytes = tunedSf2({}, 2);
+    duskstudio::test::TempDirectory temp ("dusk-sf2-convert");
+    const auto bankPath = temp.path() / "bank.sf2";
+    {
+        std::ofstream os (bankPath, std::ios::binary);
+        os.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize) bytes.size());
+    }
+    const juce::File bank { juce::String::fromUTF8(bankPath.u8string().c_str()) };
+    const juce::File dir { juce::String::fromUTF8((temp.path() / "samples").u8string().c_str()) };
 
-    auto dir = freshTempDir();
-    auto conv = duskstudio::convertSf2Preset(bank, 0, dir);
-
+    const auto conv = duskstudio::convertSf2Preset(bank, 0, dir);
     REQUIRE(conv.ok);
     REQUIRE(conv.error.empty());
-    REQUIRE_FALSE(conv.presetName.empty());
+    REQUIRE(conv.presetName == "pre0");
 
-    // SFZ body has the expected scaffolding + at least one region.
-    REQUIRE(dusk::text::contains(conv.sfzText, "<region>"));
-    REQUIRE(dusk::text::contains(conv.sfzText, "sample="));
-    REQUIRE(dusk::text::contains(conv.sfzText, "pitch_keycenter="));
-    REQUIRE(dusk::text::contains(conv.sfzText, "lokey="));
-
-    // At least one WAV was extracted into the sample dir, and each
-    // sample= name in the SFZ resolves to a real file there.
-    auto wavs = dir.findChildFiles(juce::File::findFiles, false, "*.wav");
-    REQUIRE(wavs.size() > 0);
-
-    // Spot-check the first region's sample resolves on disk.
-    const auto regionIdx = conv.sfzText.find("sample=");
-    REQUIRE(regionIdx != std::string::npos);
-    const auto afterEq = conv.sfzText.substr(regionIdx + 7);
-    const auto name = dusk::text::trim(afterEq.substr(0, afterEq.find(' ')));
-    REQUIRE(dir.getChildFile(name).existsAsFile());
-
-    dir.deleteRecursively();
+    // One region per sample zone, each with its key range, root key and a
+    // sample= name that is a WAV in the sample directory.
+    std::vector<std::string> named;
+    for (std::size_t at = conv.sfzText.find("<region>"); at != std::string::npos;
+         at = conv.sfzText.find("<region>", at + 1))
+    {
+        const auto end = std::min(conv.sfzText.find("<region>", at + 1), conv.sfzText.size());
+        const auto region = conv.sfzText.substr(at, end - at);
+        CHECK(dusk::text::contains(region, "lokey=0 hikey=127"));
+        CHECK(dusk::text::contains(region, "pitch_keycenter=60"));
+        const auto sample = region.find("sample=");
+        REQUIRE(sample != std::string::npos);
+        const auto rest = region.substr(sample + 7);
+        named.push_back(dusk::text::trim(rest.substr(0, rest.find_first_of(" \n"))));
+    }
+    REQUIRE(named.size() == 2);
+    CHECK(named[0] != named[1]);
+    for (const auto& name : named)
+        CHECK(dir.getChildFile(name).existsAsFile());
+    CHECK(dir.findChildFiles(juce::File::findFiles, false, "*.wav").size() == 2);
 }

@@ -70,19 +70,6 @@ bool sameSetup (const DeviceSetup& a, const DeviceSetup& b) noexcept
         && a.useDefaultOutputChannels == b.useDefaultOutputChannels;
 }
 
-// The rate or block size to record as chosen where the graph decides what runs.
-// Callers build a request from getSetup(), which reports the graph's clock, so a
-// value equal to what it reported before the open was copied through, not picked.
-double chosenOnGraph (double requested, double resolved, double reportedBefore,
-                      std::optional<double> saved)
-{
-    if (requested <= 0.0) return resolved;
-    const auto same = [] (double a, double b) { return std::abs (a - b) < 0.5; };
-    if (saved && *saved > 0.0 && same (requested, reportedBefore) && ! same (requested, *saved))
-        return *saved;
-    return requested;
-}
-
 // The single IODeviceCallback handed to IODevice::start. Fans the device's RT
 // blocks out to the registered engine callbacks (list size 1 in practice; the
 // N-callback path is retained but uses pre-sized scratch, never resizing in the
@@ -377,10 +364,47 @@ struct DeviceManager::Impl : private dusk::Timer
         return s;
     }
 
+    // The running setup with the rate and block size the user chose, where a
+    // graph runs the device at others. Those are what a pick is compared with
+    // and what a request that changes something else has to carry.
+    DeviceSetup chosenSetup() const
+    {
+        DeviceSetup s = currentSetup;
+        if (lastExplicitSettings && currentType != nullptr && currentType->clockSetByGraph()
+            && lastExplicitSettings->deviceType == currentType->getTypeName()
+            && lastExplicitSettings->setup.outputDeviceName == s.outputDeviceName
+            && lastExplicitSettings->setup.inputDeviceName == s.inputDeviceName)
+        {
+            if (lastExplicitSettings->setup.sampleRate > 0.0)
+                s.sampleRate = lastExplicitSettings->setup.sampleRate;
+            if (lastExplicitSettings->setup.bufferSize > 0)
+                s.bufferSize = lastExplicitSettings->setup.bufferSize;
+        }
+        return s;
+    }
+
     std::string changeSetup (const DeviceSetup& setup, SetupOrigin origin)
     {
-        if (sameSetup (setup, currentSetup) && currentDevice != nullptr && currentDevice->isOpen())
-            return {};
+        if (currentDevice != nullptr && currentDevice->isOpen())
+        {
+            if (origin == SetupOrigin::userChoice)
+            {
+                if (sameSetup (setup, chosenSetup()))
+                    return {};
+                // The device already runs what was picked, under a graph held
+                // at a clock other than the saved one: only what is saved moves.
+                if (sameSetup (setup, currentSetup))
+                {
+                    lastExplicitSettings->setup = currentSetup;
+                    broadcast();
+                    return {};
+                }
+            }
+            else if (sameSetup (setup, currentSetup))
+            {
+                return {};
+            }
+        }
 
         deviceChangePending.store (true, std::memory_order_release);
         return openDeviceFromSetup (setup, origin);
@@ -388,7 +412,6 @@ struct DeviceManager::Impl : private dusk::Timer
 
     std::string openDeviceFromSetup (const DeviceSetup& requested, SetupOrigin origin)
     {
-        const DeviceSetup reportedBefore = currentSetup;
         if (currentDevice != nullptr)
         {
             currentDevice->stop();     // fan-out delivers audioDeviceStopped
@@ -449,20 +472,13 @@ struct DeviceManager::Impl : private dusk::Timer
             DeviceStateBlob b;
             b.deviceType = currentType->getTypeName();
             b.setup      = currentSetup;
+            // The graph decides what runs; what was asked of the device is the
+            // choice. Callers build a request from getChosenSetup, so a field
+            // they left alone carries the earlier choice, not the graph's clock.
             if (graphClock)
             {
-                std::optional<double> savedRate, savedBuf;
-                if (lastExplicitSettings && lastExplicitSettings->deviceType == b.deviceType
-                    && lastExplicitSettings->setup.outputDeviceName == requested.outputDeviceName
-                    && lastExplicitSettings->setup.inputDeviceName == requested.inputDeviceName)
-                {
-                    savedRate = lastExplicitSettings->setup.sampleRate;
-                    savedBuf  = lastExplicitSettings->setup.bufferSize;
-                }
-                b.setup.sampleRate = chosenOnGraph (requested.sampleRate, rate,
-                                                    reportedBefore.sampleRate, savedRate);
-                b.setup.bufferSize = static_cast<int> (chosenOnGraph (requested.bufferSize, buf,
-                                                                      reportedBefore.bufferSize, savedBuf));
+                b.setup.sampleRate = rate;
+                b.setup.bufferSize = buf;
             }
             lastExplicitSettings = b;
         }
@@ -661,6 +677,8 @@ bool DeviceManager::isDeviceChangePending() const noexcept
 
 DeviceSetup DeviceManager::getSetup() const { return impl->currentSetup; }
 
+DeviceSetup DeviceManager::getChosenSetup() const { return impl->chosenSetup(); }
+
 std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
 {
     return impl->changeSetup (d, treatAsChosen ? SetupOrigin::userChoice : SetupOrigin::transient);
@@ -668,7 +686,7 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
 
 std::string DeviceManager::setSessionSampleRate (double sampleRate)
 {
-    auto setup = getSetup();
+    auto setup = getChosenSetup();
     setup.sampleRate = sampleRate;
     return impl->changeSetup (setup, SetupOrigin::session);
 }

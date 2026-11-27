@@ -311,6 +311,10 @@ public:
     // Frames the open native panel with this log tag ("mini-timeline", "piano-roll",
     // "mastering-eq", ...) has completed; empty while none is open.
     virtual std::optional<std::uint64_t> panelFrames (const std::string& logTag) const = 0;
+    // What that panel's newest frame was drawn for, in a few words: the kind of
+    // input that reached it, what else changed, or a repaint the system asked
+    // for. Empty without one.
+    virtual std::string panelFrameCause (const std::string& logTag) const = 0;
     // How far that panel's last frame drawn after a rest moved Dear ImGui's clock, in
     // seconds. Cleared by the call; empty when it drew none since, or none is open.
     virtual std::optional<float> panelClockAfterRest (const std::string& logTag) = 0;
@@ -630,6 +634,10 @@ public:
     // Display-only timers, the gain-reduction and VU meters' and the mini
     // timeline's, running now. Each stops while its component is hidden.
     virtual int meterTimersRunning() const = 0;
+    // Whether the timer that refreshes what a view draws runs now: "tape" for
+    // the tape strip, "mastering" for the MASTERING page, "waveform" for its
+    // overview. False for a view not built yet.
+    virtual bool viewRefreshRunning (const std::string& view) const = 0;
     // Whether a channel strip's gain-reduction meter has its timer running;
     // nullopt without the strip.
     virtual std::optional<bool> stripMeterTimerRunning (int track) const = 0;

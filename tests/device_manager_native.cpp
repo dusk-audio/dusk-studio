@@ -1193,7 +1193,7 @@ TEST_CASE ("DeviceManager saves the picked rate and block size when a graph open
     }
 }
 
-TEST_CASE ("DeviceManager on a held graph saves only what a request changes from the running clock",
+TEST_CASE ("DeviceManager on a held graph saves what a request built from the chosen setup changes",
            "[audio][device][pipewire]")
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1208,13 +1208,18 @@ TEST_CASE ("DeviceManager on a held graph saves only what a request changes from
     pick.bufferSize = 512;
     REQUIRE (dm.setSetup (pick, /*treatAsChosen*/ true).empty());
 
-    // Callers start a request from getSetup(), which reports the graph's clock.
-    auto request = dm.getSetup();
-    REQUIRE (request.bufferSize == 1024);
-    REQUIRE_THAT (request.sampleRate, Catch::Matchers::WithinAbs (44100.0, 1e-9));
+    // The graph's clock runs; the pick is what a request starts from.
+    REQUIRE (dm.getSetup().bufferSize == 1024);
+    REQUIRE_THAT (dm.getSetup().sampleRate, Catch::Matchers::WithinAbs (44100.0, 1e-9));
+    auto request = dm.getChosenSetup();
+    REQUIRE (request.bufferSize == 512);
+    REQUIRE_THAT (request.sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+    REQUIRE (request.outputDeviceName == dm.getSetup().outputDeviceName);
+    h.log.events.clear();
 
     double savedRate = 0.0;
     int savedBuf = 0;
+    bool reopened = true;
     SECTION ("only the block size changed")
     {
         request.bufferSize = 256;
@@ -1229,26 +1234,116 @@ TEST_CASE ("DeviceManager on a held graph saves only what a request changes from
         savedRate = 96000.0;
         savedBuf = 512;
     }
-    SECTION ("the running setup sent back to a live device")
+    SECTION ("the running rate picked as the saved one")
+    {
+        request.sampleRate = 44100.0;
+        REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
+        savedRate = 44100.0;
+        savedBuf = 512;
+    }
+    SECTION ("the running rate and block size picked as the saved ones leave the device open")
+    {
+        REQUIRE (dm.setSetup (dm.getSetup(), /*treatAsChosen*/ true).empty());
+        savedRate = 44100.0;
+        savedBuf = 1024;
+        reopened = false;
+        REQUIRE (dm.getChosenSetup().bufferSize == 1024);
+    }
+    SECTION ("the chosen setup sent back to a live device")
     {
         REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
         savedRate = 48000.0;
         savedBuf = 512;
+        reopened = false;
     }
-    SECTION ("the running setup sent back after a close")
+    SECTION ("the chosen setup sent back after a close")
     {
         dm.closeDevice();
-        REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
+        REQUIRE (dm.setSetup (dm.getChosenSetup(), /*treatAsChosen*/ true).empty());
         REQUIRE (dm.getCurrentDevice() != nullptr);
         savedRate = 48000.0;
         savedBuf = 512;
     }
+    SECTION ("a change that is not the user's leaves what is saved")
+    {
+        auto transient = dm.getSetup();
+        transient.bufferSize = 256;
+        REQUIRE (dm.setSetup (transient, /*treatAsChosen*/ false).empty());
+        savedRate = 48000.0;
+        savedBuf = 512;
+    }
 
+    CHECK (h.log.has ("open") == reopened);
     REQUIRE (dm.getSetup().bufferSize == 1024);
     const auto blob = DeviceStateBlob::parse (dm.getStateBlob());
     REQUIRE (blob.has_value());
     REQUIRE (blob->setup.bufferSize == savedBuf);
     REQUIRE_THAT (blob->setup.sampleRate, Catch::Matchers::WithinAbs (savedRate, 1e-9));
+    REQUIRE (dm.getChosenSetup().bufferSize == savedBuf);
+    REQUIRE_THAT (dm.getChosenSetup().sampleRate, Catch::Matchers::WithinAbs (savedRate, 1e-9));
+}
+
+// Run Self-Test opens every backend as a chosen setup and then restores, as a
+// chosen setup again, the one it found.
+TEST_CASE ("DeviceManager on a held graph gets its saved setup back from a backend tour",
+           "[audio][device][pipewire]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+
+    h.pw->openClock = { 1024, 44100.0 };
+    auto pick = dm.getSetup();
+    pick.sampleRate = 48000.0;
+    pick.bufferSize = 512;
+    REQUIRE (dm.setSetup (pick, /*treatAsChosen*/ true).empty());
+    const auto before = DeviceStateBlob::parse (dm.getStateBlob());
+    REQUIRE (before.has_value());
+
+    const auto original = dm.getChosenSetup();
+    dm.setCurrentDeviceType ("ALSA", /*treatAsChosen*/ true);
+    DeviceSetup tour;
+    tour.outputDeviceName = "hw0";
+    REQUIRE (dm.setSetup (tour, /*treatAsChosen*/ true).empty());
+    REQUIRE (DeviceStateBlob::parse (dm.getStateBlob())->deviceType == "ALSA");
+
+    dm.setCurrentDeviceType ("PipeWire", /*treatAsChosen*/ true);
+    REQUIRE (dm.setSetup (original, /*treatAsChosen*/ true).empty());
+
+    REQUIRE (dm.getSetup().bufferSize == 1024);
+    const auto after = DeviceStateBlob::parse (dm.getStateBlob());
+    REQUIRE (after.has_value());
+    CHECK (after->deviceType == before->deviceType);
+    CHECK (after->setup.outputDeviceName == before->setup.outputDeviceName);
+    CHECK (after->setup.inputDeviceName == before->setup.inputDeviceName);
+    CHECK (after->setup.bufferSize == 512);
+    CHECK_THAT (after->setup.sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+}
+
+TEST_CASE ("DeviceManager reports the running setup as the chosen one where no graph sets the clock",
+           "[audio][device]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+
+    dm.setCurrentDeviceType ("ALSA", /*treatAsChosen*/ true);
+    DeviceSetup pick;
+    pick.outputDeviceName = "hw0";
+    pick.sampleRate = 48000.0;
+    pick.bufferSize = 256;
+    REQUIRE (dm.setSetup (pick, /*treatAsChosen*/ true).empty());
+
+    auto transient = dm.getSetup();
+    transient.bufferSize = 128;
+    REQUIRE (dm.setSetup (transient, /*treatAsChosen*/ false).empty());
+    REQUIRE (dm.getSetup().bufferSize == 128);
+    REQUIRE (dm.getChosenSetup().bufferSize == 128);
+    REQUIRE (DeviceStateBlob::parse (dm.getStateBlob())->setup.bufferSize == 256);
 }
 
 TEST_CASE ("DeviceManager clock restart respects device changes from lifecycle callbacks", "[audio][device]")

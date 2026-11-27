@@ -948,7 +948,9 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
 
     auto* origTypeObj = deviceManager.getCurrentDeviceType();
     const std::string origType = origTypeObj != nullptr ? origTypeObj->getTypeName() : std::string();
-    const auto origSetup = deviceManager.getSetup();
+    // What is restored is saved as the user's choice: the chosen setup, not
+    // the clock a held graph happens to run.
+    const auto origSetup = deviceManager.getChosenSetup();
 
     deviceManager.setCurrentDeviceType ("ALSA", true);
 
@@ -1121,10 +1123,11 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
     std::string out;
     out += "--- Backend Open Tests ---\n";
 
-    // Capture the user's current setup so we can restore.
+    // Capture the user's chosen setup to restore: the restore saves it, and a
+    // held graph's clock is not theirs.
     auto* origTypeObj = deviceManager.getCurrentDeviceType();
     const std::string origType = origTypeObj != nullptr ? origTypeObj->getTypeName() : std::string();
-    const auto origSetup = deviceManager.getSetup();
+    const auto origSetup = deviceManager.getChosenSetup();
 
     const auto types = deviceManager.getAvailableDeviceTypes();
     for (auto* type : types)

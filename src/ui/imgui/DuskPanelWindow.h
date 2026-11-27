@@ -320,6 +320,10 @@ public:
     bool focusForScenario();
     bool hasKeyboardForScenario() const noexcept;
     std::uint64_t completedFramesForScenario() const noexcept;
+    // What the newest frame was drawn for: the kind of input that reached the
+    // panel, what else changed, the periodic frame, or a repaint the system
+    // asked for. Empty before the first.
+    std::string frameCauseForScenario() const;
     void pauseFramesForScenario (bool paused) noexcept;
     bool capturesKeyboardForScenario() const noexcept;
     // How often a field or menu opening has asked the system to focus the child.

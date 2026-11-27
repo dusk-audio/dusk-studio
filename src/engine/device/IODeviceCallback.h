@@ -16,11 +16,23 @@ class IODevice;
 // hostTimeNs means the backend supplied no hardware timestamp for this block.
 // offlineRender, and the render's cancel flag, are set only by the offline
 // render driver, never by a device.
+//
+// A device that hands one cycle over as several blocks, back to back, says
+// where each sits: cycleSamples is the length of the whole cycle and
+// cycleOffset the block's first sample within it. The blocks of a cycle all
+// run at the cycle's start, so whatever is placed by the time a block runs at
+// (live MIDI in, MIDI out) needs them to land where the block plays. Both are
+// zero for a block that is a whole cycle. cycleSerial is the same for every
+// block of one split cycle and differs from the cycle before, so a callback
+// that sat some blocks out can tell which cycle it is back in.
 struct CallbackContext
 {
     const std::uint64_t* hostTimeNs = nullptr;
     bool offlineRender = false;
     const std::atomic<bool>* renderCancelled = nullptr;
+    int cycleOffset = 0;
+    int cycleSamples = 0;
+    std::uint32_t cycleSerial = 0;
 };
 
 class IODeviceCallback

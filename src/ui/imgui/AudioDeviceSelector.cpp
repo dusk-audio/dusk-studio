@@ -1,4 +1,5 @@
 #include "AudioDeviceSelector.h"
+#include "../../engine/device/ClockChoice.h"
 #include "../../engine/device/DeviceManager.h"
 #include "../../engine/device/IODevice.h"
 #include "../../engine/device/IODeviceType.h"
@@ -46,6 +47,8 @@ std::string formatBufferSize (int samples, double sampleRate)
     std::snprintf (buffer, sizeof buffer, "%d (%.1f ms)", samples, ms);
     return buffer;
 }
+
+using device::savedClockEntry;
 } // namespace
 
 AudioDeviceSelector::AudioDeviceSelector (
@@ -128,29 +131,35 @@ void AudioDeviceSelector::rebuildFromManager()
 
     if (device != nullptr)
     {
-        const double current = setup.sampleRate > 0.0 ? setup.sampleRate
-                                                      : device->getCurrentSampleRate();
-        int selected = -1;
-        for (double rate : device->getAvailableSampleRates())
+        // Each list selects what is saved. Where a graph runs the device at
+        // another clock, the saved entry says so, and the running one is an
+        // entry of its own that can be picked to save it.
+        const auto chosen = deviceManager.getChosenSetup();
+        const double runningRate = setup.sampleRate > 0.0 ? setup.sampleRate
+                                                          : device->getCurrentSampleRate();
+        rateValues = device->getAvailableSampleRates();
+        const int savedRate = savedClockEntry (rateValues, chosen.sampleRate, runningRate);
+        for (std::size_t i = 0; i < rateValues.size(); ++i)
         {
-            if (std::abs (rate - current) < 0.5)
-                selected = static_cast<int> (rateValues.size());
-            rateValues.push_back (rate);
-            rates.add (formatRate (rate));
+            auto label = formatRate (rateValues[i]);
+            if (static_cast<int> (i) == savedRate && std::abs (rateValues[i] - runningRate) >= 0.5)
+                label += " (saved; now running " + formatRate (runningRate) + ")";
+            rates.add (label);
         }
-        rates.finish (selected);
+        rates.finish (savedRate);
 
-        const int currentBuffer = setup.bufferSize > 0 ? setup.bufferSize
+        const int runningBuffer = setup.bufferSize > 0 ? setup.bufferSize
                                                        : device->getCurrentBufferSizeSamples();
-        selected = -1;
-        for (int size : device->getAvailableBufferSizes())
+        bufferValues = device->getAvailableBufferSizes();
+        const int savedBuffer = savedClockEntry (bufferValues, chosen.bufferSize, runningBuffer);
+        for (std::size_t i = 0; i < bufferValues.size(); ++i)
         {
-            if (size == currentBuffer)
-                selected = static_cast<int> (bufferValues.size());
-            bufferValues.push_back (size);
-            buffers.add (formatBufferSize (size, device->getCurrentSampleRate()));
+            auto label = formatBufferSize (bufferValues[i], device->getCurrentSampleRate());
+            if (static_cast<int> (i) == savedBuffer && bufferValues[i] != runningBuffer)
+                label += " (saved; now running " + std::to_string (runningBuffer) + ")";
+            buffers.add (label);
         }
-        buffers.finish (selected);
+        buffers.finish (savedBuffer);
     }
     else
     {
@@ -175,7 +184,9 @@ void AudioDeviceSelector::applyTypeChange()
 
 void AudioDeviceSelector::applySetupChange (bool deviceChanged)
 {
-    auto setup = deviceManager.getSetup();
+    // From the chosen setup, so the list the user did not touch sends what is
+    // saved for it and not the clock a graph runs.
+    auto setup = deviceManager.getChosenSetup();
 
     setup.outputDeviceName = outputs.selected > 0 ? outputs.label (outputs.selected)
                                                   : std::string();

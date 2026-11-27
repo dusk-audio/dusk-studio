@@ -25,7 +25,7 @@ namespace duskstudio::scenario
 {
 namespace
 {
-#if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32) && ! defined (__APPLE__)
+#if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
 constexpr int kCrashNoticeTimeoutMs = 10000;
 
 struct KillState
@@ -331,9 +331,6 @@ const ScenarioRegistrar registrar { Scenario {
        #elif defined (_WIN32)
         (void) ctx;
         return ScenarioResult::skip ("Windows tracks the child by handle, not by pid");
-       #elif defined (__APPLE__)
-        (void) ctx;
-        return ScenarioResult::skip ("the sandbox stub children are not exercised on macOS");
        #else
         return runKilledChild (ctx);
        #endif

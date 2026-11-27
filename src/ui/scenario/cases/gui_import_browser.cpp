@@ -1039,6 +1039,75 @@ const ScenarioRegistrar fileBrowserHeldFolder { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldFolder (host, ctx); }
 } };
 
+// macOS asks before an app may look at a network share or an external disk,
+// and the framework's browser looks at every mounted volume as it is built.
+// The window has to keep handling events while that waits: the panel is up and
+// can be cancelled, and its browser lists a folder once the volumes have been
+// looked at.
+std::optional<ScenarioResult> runFileBrowserHeldVolumes (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kTickMs = 300;
+    static constexpr int kLateMs = 1000;
+    static constexpr int kListMs = 2000;
+    ctx.cleanup ([&host]
+    {
+        host.holdFileBrowserFolderChecks (false);
+        drainModals (host);
+    });
+    const int modalsBefore = host.modalCount();
+    auto opened = std::make_shared<std::chrono::steady_clock::time_point>();
+    const auto openHeld = [&host, &ctx, opened]
+    {
+        host.holdFileBrowserFolderChecks (true);
+        *opened = std::chrono::steady_clock::now();
+        ctx.expect (host.pressPeerKey (commandChord ('i'), 'i'), "the import shortcut was not handled");
+    };
+    const auto expectWaiting = [&host, &ctx, opened, modalsBefore]
+    {
+        const auto late = std::chrono::duration_cast<std::chrono::milliseconds> (
+                              std::chrono::steady_clock::now() - *opened).count() - kTickMs;
+        ctx.expect (late < kLateMs, "the window handled nothing for " + std::to_string (late)
+                                        + " ms while the volumes were being looked at");
+        ctx.expect (host.modalCount() == modalsBefore + 1,
+                    "the import browser's panel was not up while the volumes were being looked at");
+        ctx.expect (host.fileBrowserFolder().empty(), "the browser was built before the volumes had been looked at");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    // Cancelled while it waits: the answer that comes later builds nothing.
+    steps->push_back ({ 100, openHeld });
+    steps->push_back ({ kTickMs, [&host, &ctx, expectWaiting]
+    {
+        expectWaiting();
+        ctx.expect (host.pressPeerKey ("Escape", 0), "Esc was not handled while the volumes were being looked at");
+        host.holdFileBrowserFolderChecks (false);
+    } });
+    steps->push_back ({ kTickMs, [&host, &ctx, modalsBefore]
+    {
+        ctx.expect (host.modalCount() == modalsBefore, "Esc did not close the waiting browser");
+        ctx.expect (host.fileBrowserFolder().empty(), "a cancelled browser listed a folder");
+    } });
+    steps->push_back ({ 100, openHeld });
+    steps->push_back ({ kTickMs, [&host, expectWaiting]
+    {
+        expectWaiting();
+        host.holdFileBrowserFolderChecks (false);
+    } });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.fileBrowserFolder().empty(); },
+                       kListMs, [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the browser listed no folder once the volumes had been looked at");
+    });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar fileBrowserHeldVolumes { Scenario {
+    "gui.file_browser_held_volumes", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runFileBrowserHeldVolumes (host, ctx); }
+} };
+
 // Up clicks made while a folder check is held each go up a level, and a folder
 // the user creates meanwhile is where the browser stays.
 std::optional<ScenarioResult> runFileBrowserHeldUp (GuiHost& host, ScenarioContext& ctx)

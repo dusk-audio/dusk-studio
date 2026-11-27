@@ -1148,6 +1148,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return std::nullopt;
     }
+    std::string panelFrameCause (const std::string& logTag) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (const auto* window = imgui::DuskPanelWindow::openForScenario (logTag))
+            return window->frameCauseForScenario();
+       #else
+        (void) logTag;
+       #endif
+        return {};
+    }
     std::optional<float> panelClockAfterRest (const std::string& logTag) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -2523,6 +2533,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int meterTimersRunning() const override
     {
         return runningMeterTimers.load (std::memory_order_relaxed);
+    }
+    bool viewRefreshRunning (const std::string& view) const override
+    {
+        if (view == "tape")
+            return owner.tapeStrip != nullptr && owner.tapeStrip->refreshRunningForScenario();
+        if (owner.masteringView == nullptr)
+            return false;
+        return view == "waveform" ? owner.masteringView->waveformRefreshRunningForScenario()
+                                  : owner.masteringView->refreshRunningForScenario();
     }
     std::optional<bool> stripMeterTimerRunning (int track) const override
     {

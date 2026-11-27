@@ -115,8 +115,12 @@ public:
     // off the RT path by the caller. A block that overruns that cap arrives
     // empty rather than truncated, matching the out path: a torn tail would let
     // a note-on through while its note-off was dropped. Call once per input
-    // index per block - the drain is destructive.
-    void drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples) noexcept;
+    // index per block - the drain is destructive. `place` is the block's place
+    // in a device cycle handed over as several blocks (device::CallbackContext),
+    // all zero otherwise: the events then land in the block, and at the offset,
+    // their arrival maps to within the whole cycle.
+    void drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples,
+                     const dusk::MidiCyclePlace& place = {}) noexcept;
 
 private:
     // Backend MIDI thread. Routes by source identifier to the matching
@@ -198,7 +202,11 @@ public:
     // stream (>= 0) names the producer - one per track, one for the sync
     // output - whose blocks a port must receive in the order they were queued
     // (IMidiOutputBackend::send). sampleRate carries the sample-offset->ms math.
-    void queueRt (int port, int stream, const dusk::MidiBuffer& events, double sampleRate) noexcept;
+    // cycleOffset is the block's first sample within a device cycle handed over
+    // as several blocks (device::CallbackContext): those blocks are all queued
+    // at the cycle's start, so each is timed from where it plays.
+    void queueRt (int port, int stream, const dusk::MidiBuffer& events, double sampleRate,
+                  int cycleOffset = 0) noexcept;
 
     // Pump lifecycle (message thread).
     void startPump();

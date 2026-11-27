@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "foundation/MidiBuffer.h"
 #include "foundation/MidiCollector.h"
@@ -291,4 +292,144 @@ TEST_CASE ("MidiCollector delivers a ring-full backlog into a matching destinati
     REQUIRE (got.size() == pushed.size());
     REQUIRE (got == pushed);            // every message, in order
     REQUIRE (got.back()[0] == 0x80);    // including the release at the tail
+}
+
+namespace
+{
+struct Placed
+{
+    int tag = 0, offset = 0;
+    bool operator== (const Placed& o) const { return tag == o.tag && offset == o.offset; }
+};
+
+std::vector<Placed> placed (const dusk::MidiBuffer& b)
+{
+    std::vector<Placed> v;
+    for (const auto meta : b)
+        v.push_back ({ meta.data[0], meta.samplePosition });
+    return v;
+}
+
+constexpr int kSubBlock = 512;
+constexpr int kSplitCycle = 4 * kSubBlock;
+constexpr double kCycleMs = 1000.0 * kSplitCycle / 48000.0;
+
+// Block `b` of four of the cycle numbered `serial`.
+std::vector<Placed> drainBlockOf (MidiCollector& c, std::uint32_t serial, int b, double nowMs)
+{
+    dusk::MidiBuffer out;
+    c.removeNextSubBlock (out, kSubBlock, { b * kSubBlock, kSplitCycle, serial }, nowMs);
+    return placed (out);
+}
+
+// One cycle handed over as four blocks, all run when the cycle starts. The
+// clock a later block reads is a little on, as the real one is.
+std::array<std::vector<Placed>, 4> drainSplitCycle (MidiCollector& c, std::uint32_t serial, double cycleStartMs)
+{
+    std::array<std::vector<Placed>, 4> blocks;
+    for (int b = 0; b < 4; ++b)
+        blocks[(std::size_t) b] = drainBlockOf (c, serial, b, cycleStartMs + 0.02 * b);
+    return blocks;
+}
+} // namespace
+
+TEST_CASE ("MidiCollector places a split cycle's input in the block its arrival maps to",
+           "[midi][collector]")
+{
+    MidiCollector split, whole;
+    split.reset (48000.0, 0.0);
+    whole.reset (48000.0, 0.0);
+    // Arrivals spread over the cycle before this one: samples 48, 576, 1104,
+    // 1632 and 2016 of its 2048.
+    const std::array<double, 5> arrivals { 1.0, 12.0, 23.0, 34.0, 42.0 };
+    for (std::size_t i = 0; i < arrivals.size(); ++i)
+    {
+        add (split, (std::uint8_t) (i + 1), arrivals[i]);
+        add (whole, (std::uint8_t) (i + 1), arrivals[i]);
+    }
+
+    const auto blocks = drainSplitCycle (split, 1, kCycleMs);
+    CHECK (blocks[0] == std::vector<Placed> { { 1, 48 } });
+    CHECK (blocks[1] == std::vector<Placed> { { 2, 64 } });
+    CHECK (blocks[2] == std::vector<Placed> { { 3, 80 } });
+    CHECK (blocks[3] == std::vector<Placed> { { 4, 96 }, { 5, 480 } });
+
+    // The same input taken as one block of the whole cycle lands on the same
+    // samples of it.
+    dusk::MidiBuffer cycle;
+    whole.removeNextBlock (cycle, kSplitCycle, kCycleMs);
+    std::vector<Placed> joined;
+    for (int b = 0; b < 4; ++b)
+        for (const auto& e : blocks[(std::size_t) b])
+            joined.push_back ({ e.tag, e.offset + b * kSubBlock });
+    CHECK (joined == placed (cycle));
+
+    // The later blocks did not move the clock: the next cycle is retimed from
+    // the start of this one.
+    add (split, 6, kCycleMs + 13.0);   // sample 624 of the next cycle
+    const auto next = drainSplitCycle (split, 2, 2.0 * kCycleMs);
+    CHECK (next[0].empty());
+    CHECK (next[1] == std::vector<Placed> { { 6, 112 } });
+    CHECK (next[2].empty());
+    CHECK (next[3].empty());
+}
+
+TEST_CASE ("MidiCollector takes a block that is a whole cycle by the clock", "[midi][collector]")
+{
+    MidiCollector viaSubBlock, direct;
+    viaSubBlock.reset (48000.0, 0.0);
+    direct.reset (48000.0, 0.0);
+    for (auto* c : { &viaSubBlock, &direct })
+    {
+        add (*c, 1, 0.0);
+        add (*c, 2, 2.0);
+        add (*c, 3, 5.0);
+    }
+    const int cycleSamples = GENERATE (0, 512);
+    dusk::MidiBuffer a, b;
+    viaSubBlock.removeNextSubBlock (a, 512, { 0, cycleSamples, 0 }, 10.0);
+    direct.removeNextBlock (b, 512, 10.0);
+    REQUIRE (placed (a) == placed (b));
+    REQUIRE (placed (a).size() == 3);
+}
+
+// The engine can sit blocks out (it is suspended while a device is
+// reconfigured). When it is back part way through a later cycle, what the
+// collector holds is an older cycle's: it must not sound now.
+TEST_CASE ("MidiCollector does not play a cycle it holds into a later one", "[midi][collector]")
+{
+    MidiCollector c;
+    c.reset (48000.0, 0.0);
+    add (c, 1, 12.0);   // sample 576: block 1
+    add (c, 2, 23.0);   // sample 1104: block 2
+    add (c, 3, 34.0);   // sample 1632: block 3
+
+    SECTION ("a whole cycle played, then a later one joined after its start")
+    {
+        const auto first = drainSplitCycle (c, 1, kCycleMs);
+        REQUIRE (first[1] == std::vector<Placed> { { 1, 64 } });
+        REQUIRE (first[2] == std::vector<Placed> { { 2, 80 } });
+        add (c, 4, kCycleMs + 12.0);
+        for (int b = 1; b < 4; ++b)
+            CHECK (drainBlockOf (c, 2, b, 2.0 * kCycleMs).empty());
+    }
+
+    // The blocks the engine is back at follow, by their offsets, the ones it
+    // played before it left: only the cycle's number tells them apart.
+    SECTION ("left part way through a cycle, back at the same block of a later one")
+    {
+        REQUIRE (drainBlockOf (c, 1, 0, kCycleMs).empty());
+        REQUIRE (drainBlockOf (c, 1, 1, kCycleMs) == std::vector<Placed> { { 1, 64 } });
+        add (c, 4, kCycleMs + 12.0);
+        CHECK (drainBlockOf (c, 7, 2, 3.0 * kCycleMs).empty());
+        CHECK (drainBlockOf (c, 7, 3, 3.0 * kCycleMs).empty());
+    }
+
+    // What arrived meanwhile is still pending, and plays once.
+    const auto later = drainSplitCycle (c, 9, 4.0 * kCycleMs);
+    std::vector<int> tags;
+    for (const auto& block : later)
+        for (const auto& e : block)
+            tags.push_back (e.tag);
+    CHECK (tags == std::vector<int> { 4 });
 }

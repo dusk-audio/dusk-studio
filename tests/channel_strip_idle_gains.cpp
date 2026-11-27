@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/ChannelStrip.h"
@@ -43,11 +44,10 @@ float ulpOf (float x)
 
 // skip (n) adds step * n once where ticking adds step n times, rounding each
 // time. Every rounding is at most half an ulp of the value the ramp left
-// from. Skip's own multiply and add, and a step worked out afresh from the
-// two slightly different values when a ramp restarts, add at most three ulp
-// a block. So after `steps` samples taken as `skips` blocks the two differ by
-// at most (steps / 2 + 3 * skips) ulp of that value. Once the ramp ends both
-// hold its target exactly.
+// from, and skip's own multiply and add are at most three ulp a block. So
+// after `steps` samples taken as `skips` blocks the two differ by at most
+// (steps / 2 + 3 * skips) ulp of that value. Once the ramp ends both hold its
+// target exactly.
 TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does",
            "[channel-strip][smoothing]")
 {
@@ -59,9 +59,6 @@ TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does
     const int block = GENERATE (1, 37, 100, 512, 959, 960, 961);
     // Idle samples: inside the ramp, its last sample, past it, long past it.
     const int idleSamples = GENERATE (300, 959, 960, 1000, 6400);
-    // A strip whose chain runs while it does not pass sets its targets from
-    // its settings before it parks them, so each block starts a fresh ramp.
-    const bool restartEachBlock = GENERATE (false, true);
     // What the gain heads for on wake: zero (a running ramp carries on) or a level.
     const float wakeTarget = GENERATE (0.0f, 0.5f, 3.9810717f);
 
@@ -90,11 +87,7 @@ TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does
     {
         const int n = std::min (block, idleSamples - done);
         for (auto* r : { &skipped, &ticked })
-        {
-            if (restartEachBlock)
-                r->setTargetValue (start);
             r->setTargetValue (0.0f);
-        }
         skipped.skip (n);
         for (int i = 0; i < n; ++i)
             ticked.getNextValue();
@@ -103,7 +96,7 @@ TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does
 
         if (skipped.isSmoothing() != ticked.isSmoothing())
             ++idleStateMismatches;
-        const int steps = restartEachBlock ? done : std::min (done, kRampSamples);
+        const int steps = std::min (done, kRampSamples);
         const float bound = ticked.isSmoothing()
             ? (0.5f * (float) steps + 3.0f * (float) skips) * ulpOf (entry)
             : 0.0f;
@@ -495,10 +488,6 @@ TEST_CASE ("An idle strip's gains wake where ticking each sample leaves them",
         rig.apply (m);
         in.next();
         rig.idleBlock (idlePath, in.l.data(), in.r.data());
-        // A strip whose chain runs reads its settings before the chain, then
-        // parks the gains after it.
-        if (idlePath == Idle::notPassingChainRuns)
-            model.follow (m);
         model.park (kBlock);
         for (auto& channel : expected)
             channel.fill (0.0f);
@@ -519,16 +508,13 @@ TEST_CASE ("An idle strip's gains wake where ticking each sample leaves them",
 // passing. Strip `kept` mixes the whole time and has its fader and sends
 // turned down by hand over the same stretch, so those gains ramp to zero one
 // sample at a time. Once both mix again with the same settings, their outputs
-// have to match, every channel and every sample. (A strip whose chain runs
-// while it does not pass is left out: it restarts its ramps from its settings
-// each block, as the case above models, so it fades slower than a strip
-// turned down by hand. So is a route change still ramping when a stretch too
-// short for the fader to reach zero starts: the idle strip holds it part made,
-// the kept one finishes it.)
+// have to match, every channel and every sample. (A route change still
+// ramping when a stretch too short for the fader to reach zero starts is left
+// out: the idle strip holds it part made, the kept one finishes it.)
 TEST_CASE ("A strip woken from an idle stretch mixes like one kept running with its gains down",
            "[channel-strip][smoothing]")
 {
-    const Idle idlePath = GENERATE (Idle::noInput, Idle::notPassing);
+    const Idle idlePath = GENERATE (Idle::noInput, Idle::notPassing, Idle::notPassingChainRuns);
     const int stretchBlocks = GENERATE (3, 10, 64);
     const Change change = GENERATE (Change::beforeStretch, Change::duringStretch,
                                     Change::turnedDownDuring, Change::atAndAfterWake);
@@ -623,8 +609,6 @@ TEST_CASE ("A bus-routed strip fades back in through its buses alone",
         rig.apply (routed);
         in.next();
         rig.idleBlock (idlePath, in.l.data(), in.r.data());
-        if (idlePath == Idle::notPassingChainRuns)
-            model.follow (routed);
         model.park (kBlock);
     }
     for (int b = 0; b < kWakeBlocks; ++b)
@@ -634,4 +618,59 @@ TEST_CASE ("A bus-routed strip fades back in through its buses alone",
     REQUIRE (busPeak > 0.1f);
     CHECK_THAT (masterLeak, WithinAbs (0.0, 0.0));
     CHECK_THAT (worst, WithinAbs (0.0, toleranceFor (busPeak)));
+}
+
+// A strip that does not pass runs its chain all the same for a track printing
+// its effects, a freeze capture, a hardware-insert ping or a loaded
+// instrument. Whether the chain ran changes nothing about its gains: after
+// any number of blocks out, both wake with the same fade, sample for sample.
+TEST_CASE ("A strip that does not pass fades out the same whether or not its chain runs",
+           "[channel-strip][smoothing]")
+{
+    // One block to past the end of the 960-sample ramp, a block at a time.
+    const int stretchBlocks = GENERATE (range (1, 13));
+    const Change change = GENERATE (Change::beforeStretch, Change::duringStretch,
+                                    Change::turnedDownDuring, Change::atAndAfterWake);
+    const Timeline t = timelineFor (change);
+    CAPTURE (stretchBlocks, (int) change);
+
+    Rig rests, runs;
+    Input in;
+    const auto both = [&] (const Mix& m)
+    {
+        rests.apply (m);
+        runs.apply (m);
+        in.next();
+        rests.block (in.l.data(), in.r.data(), true);
+        runs.block (in.l.data(), in.r.data(), true);
+    };
+
+    for (int b = 0; b < kSettleBlocks; ++b)
+        both (t.initial);
+    both (t.before);
+
+    float leak = 0.0f;
+    for (int b = 0; b < stretchBlocks; ++b)
+    {
+        const Mix& m = b < stretchBlocks / 2 ? t.before : t.during;
+        rests.apply (m);
+        runs.apply (m);
+        in.next();
+        rests.idleBlock (Idle::notPassing, in.l.data(), in.r.data());
+        runs.idleBlock (Idle::notPassingChainRuns, in.l.data(), in.r.data());
+        leak = std::max ({ leak, peakOf (rests.out), peakOf (runs.out) });
+    }
+    REQUIRE_THAT (leak, WithinAbs (0.0, 0.0));
+
+    float peak = 0.0f, worst = 0.0f;
+    for (int b = 0; b < kWakeBlocks; ++b)
+    {
+        both (b < kLateBlock ? t.wake : t.late);
+        peak = std::max (peak, peakOf (rests.out));
+        worst = std::max (worst, worstGap (rests.out, runs.out));
+    }
+    REQUIRE (rests.nonFinite == 0);
+    REQUIRE (runs.nonFinite == 0);
+    REQUIRE (peak > 0.1f);
+    REQUIRE_THAT (worst, WithinAbs (0.0, 0.0));
 }

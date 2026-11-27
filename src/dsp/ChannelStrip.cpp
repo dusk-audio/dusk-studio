@@ -446,7 +446,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #endif
 }
 
-void ChannelStrip::updateGainTargets() noexcept
+void ChannelStrip::updateGainTargets (bool passing) noexcept
 {
     if (paramsRef == nullptr) return;
 
@@ -457,10 +457,16 @@ void ChannelStrip::updateGainTargets() noexcept
     const float faderDb = paramsRef->liveFaderDb.load (std::memory_order_relaxed);
     const bool  muted   = paramsRef->liveMute.load    (std::memory_order_relaxed);
 
-    const float gain = (muted || faderDb <= ChannelStripParams::kFaderInfThreshDb)
-                       ? 0.0f
-                       : dusk::audio::decibelsToGain (faderDb);
-    faderGain.setTargetValue (gain);
+    // A strip that is not passing leaves its fader and send gains to
+    // parkGainSmoothers: aiming them at their settings here would restart
+    // the ramp to zero in every block, and it would never end.
+    if (passing)
+    {
+        const float gain = (muted || faderDb <= ChannelStripParams::kFaderInfThreshDb)
+                           ? 0.0f
+                           : dusk::audio::decibelsToGain (faderDb);
+        faderGain.setTargetValue (gain);
+    }
 
     // Read livePan (engine routes manual pan or lane value through it),
     // matching the liveFaderDb pattern.
@@ -494,7 +500,8 @@ void ChannelStrip::updateGainTargets() noexcept
         const float g  = (auxSendsBypassed || db <= ChannelStripParams::kAuxSendOffDb)
                             ? 0.0f
                             : dusk::audio::decibelsToGain (db);
-        auxSendGain[(size_t) i].setTargetValue (g);
+        if (passing)
+            auxSendGain[(size_t) i].setTargetValue (g);
         auxSendPre[(size_t) i] =
             paramsRef->auxSendPreFader[(size_t) i].load (std::memory_order_relaxed);
     }
@@ -1365,7 +1372,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         silentTailQuietSamples = 0;
     }
 
-    updateGainTargets();
+    updateGainTargets (passByGate);
     updateEqParameters();
 
 #if DUSKSTUDIO_HAS_DUSK_DSP

@@ -100,7 +100,8 @@ void pushStaysStill (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& ste
             const auto frameCount = *frames - (*base)[i];
             if (frameCount == 0) continue;
             drawn += frameCount;
-            by += (by.empty() ? ": " : ", ") + panels[i] + " " + std::to_string (frameCount);
+            by += (by.empty() ? ": " : ", ") + panels[i] + " " + std::to_string (frameCount)
+                  + " (the newest for " + host.panelFrameCause (panels[i]) + ")";
         }
         ctx.expect (drawn == 0, what + " drew " + std::to_string (drawn) + " frames in "
                                     + std::to_string (kHoldMs) + " ms with nothing changing" + by);
@@ -215,7 +216,8 @@ void pushFloor (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
             ctx.expect (drawn >= 1, panels[i] + " drew no safety frame" + in);
             ctx.expect (drawn <= most, panels[i] + " drew " + std::to_string (drawn) + " frames" + in
                                            + " with nothing changing, more than the safety frame's "
-                                           + std::to_string (most));
+                                           + std::to_string (most) + " (the newest for "
+                                           + host.panelFrameCause (panels[i]) + ")");
         }
         host.panelFramesOnDemand (false, true);
     } });

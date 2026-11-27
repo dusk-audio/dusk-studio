@@ -684,7 +684,9 @@ private:
     std::atomic<float*> stemCapL { nullptr };
     std::atomic<float*> stemCapR { nullptr };
 
-    void updateGainTargets() noexcept;
+    // `passing` false leaves the fader and send gains on the ramp to zero
+    // parkGainSmoothers gave them.
+    void updateGainTargets (bool passing) noexcept;
     // Ramps the fader and aux-send gains toward zero across a block the strip
     // does not mix, one skip per smoother, so the next block it mixes fades in
     // from where the ramp got to. The bus gains are its route, which stays put:

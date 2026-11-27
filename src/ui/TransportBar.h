@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
+#include "RepaintGate.h"
 
 #include <array>
 #include <cstdint>
@@ -151,6 +152,16 @@ public:
 
 private:
     void timerCallback() override;
+    // What the timer does for the bar's own display: the device notice, the
+    // clock and the button states. It is skipped while the bar is hidden; the
+    // timer runs on for the control surface's keys, the transport's requests
+    // and MIDI learn, which no stage switches off.
+    void syncShownView();
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
+    void showStateChanged();
+    MeterTimerCount displayCount;
+    bool catchUpTick = false;
     void refreshButtonStates();
 
     // MCU REW/FFWD reuse the on-screen Rewind/Forward tap behaviour so the

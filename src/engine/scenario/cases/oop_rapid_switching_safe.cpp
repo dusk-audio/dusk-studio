@@ -11,7 +11,7 @@ namespace duskstudio::scenario
 {
 namespace
 {
-#if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (__APPLE__)
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
 constexpr int kCycles = 50;
 constexpr int kBlocksPerCycle = 2;
 // Short enough that the load is still in flight when the unload lands, so the
@@ -143,9 +143,6 @@ const ScenarioRegistrar registrar { Scenario {
        #if ! DUSKSTUDIO_HAS_OOP_PLUGINS
         (void) ctx;
         return ScenarioResult::skip ("built without sandboxed plugin hosting");
-       #elif defined (__APPLE__)
-        (void) ctx;
-        return ScenarioResult::skip ("the sandbox stub children are not exercised on macOS");
        #else
         return runRapidSwitching (ctx);
        #endif
