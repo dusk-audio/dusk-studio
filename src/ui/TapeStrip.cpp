@@ -241,7 +241,6 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
     setOpaque (true);
-    startTimerHz (30);
     engine.getUndoManager().addChangeListener (this, [this] { undoHistoryChanged(); });
     observedHistory = undoHistory();
     refreshModeCursor();
@@ -1251,8 +1250,32 @@ void TapeStrip::resized()
     inheritCursorOnDescendants (*this);
 }
 
+void TapeStrip::showStateChanged()
+{
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    // The first tick comes at once but not inside this call: it can lay the
+    // parent out again, which whoever is showing the strip may be part way
+    // through.
+    catchUpTick = true;
+    startTimer (1);
+    timerCount.set (true);
+}
+
+void TapeStrip::visibilityChanged() { showStateChanged(); }
+void TapeStrip::parentHierarchyChanged() { showStateChanged(); }
+
 void TapeStrip::timerCallback()
 {
+    // A minimised window still counts as shown, as restoring it tells no component.
+    if (! shownInLayout (*this))
+    {
+        stopTimer();
+        timerCount.set (false);
+        return;
+    }
+    if (std::exchange (catchUpTick, false))
+        startTimerHz (30);
+
     // Detect track color / name / take-badge / region changes and repaint the
     // whole strip if anything changed. Cheap - there are 24 tracks and we just
     // compare a String, a Colour, a short badge text and two counts each tick.

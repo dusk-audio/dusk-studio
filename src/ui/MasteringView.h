@@ -10,6 +10,7 @@
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
+#include "RepaintGate.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/audiofile/WaveformPeaks.h"
 #include "../session/Session.h"
@@ -33,6 +34,11 @@ public:
     // Shows whatever the player has loaded. The timer picks up any load or
     // unload; a caller that just changed the source calls this to show it now.
     void followPlayer();
+    // The 20 Hz refresh rests while the display is hidden. Its page hides and
+    // shows it without a call of its own reaching here, so the page says when.
+    void showStateChanged();
+    void visibilityChanged() override { showStateChanged(); }
+    bool refreshRunningForScenario() const noexcept { return isTimerRunning(); }
     const std::filesystem::path& shownFileForScenario() const { return shownFile; }
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -46,6 +52,7 @@ private:
     std::uint64_t                shownSourceGeneration = 0;
     std::filesystem::path        shownFile;
     std::int64_t                 lastPlayhead = -1;
+    MeterTimerCount              timerCount;
 };
 
 // Mastering-stage workspace. Loads stereo WAV (typically the freshest
@@ -76,6 +83,11 @@ public:
     std::filesystem::path waveformFileForScenario() const
     {
         return waveform != nullptr ? waveform->shownFileForScenario() : std::filesystem::path();
+    }
+    bool refreshRunningForScenario() const noexcept { return isTimerRunning(); }
+    bool waveformRefreshRunningForScenario() const noexcept
+    {
+        return waveform != nullptr && waveform->refreshRunningForScenario();
     }
     auto targetPointForScenario() const { return masteringTargetCombo.getBounds().getCentre(); }
     // Another session was loaded or started: the multiband picker reads
@@ -150,6 +162,11 @@ public:
 
 private:
     void timerCallback() override;
+    // The 30 Hz refresh is for what the page shows, so it rests while the
+    // page is hidden and starts again, with a tick at once, when it shows.
+    void showStateChanged();
+    MeterTimerCount timerCount;
+    bool catchUpTick = false;
     void updatePhaseAnalysis();
     void updateLabels (const std::string& rejectedPick = {});
     std::uint64_t labelSourceGeneration = 0;

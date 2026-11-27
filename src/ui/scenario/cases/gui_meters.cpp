@@ -482,6 +482,96 @@ const ScenarioRegistrar hiddenMeterTimers { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runHiddenMeterTimersRest (host, ctx); }
 } };
 
+// The tape strip, the MASTERING page with its overview, and the transport bar
+// refresh for what they draw. Each rests while it is hidden, and shows the
+// present state as soon as it is back.
+std::optional<ScenarioResult> runHiddenViewRefreshRests (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kCatchUpMs = 100;
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const bool expanded = host.timelineViewMatches (true);
+    const auto playhead = transport.getPlayhead();
+    ctx.cleanup ([&host, &transport, expanded, playhead]
+    {
+        host.switchToStage (GuiHost::Stage::Recording);
+        host.setTimelineShown (expanded);
+        transport.setPlayhead (playhead);
+    });
+    const auto expectRefresh = [&host, &ctx] (const char* view, bool running, const std::string& when)
+    {
+        ctx.expect (host.viewRefreshRunning (view) == running,
+                    std::string ("the ") + view + " refresh " + (running ? "does not run " : "still runs ") + when);
+    };
+    auto clock = std::make_shared<std::string>();
+    auto paints = std::make_shared<int> (0);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &transport]
+    {
+        host.switchToStage (GuiHost::Stage::Recording);
+        host.setTimelineShown (true);
+        transport.setPlayhead (0);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, expectRefresh]
+    {
+        expectRefresh ("tape", true, "while the timeline shows");
+        expectRefresh ("mastering", false, "while another stage shows");
+        expectRefresh ("waveform", false, "while another stage shows");
+        host.setTimelineShown (false);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, expectRefresh, paints]
+    {
+        expectRefresh ("tape", false, "while the timeline is collapsed");
+        *paints = host.tapePaints();
+        host.setTimelineShown (true);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx, expectRefresh, paints, clock]
+    {
+        expectRefresh ("tape", true, "once the timeline shows again");
+        ctx.expect (host.tapePaints() > *paints, "the tape strip drew nothing when the timeline showed again");
+        *clock = host.clockText();
+        host.switchToStage (GuiHost::Stage::Aux);
+    } });
+    steps->push_back ({ kHiddenMs, [&engine, &transport]
+    {
+        transport.setPlayhead (static_cast<std::int64_t> (90.0 * engine.getTimelineSampleRate()));
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx, expectRefresh, clock]
+    {
+        expectRefresh ("tape", false, "while the AUX stage shows");
+        ctx.expect (host.clockText() == *clock,
+                    "the hidden transport bar's clock went from \"" + *clock + "\" to \"" + host.clockText() + "\"");
+        host.switchToStage (GuiHost::Stage::Recording);
+    } });
+    steps->push_back ({ kCatchUpMs, [&host, &ctx, clock]
+    {
+        ctx.expect (host.clockText() != *clock,
+                    "the transport bar still shows \"" + *clock + "\" after it came back, though the playhead moved "
+                    "while it was hidden");
+        host.switchToStage (GuiHost::Stage::Mastering);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, expectRefresh]
+    {
+        expectRefresh ("mastering", true, "while the MASTERING stage shows");
+        expectRefresh ("waveform", true, "while the MASTERING stage shows");
+        expectRefresh ("tape", false, "while the MASTERING stage shows");
+        host.switchToStage (GuiHost::Stage::Recording);
+    } });
+    steps->push_back ({ kHiddenMs, [expectRefresh]
+    {
+        expectRefresh ("mastering", false, "after the MASTERING stage was left");
+        expectRefresh ("waveform", false, "after the MASTERING stage was left");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar hiddenViewRefresh { Scenario {
+    "gui.hidden_view_refresh_rests", { "gui", "idle" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runHiddenViewRefreshRests (host, ctx); }
+} };
+
 const ScenarioRegistrar idleMeters { Scenario {
     "gui.idle_meters_stay_still", { "gui", "meter" }, Needs::Engine | Needs::Gui,
     {}, {}, 90000,

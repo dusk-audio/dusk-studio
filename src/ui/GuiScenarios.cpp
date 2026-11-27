@@ -2524,6 +2524,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return runningMeterTimers.load (std::memory_order_relaxed);
     }
+    bool viewRefreshRunning (const std::string& view) const override
+    {
+        if (view == "tape")
+            return owner.tapeStrip != nullptr && owner.tapeStrip->refreshRunningForScenario();
+        if (owner.masteringView == nullptr)
+            return false;
+        return view == "waveform" ? owner.masteringView->waveformRefreshRunningForScenario()
+                                  : owner.masteringView->refreshRunningForScenario();
+    }
     std::optional<bool> stripMeterTimerRunning (int track) const override
     {
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;

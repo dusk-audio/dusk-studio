@@ -5,6 +5,7 @@
 #include "../session/Session.h"
 #include "../session/TrackMove.h"
 #include "../foundation/MessageThread.h"
+#include "RepaintGate.h"
 #include "WheelScroll.h"
 
 #include <algorithm>
@@ -26,6 +27,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
+    bool refreshRunningForScenario() const noexcept { return isTimerRunning(); }
 
     void mouseDown        (const juce::MouseEvent&) override;
     void mouseDrag        (const juce::MouseEvent&) override;
@@ -262,6 +266,11 @@ public:
 
 private:
     void timerCallback() override;
+    // Everything the timer does is for what the strip draws, so it rests while
+    // the strip is hidden and starts again, with a tick at once, when it shows.
+    void showStateChanged();
+    MeterTimerCount timerCount;
+    bool catchUpTick = false;
     void undoHistoryChanged();
 
     // A plain press on a name arms a track move; this much vertical travel

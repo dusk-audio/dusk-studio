@@ -56,10 +56,17 @@ WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
     : player (p)
 {
     setOpaque (true);
-    startTimerHz (20);
 }
 
 WaveformDisplay::~WaveformDisplay() { stopTimer(); }
+
+void WaveformDisplay::showStateChanged()
+{
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    startTimerHz (20);
+    timerCount.set (true);
+    timerCallback();
+}
 
 void WaveformDisplay::followPlayer()
 {
@@ -74,6 +81,12 @@ void WaveformDisplay::followPlayer()
 
 void WaveformDisplay::timerCallback()
 {
+    if (! shownInLayout (*this))
+    {
+        stopTimer();
+        timerCount.set (false);
+        return;
+    }
     followPlayer();
     const auto p = player.getPlayhead();
     auto next = waveformSource.snapshot();
@@ -365,7 +378,6 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     updateLabels();
     phaseSourceGeneration = engine.getMasteringPlayer().getSourceGeneration();
     phaseAnalyzer.prepare (engine.getTimelineSampleRate(), session.mastering().phase.snapshot());
-    startTimerHz (30);
 }
 
 MasteringView::~MasteringView()
@@ -385,6 +397,7 @@ MasteringView::~MasteringView()
 void MasteringView::visibilityChanged()
 {
     scheduleNativePanelSync();
+    showStateChanged();
 }
 
 void MasteringView::parentHierarchyChanged()
@@ -392,6 +405,19 @@ void MasteringView::parentHierarchyChanged()
     // The native children embed into the top-level window's handle, which only exists
     // once this view is in a realised hierarchy.
     scheduleNativePanelSync();
+    showStateChanged();
+}
+
+void MasteringView::showStateChanged()
+{
+    if (waveform != nullptr)
+        waveform->showStateChanged();
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    // The first tick comes at once, off this call, which runs while the page
+    // is still being shown.
+    catchUpTick = true;
+    startTimer (1);
+    timerCount.set (true);
 }
 
 void MasteringView::scheduleNativePanelSync()
@@ -1049,6 +1075,15 @@ void MasteringView::updatePhaseAnalysis()
 void MasteringView::timerCallback()
 {
     syncNativePanelVisibility();
+    // A minimised window still counts as shown, as restoring it tells no component.
+    if (! shownInLayout (*this))
+    {
+        stopTimer();
+        timerCount.set (false);
+        return;
+    }
+    if (std::exchange (catchUpTick, false))
+        startTimerHz (30);
     // The window losing the keyboard is the user leaving it, where a native child's
     // own focus is not: a window manager moves that on a press inside the child.
     auto* const peer = getPeer();

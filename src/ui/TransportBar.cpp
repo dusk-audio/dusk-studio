@@ -6,6 +6,7 @@
 #include "../util/StringParsing.h"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace duskstudio
 {
@@ -734,9 +735,68 @@ void TransportBar::refreshDeviceNotice()
     repaint();
 }
 
-void TransportBar::timerCallback()
+void TransportBar::showStateChanged()
+{
+    const bool shown = shownInLayout (*this);
+    displayCount.set (shown);
+    if (! shown) return;
+    // The display catches up at once but not inside this call: a notice that
+    // changed lays the parent out again, which whoever is showing the bar may
+    // be part way through.
+    catchUpTick = true;
+    startTimer (1);
+}
+
+void TransportBar::visibilityChanged() { showStateChanged(); }
+void TransportBar::parentHierarchyChanged() { showStateChanged(); }
+
+void TransportBar::syncShownView()
 {
     refreshDeviceNotice();
+
+    // Skip the periodic refresh while the user is mid-edit so we don't
+    // stomp their typed input. Same pattern the BPM editor uses below.
+    // When MIDI learn is pending, the clock label dims and shows a
+    // "MIDI LEARN..." prompt so the user knows the next CC/Note will be
+    // captured. Cleared on capture (drained in the same tick).
+    if (! clockLabel.isBeingEdited())
+    {
+        const int learnTarget = engine.getSession().midiLearnPending.load (std::memory_order_relaxed);
+        if (learnTarget >= 0)
+        {
+            clockLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffd060));
+            clockLabel.setText ("MIDI LEARN...", juce::dontSendNotification);
+        }
+        else
+        {
+            clockLabel.setColour (juce::Label::textColourId, kBrightText);
+            const auto mode = (TimeDisplayMode) engine.getSession()
+                                                   .timeDisplayMode.load (std::memory_order_relaxed);
+            const float bpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
+            const int   bpb = engine.getSession().beatsPerBar.load (std::memory_order_relaxed);
+            clockLabel.setText (formatSamplePosition (engine.getTransport().getPlayhead(),
+                                                        engine.getTimelineSampleRate(),
+                                                        engine.getSession().tempoMap,
+                                                        bpm, bpb, mode),
+                                 juce::dontSendNotification);
+            // Icon shows what the next click will switch TO - matches the
+            // convention used by Reaper / Pro Tools secondary time-scale
+            // buttons. Bars-mode shows the clock (click -> time); Time-mode
+            // shows the bars glyph (click -> bars).
+            timeFormatToggle.setIcon (mode == TimeDisplayMode::Bars
+                                          ? TransportIconButton::Icon::TimeClock
+                                          : TransportIconButton::Icon::Bars);
+        }
+    }
+
+    // The BPM field tracks the tempo at the playhead, which this reads too.
+    refreshButtonStates();
+}
+
+void TransportBar::timerCallback()
+{
+    if (std::exchange (catchUpTick, false))
+        startTimerHz (20);
 
     // 10x scrub. Once a REW / FFWD button has been held past
     // kHoldThresholdMs, advance the playhead by (sr * kScrubMultiplier *
@@ -803,47 +863,9 @@ void TransportBar::timerCallback()
     if (! rewIsScrubbing && ! ffwdIsScrubbing
         && ! mcuRewIsScrubbing && ! mcuFfwdIsScrubbing) lastScrubTickMs = 0;
 
-    const auto playhead = engine.getTransport().getPlayhead();
-
-    // BPM field tracks the tempo at the playhead (refreshButtonStates() below
-    // sets it; it reads the playhead too so the two never disagree).
-
-    // Skip the periodic refresh while the user is mid-edit so we don't
-    // stomp their typed input. Same pattern the BPM editor uses below.
-    // When MIDI learn is pending, the clock label dims and shows a
-    // "MIDI LEARN..." prompt so the user knows the next CC/Note will be
-    // captured. Cleared on capture (drained below in the same tick).
-    if (! clockLabel.isBeingEdited())
-    {
-        const int learnTarget = engine.getSession().midiLearnPending.load (std::memory_order_relaxed);
-        if (learnTarget >= 0)
-        {
-            clockLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffd060));
-            clockLabel.setText ("MIDI LEARN...", juce::dontSendNotification);
-        }
-        else
-        {
-            clockLabel.setColour (juce::Label::textColourId, kBrightText);
-            const auto mode = (TimeDisplayMode) engine.getSession()
-                                                   .timeDisplayMode.load (std::memory_order_relaxed);
-            const float bpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
-            const int   bpb = engine.getSession().beatsPerBar.load (std::memory_order_relaxed);
-            clockLabel.setText (formatSamplePosition (playhead,
-                                                        engine.getTimelineSampleRate(),
-                                                        engine.getSession().tempoMap,
-                                                        bpm, bpb, mode),
-                                 juce::dontSendNotification);
-            // Icon shows what the next click will switch TO - matches the
-            // convention used by Reaper / Pro Tools secondary time-scale
-            // buttons. Bars-mode shows the clock (click -> time); Time-mode
-            // shows the bars glyph (click -> bars).
-            timeFormatToggle.setIcon (mode == TimeDisplayMode::Bars
-                                          ? TransportIconButton::Icon::TimeClock
-                                          : TransportIconButton::Icon::Bars);
-        }
-    }
-
-    refreshButtonStates();
+    // A minimised window still counts as shown, as restoring it tells no component.
+    if (shownInLayout (*this))
+        syncShownView();
 
     // Post-roll auto-stop and whatever the audio thread queued for the
     // message thread (a chase locate, a MIDI-bound transport action).
