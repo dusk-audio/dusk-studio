@@ -1076,9 +1076,12 @@ std::optional<ScenarioResult> runFileBrowserHeldVolumes (GuiHost& host, Scenario
     auto steps = std::make_shared<std::vector<Step>>();
     // Cancelled while it waits: the answer that comes later builds nothing.
     steps->push_back ({ 100, openHeld });
-    steps->push_back ({ kTickMs, [&host, &ctx, expectWaiting]
+    steps->push_back ({ kTickMs, [&host, &ctx, expectWaiting, modalsBefore]
     {
         expectWaiting();
+        // There is nothing to open yet: Return neither picks nor cancels.
+        host.pressPeerKey ("Return", 0);
+        ctx.expect (host.modalCount() == modalsBefore + 1, "Return closed the browser before it was built");
         ctx.expect (host.pressPeerKey ("Escape", 0), "Esc was not handled while the volumes were being looked at");
         host.holdFileBrowserFolderChecks (false);
     } });
