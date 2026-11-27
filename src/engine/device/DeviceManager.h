@@ -65,8 +65,17 @@ public:
     IODeviceType* getCurrentDeviceType();
     void          setCurrentDeviceType (const std::string& typeName, bool treatAsChosen);
 
+    // The setup as the device runs it.
     DeviceSetup getSetup() const;
+    // getSetup with the rate and block size the user chose, which are the ones
+    // saved. They differ from the running ones only where a graph sets the
+    // clock (PipeWire) and runs at another. A request passed to setSetup as
+    // chosen starts from this one: starting from getSetup would save the
+    // graph's clock for every field the request left alone.
+    DeviceSetup getChosenSetup() const;
     // Apply a setup. Returns an empty string on success, else an error message.
+    // A chosen setup equal to the one running, but not to the one saved, is
+    // saved without reopening the device.
     std::string setSetup (const DeviceSetup& setup, bool treatAsChosen);
     // A session's automatic rate switch becomes the saved PipeWire rate only
     // if the graph actually adopts it.

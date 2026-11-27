@@ -178,6 +178,7 @@ add_executable(dusk-studio-tests
     device_manager_native.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceManager.cpp
     graph_clock.cpp
+    device_clock_choice.cpp
     device_leased_callback.cpp
     update_checker_version.cpp
     session_schema_migration.cpp
