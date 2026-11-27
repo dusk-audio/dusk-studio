@@ -1148,6 +1148,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return std::nullopt;
     }
+    std::string panelFrameCause (const std::string& logTag) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (const auto* window = imgui::DuskPanelWindow::openForScenario (logTag))
+            return window->frameCauseForScenario();
+       #else
+        (void) logTag;
+       #endif
+        return {};
+    }
     std::optional<float> panelClockAfterRest (const std::string& logTag) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

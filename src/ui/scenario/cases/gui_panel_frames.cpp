@@ -100,7 +100,8 @@ void pushStaysStill (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& ste
             const auto frameCount = *frames - (*base)[i];
             if (frameCount == 0) continue;
             drawn += frameCount;
-            by += (by.empty() ? ": " : ", ") + panels[i] + " " + std::to_string (frameCount);
+            by += (by.empty() ? ": " : ", ") + panels[i] + " " + std::to_string (frameCount)
+                  + " (the newest for " + host.panelFrameCause (panels[i]) + ")";
         }
         ctx.expect (drawn == 0, what + " drew " + std::to_string (drawn) + " frames in "
                                     + std::to_string (kHoldMs) + " ms with nothing changing" + by);
