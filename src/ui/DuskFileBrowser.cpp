@@ -98,8 +98,10 @@ void lookAtVolumes()
     for (std::filesystem::directory_iterator volume ("/Volumes", listing), end;
          ! listing && volume != end; volume.increment (listing))
     {
+        // Not the entry's own is_directory: that answers from the listing of
+        // /Volumes and never reaches the volume.
         std::error_code ignored;
-        (void) volume->is_directory (ignored);
+        (void) std::filesystem::status (volume->path(), ignored);
     }
    #endif
 }
