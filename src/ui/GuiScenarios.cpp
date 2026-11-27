@@ -2538,6 +2538,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (view == "tape")
             return owner.tapeStrip != nullptr && owner.tapeStrip->refreshRunningForScenario();
+        if (view == "mini-timeline")
+            return owner.miniTimeline != nullptr && owner.miniTimeline->refreshRunningForScenario();
         if (owner.masteringView == nullptr)
             return false;
         return view == "waveform" ? owner.masteringView->waveformRefreshRunningForScenario()

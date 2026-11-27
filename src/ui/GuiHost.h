@@ -635,8 +635,9 @@ public:
     // timeline's, running now. Each stops while its component is hidden.
     virtual int meterTimersRunning() const = 0;
     // Whether the timer that refreshes what a view draws runs now: "tape" for
-    // the tape strip, "mastering" for the MASTERING page, "waveform" for its
-    // overview. False for a view not built yet.
+    // the tape strip, "mini-timeline" for the ribbon that stands in for it,
+    // "mastering" for the MASTERING page, "waveform" for its overview. False
+    // for a view not built yet.
     virtual bool viewRefreshRunning (const std::string& view) const = 0;
     // Whether a channel strip's gain-reduction meter has its timer running;
     // nullopt without the strip.

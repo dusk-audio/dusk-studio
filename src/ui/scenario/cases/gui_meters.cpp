@@ -482,9 +482,9 @@ const ScenarioRegistrar hiddenMeterTimers { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runHiddenMeterTimersRest (host, ctx); }
 } };
 
-// The tape strip, the MASTERING page with its overview, and the transport bar
-// refresh for what they draw. Each rests while it is hidden, and shows the
-// present state as soon as it is back.
+// The tape strip, the mini timeline that stands in for it, the MASTERING page
+// with its overview, and the transport bar refresh for what they draw. Each
+// rests while it is hidden, and shows the present state as soon as it is back.
 std::optional<ScenarioResult> runHiddenViewRefreshRests (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr int kCatchUpMs = 100;
@@ -492,9 +492,9 @@ std::optional<ScenarioResult> runHiddenViewRefreshRests (GuiHost& host, Scenario
     auto& transport = engine.getTransport();
     const bool expanded = host.timelineViewMatches (true);
     const auto playhead = transport.getPlayhead();
+    keepStage (host, ctx);
     ctx.cleanup ([&host, &transport, expanded, playhead]
     {
-        host.switchToStage (GuiHost::Stage::Recording);
         host.setTimelineShown (expanded);
         transport.setPlayhead (playhead);
     });
@@ -515,6 +515,7 @@ std::optional<ScenarioResult> runHiddenViewRefreshRests (GuiHost& host, Scenario
     steps->push_back ({ kHiddenMs, [&host, expectRefresh]
     {
         expectRefresh ("tape", true, "while the timeline shows");
+        expectRefresh ("mini-timeline", false, "while the timeline shows in its place");
         expectRefresh ("mastering", false, "while another stage shows");
         expectRefresh ("waveform", false, "while another stage shows");
         host.setTimelineShown (false);
@@ -522,12 +523,14 @@ std::optional<ScenarioResult> runHiddenViewRefreshRests (GuiHost& host, Scenario
     steps->push_back ({ kHiddenMs, [&host, expectRefresh, paints]
     {
         expectRefresh ("tape", false, "while the timeline is collapsed");
+        expectRefresh ("mini-timeline", true, "while it stands in for the collapsed timeline");
         *paints = host.tapePaints();
         host.setTimelineShown (true);
     } });
     steps->push_back ({ kHiddenMs, [&host, &ctx, expectRefresh, paints, clock]
     {
         expectRefresh ("tape", true, "once the timeline shows again");
+        expectRefresh ("mini-timeline", false, "once the timeline shows again");
         ctx.expect (host.tapePaints() > *paints, "the tape strip drew nothing when the timeline showed again");
         *clock = host.clockText();
         host.switchToStage (GuiHost::Stage::Aux);
@@ -539,6 +542,7 @@ std::optional<ScenarioResult> runHiddenViewRefreshRests (GuiHost& host, Scenario
     steps->push_back ({ kHiddenMs, [&host, &ctx, expectRefresh, clock]
     {
         expectRefresh ("tape", false, "while the AUX stage shows");
+        expectRefresh ("mini-timeline", false, "while the AUX stage shows");
         ctx.expect (host.clockText() == *clock,
                     "the hidden transport bar's clock went from \"" + *clock + "\" to \"" + host.clockText() + "\"");
         host.switchToStage (GuiHost::Stage::Recording);
