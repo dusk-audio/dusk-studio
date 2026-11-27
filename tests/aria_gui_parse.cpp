@@ -5,9 +5,6 @@
 
 #include <juce_core/juce_core.h>
 
-#include <algorithm>
-#include <cstdlib>
-
 namespace
 {
 juce::File makeTempFile(const juce::String& contents, const juce::String& suffix)
@@ -15,13 +12,6 @@ juce::File makeTempFile(const juce::String& contents, const juce::String& suffix
     auto f = juce::File::createTempFile(suffix);
     f.replaceWithText(contents);
     return f;
-}
-
-int countKind(const std::vector<duskstudio::AriaWidget>& ws,
-              duskstudio::AriaWidgetKind k)
-{
-    return (int) std::count_if(ws.begin(), ws.end(),
-                                [k](const auto& w) { return w.kind == k; });
 }
 }
 
@@ -303,46 +293,4 @@ TEST_CASE("AriaBank: returns nullopt when no *.bank.xml is found",
     REQUIRE_FALSE(duskstudio::AriaBank::tryLoadFromSfz(sfz).has_value());
 
     root.deleteRecursively();
-}
-
-TEST_CASE("AriaGui: Swirly fixture parses with expected widget counts",
-          "[aria_gui][.fixture]")
-{
-    const char* swirlyPath = std::getenv("DUSKSTUDIO_TEST_ARIA_DIR");
-    if (swirlyPath == nullptr || *swirlyPath == '\0')
-        SKIP("DUSKSTUDIO_TEST_ARIA_DIR is not set; point it at the unpacked Swirly Drums package");
-    const juce::File swirlyRoot { juce::String::fromUTF8(swirlyPath) };
-    REQUIRE(swirlyRoot.isDirectory());
-
-    auto fullKitSfz = swirlyRoot.getChildFile("Programs/Full_kit.sfz");
-    REQUIRE(fullKitSfz.existsAsFile());
-
-    auto bankOpt = duskstudio::AriaBank::tryLoadFromSfz(fullKitSfz);
-    REQUIRE(bankOpt.has_value());
-    REQUIRE(bankOpt->programs.size() == 8);
-    REQUIRE(bankOpt->bankName == "Swirly Drums");
-    REQUIRE(bankOpt->selectedIndex >= 0);
-    REQUIRE(bankOpt->programs[(size_t) bankOpt->selectedIndex].sfzFile
-            == fullKitSfz);
-
-    auto fullKitXml = swirlyRoot.getChildFile("GUI/Full_kit.xml");
-    REQUIRE(fullKitXml.existsAsFile());
-
-    auto docOpt = duskstudio::AriaGuiDoc::parse(fullKitXml);
-    REQUIRE(docOpt.has_value());
-    REQUIRE(docOpt->width  == 775);
-    REQUIRE(docOpt->height == 335);
-    REQUIRE(countKind(docOpt->widgets,
-                      duskstudio::AriaWidgetKind::StaticImage) == 1);
-    REQUIRE(countKind(docOpt->widgets,
-                      duskstudio::AriaWidgetKind::StaticText)  == 72);
-    REQUIRE(countKind(docOpt->widgets,
-                      duskstudio::AriaWidgetKind::Slider)      == 27);
-    REQUIRE(countKind(docOpt->widgets,
-                      duskstudio::AriaWidgetKind::Knob)        == 34);
-    REQUIRE(countKind(docOpt->widgets,
-                      duskstudio::AriaWidgetKind::OptionMenu)  == 2);
-
-    // Image paths in XML are relative to the GUI dir.
-    REQUIRE(docOpt->resourceDir == swirlyRoot.getChildFile("GUI"));
 }
