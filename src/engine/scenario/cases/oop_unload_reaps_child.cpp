@@ -12,7 +12,7 @@ namespace duskstudio::scenario
 {
 namespace
 {
-#if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32) && ! defined (__APPLE__)
+#if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
 // The child is asked to exit, then taken down with SIGTERM and a half-second
 // grace, so the wait only has to cover a loaded machine - not a hung child.
 constexpr int kChildExitTimeoutMs = 5000;
@@ -155,9 +155,6 @@ const ScenarioRegistrar registrar { Scenario {
        #elif defined (_WIN32)
         (void) ctx;
         return ScenarioResult::skip ("Windows tracks the child by handle, not by pid");
-       #elif defined (__APPLE__)
-        (void) ctx;
-        return ScenarioResult::skip ("the sandbox stub children are not exercised on macOS");
        #else
         return runUnloadReapsChild (ctx);
        #endif
