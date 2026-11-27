@@ -93,6 +93,8 @@ public:
     // Another session was loaded or started: the multiband picker reads
     // "Select preset..." again.
     void sessionReplaced();
+    // Mono monitoring belongs to PHASE: off, it is released.
+    void releaseMonoWithPhaseOff();
     bool compDoubleClickForScenario (const std::string& control);
     // The panel with this log tag ("mastering-eq", "mastering-comp",
     // "mastering-limiter", "mastering-phase"), worked as the pointer works it.
