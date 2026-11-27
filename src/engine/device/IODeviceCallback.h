@@ -22,7 +22,9 @@ class IODevice;
 // cycleOffset the block's first sample within it. The blocks of a cycle all
 // run at the cycle's start, so whatever is placed by the time a block runs at
 // (live MIDI in, MIDI out) needs them to land where the block plays. Both are
-// zero for a block that is a whole cycle.
+// zero for a block that is a whole cycle. cycleSerial is the same for every
+// block of one split cycle and differs from the cycle before, so a callback
+// that sat some blocks out can tell which cycle it is back in.
 struct CallbackContext
 {
     const std::uint64_t* hostTimeNs = nullptr;
@@ -30,6 +32,7 @@ struct CallbackContext
     const std::atomic<bool>* renderCancelled = nullptr;
     int cycleOffset = 0;
     int cycleSamples = 0;
+    std::uint32_t cycleSerial = 0;
 };
 
 class IODeviceCallback

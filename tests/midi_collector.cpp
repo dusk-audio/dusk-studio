@@ -314,17 +314,21 @@ constexpr int kSubBlock = 512;
 constexpr int kSplitCycle = 4 * kSubBlock;
 constexpr double kCycleMs = 1000.0 * kSplitCycle / 48000.0;
 
+// Block `b` of four of the cycle numbered `serial`.
+std::vector<Placed> drainBlockOf (MidiCollector& c, std::uint32_t serial, int b, double nowMs)
+{
+    dusk::MidiBuffer out;
+    c.removeNextSubBlock (out, kSubBlock, { b * kSubBlock, kSplitCycle, serial }, nowMs);
+    return placed (out);
+}
+
 // One cycle handed over as four blocks, all run when the cycle starts. The
 // clock a later block reads is a little on, as the real one is.
-std::array<std::vector<Placed>, 4> drainSplitCycle (MidiCollector& c, double cycleStartMs)
+std::array<std::vector<Placed>, 4> drainSplitCycle (MidiCollector& c, std::uint32_t serial, double cycleStartMs)
 {
     std::array<std::vector<Placed>, 4> blocks;
     for (int b = 0; b < 4; ++b)
-    {
-        dusk::MidiBuffer out;
-        c.removeNextSubBlock (out, kSubBlock, b * kSubBlock, kSplitCycle, cycleStartMs + 0.02 * b);
-        blocks[(std::size_t) b] = placed (out);
-    }
+        blocks[(std::size_t) b] = drainBlockOf (c, serial, b, cycleStartMs + 0.02 * b);
     return blocks;
 }
 } // namespace
@@ -344,7 +348,7 @@ TEST_CASE ("MidiCollector places a split cycle's input in the block its arrival 
         add (whole, (std::uint8_t) (i + 1), arrivals[i]);
     }
 
-    const auto blocks = drainSplitCycle (split, kCycleMs);
+    const auto blocks = drainSplitCycle (split, 1, kCycleMs);
     CHECK (blocks[0] == std::vector<Placed> { { 1, 48 } });
     CHECK (blocks[1] == std::vector<Placed> { { 2, 64 } });
     CHECK (blocks[2] == std::vector<Placed> { { 3, 80 } });
@@ -363,7 +367,7 @@ TEST_CASE ("MidiCollector places a split cycle's input in the block its arrival 
     // The later blocks did not move the clock: the next cycle is retimed from
     // the start of this one.
     add (split, 6, kCycleMs + 13.0);   // sample 624 of the next cycle
-    const auto next = drainSplitCycle (split, 2.0 * kCycleMs);
+    const auto next = drainSplitCycle (split, 2, 2.0 * kCycleMs);
     CHECK (next[0].empty());
     CHECK (next[1] == std::vector<Placed> { { 6, 112 } });
     CHECK (next[2].empty());
@@ -383,40 +387,49 @@ TEST_CASE ("MidiCollector takes a block that is a whole cycle by the clock", "[m
     }
     const int cycleSamples = GENERATE (0, 512);
     dusk::MidiBuffer a, b;
-    viaSubBlock.removeNextSubBlock (a, 512, 0, cycleSamples, 10.0);
+    viaSubBlock.removeNextSubBlock (a, 512, { 0, cycleSamples, 0 }, 10.0);
     direct.removeNextBlock (b, 512, 10.0);
     REQUIRE (placed (a) == placed (b));
     REQUIRE (placed (a).size() == 3);
 }
 
-// The engine can sit out the first blocks of a cycle (it is suspended while a
-// device is reconfigured). What the collector holds is then the cycle before,
-// already played.
-TEST_CASE ("MidiCollector does not replay a cycle whose successor's start was skipped",
-           "[midi][collector]")
+// The engine can sit blocks out (it is suspended while a device is
+// reconfigured). When it is back part way through a later cycle, what the
+// collector holds is an older cycle's: it must not sound now.
+TEST_CASE ("MidiCollector does not play a cycle it holds into a later one", "[midi][collector]")
 {
     MidiCollector c;
     c.reset (48000.0, 0.0);
     add (c, 1, 12.0);   // sample 576: block 1
     add (c, 2, 23.0);   // sample 1104: block 2
-    const auto first = drainSplitCycle (c, kCycleMs);
-    REQUIRE (first[1] == std::vector<Placed> { { 1, 64 } });
-    REQUIRE (first[2] == std::vector<Placed> { { 2, 80 } });
+    add (c, 3, 34.0);   // sample 1632: block 3
 
-    add (c, 3, kCycleMs + 12.0);
-    for (int b = 1; b < 4; ++b)
+    SECTION ("a whole cycle played, then a later one joined after its start")
     {
-        dusk::MidiBuffer out;
-        c.removeNextSubBlock (out, kSubBlock, b * kSubBlock, kSplitCycle, 2.0 * kCycleMs);
-        CHECK (out.isEmpty());
+        const auto first = drainSplitCycle (c, 1, kCycleMs);
+        REQUIRE (first[1] == std::vector<Placed> { { 1, 64 } });
+        REQUIRE (first[2] == std::vector<Placed> { { 2, 80 } });
+        add (c, 4, kCycleMs + 12.0);
+        for (int b = 1; b < 4; ++b)
+            CHECK (drainBlockOf (c, 2, b, 2.0 * kCycleMs).empty());
+    }
+
+    // The blocks the engine is back at follow, by their offsets, the ones it
+    // played before it left: only the cycle's number tells them apart.
+    SECTION ("left part way through a cycle, back at the same block of a later one")
+    {
+        REQUIRE (drainBlockOf (c, 1, 0, kCycleMs).empty());
+        REQUIRE (drainBlockOf (c, 1, 1, kCycleMs) == std::vector<Placed> { { 1, 64 } });
+        add (c, 4, kCycleMs + 12.0);
+        CHECK (drainBlockOf (c, 7, 2, 3.0 * kCycleMs).empty());
+        CHECK (drainBlockOf (c, 7, 3, 3.0 * kCycleMs).empty());
     }
 
     // What arrived meanwhile is still pending, and plays once.
-    const auto third = drainSplitCycle (c, 3.0 * kCycleMs);
+    const auto later = drainSplitCycle (c, 9, 4.0 * kCycleMs);
     std::vector<int> tags;
-    for (const auto& block : third)
+    for (const auto& block : later)
         for (const auto& e : block)
             tags.push_back (e.tag);
-    CHECK (tags == std::vector<int> { 3 });
+    CHECK (tags == std::vector<int> { 4 });
 }
-

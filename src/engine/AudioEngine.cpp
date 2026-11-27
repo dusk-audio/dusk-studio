@@ -6085,9 +6085,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // Drain each MIDI input into its per-input buffer for this block. The
     // layer's drain is lock-free with respect to the MIDI thread's enqueue,
     // so the audio thread never contends. Empty buffers cost ~nothing.
+    const dusk::MidiCyclePlace cyclePlace { context.cycleOffset, context.cycleSamples, context.cycleSerial };
     for (int i = 0; i < midiIn.getNumInputs() && i < (int) perInputMidi.size(); ++i)
-        midiIn.drainBlock (i, perInputMidi[(size_t) i], numSamples,
-                           context.cycleOffset, context.cycleSamples);
+        midiIn.drainBlock (i, perInputMidi[(size_t) i], numSamples, cyclePlace);
 
     // Test-hook: if the message thread staged a buffer via
     // stageTestMidiInjection, merge it into the requested input's

@@ -263,7 +263,7 @@ namespace
 class PlaceRecorder final : public IODeviceCallback
 {
 public:
-    struct Block { int samples, cycleOffset, cycleSamples; bool offline; };
+    struct Block { int samples, cycleOffset, cycleSamples; std::uint32_t cycleSerial; bool offline; };
 
     void audioDeviceAboutToStart (IODevice*) override {}
     void audioDeviceStopped() override {}
@@ -271,7 +271,8 @@ public:
     void audioDeviceIOCallback (const float* const*, int, float* const*, int,
                                 int numSamples, const CallbackContext& context) override
     {
-        blocks.push_back ({ numSamples, context.cycleOffset, context.cycleSamples, context.offlineRender });
+        blocks.push_back ({ numSamples, context.cycleOffset, context.cycleSamples, context.cycleSerial,
+                            context.offlineRender });
     }
 
     std::vector<Block> blocks;
@@ -303,8 +304,17 @@ TEST_CASE ("A block of a split device cycle carries its place in the cycle", "[a
             CHECK (block.samples == 128);
             CHECK (block.cycleOffset == 128 * b);
             CHECK (block.cycleSamples == kCycle);
+            CHECK (block.cycleSerial == recorder.blocks[0].cycleSerial);
             CHECK (block.offline);
         }
+
+        // The next cycle's blocks carry another number, so a callback that sat
+        // some blocks out knows it is back in a different cycle.
+        REQUIRE (dispatchCycle (callback, clock, in, 1, out, 2, kCycle, context));
+        REQUIRE (recorder.blocks.size() == 8);
+        for (int b = 4; b < 8; ++b)
+            CHECK (recorder.blocks[(std::size_t) b].cycleSerial == recorder.blocks[4].cycleSerial);
+        CHECK (recorder.blocks[4].cycleSerial != recorder.blocks[0].cycleSerial);
     }
 
     SECTION ("a last block that is short")

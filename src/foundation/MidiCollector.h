@@ -30,6 +30,16 @@
 // wall clock internally, which makes bit-exact comparison timing-flaky.
 namespace dusk
 {
+// Where a block sits in a device cycle handed over as several blocks (see
+// duskstudio::device::CallbackContext, whose fields these are). All zero for a
+// block that is a whole cycle.
+struct MidiCyclePlace
+{
+    int offset = 0;
+    int samples = 0;
+    std::uint32_t serial = 0;
+};
+
 class MidiCollector
 {
 public:
@@ -160,36 +170,35 @@ public:
     // in the first. The first block (cycleOffset 0) retimes the pending events
     // over the whole cycle instead, exactly as removeNextBlock would for one
     // block that long, and each block takes the events that fall inside it.
-    // cycleSamples at or under numSamples is a whole cycle: removeNextBlock.
+    // A cycle at or under numSamples long is a whole cycle: removeNextBlock.
     void removeNextSubBlock (dusk::MidiBuffer& out, int numSamples,
-                             int cycleOffset, int cycleSamples, double nowMs) noexcept
+                             const MidiCyclePlace& place, double nowMs) noexcept
     {
-        if (cycleSamples <= numSamples)
+        if (place.samples <= numSamples)
         {
             cycle.clear();
             removeNextBlock (out, numSamples, nowMs);
             return;
         }
-        if (cycleOffset <= 0)
+        if (place.offset <= 0)
         {
             cycle.clear();
-            removeNextBlock (cycle, cycleSamples, nowMs);
-            cycleTaken = 0;
+            removeNextBlock (cycle, place.samples, nowMs);
+            heldCycle = place.serial;
         }
-        // A block that does not follow the one before it belongs to a cycle
-        // whose start was never drained here (the engine sat out its first
-        // blocks): what is held is an older cycle's, and must not play again.
-        else if (cycleOffset != cycleTaken)
+        // A block of a cycle whose start was never drained here (the engine sat
+        // its first blocks out): what is held is an older cycle's, part played
+        // and long past, and must not sound now.
+        else if (place.serial != heldCycle)
         {
             cycle.clear();
         }
         if (numSamples <= 0) return;
-        cycleTaken = cycleOffset + numSamples;
 
         bool overCap = false;
         for (const auto meta : cycle)
         {
-            const int pos = meta.samplePosition - cycleOffset;
+            const int pos = meta.samplePosition - place.offset;
             if (pos < 0 || pos >= numSamples) continue;
             if (! out.addEvent (meta.data, meta.numBytes, pos) && out.fitsWhenEmpty (meta.numBytes))
                 overCap = true;
@@ -213,7 +222,7 @@ private:
     dusk::MidiRing ring;
     // A split cycle's events at their offsets in the cycle; audio thread only.
     dusk::MidiBuffer cycle;
-    int cycleTaken = 0;   // samples of that cycle already handed out
+    std::uint32_t heldCycle = 0;   // the serial of the cycle those are from
     double sampleRate       = 44100.0;
     double lastCallbackTime = 0.0;   // ms; consumer-side only, no atomics needed
 };

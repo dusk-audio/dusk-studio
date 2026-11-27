@@ -4,6 +4,7 @@
 #include "IODeviceCallback.h"
 
 #include <atomic>
+#include <cstdint>
 #include <thread>
 
 namespace duskstudio::device
@@ -60,6 +61,10 @@ public:
         return previous;
     }
 
+    // Device thread: a number for the split cycle about to be handed over,
+    // never the one before's.
+    std::uint32_t nextSplitCycle() noexcept { return ++splitCycles; }
+
     // Message thread, when the device thread may be stuck inside a cycle:
     // detaches without waiting, and returns the callback only when no cycle
     // holds it.
@@ -75,6 +80,7 @@ private:
 
     std::atomic<IODeviceCallback*> callback { nullptr };
     std::atomic<bool> inCycle { false };
+    std::uint32_t splitCycles = 0;   // device thread only
 };
 
 // Device thread: hands one cycle to the attached callback in blocks of the
@@ -92,6 +98,8 @@ inline bool dispatchCycle (LeasedCallback& source, const ClockWatch& clock,
     const int prepared = clock.preparedBufferSize();
     CallbackContext block = context;
     block.cycleSamples = prepared > 0 && numSamples > prepared ? numSamples : 0;
+    if (block.cycleSamples > 0)
+        block.cycleSerial = source.nextSplitCycle();
     forEachSubBlock (in, numIn, out, numOut, numSamples, prepared,
                      [cb, numIn, numOut, &block] (const float* const* blockIn, float* const* blockOut, int len)
                      {

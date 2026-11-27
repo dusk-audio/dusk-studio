@@ -115,12 +115,12 @@ public:
     // off the RT path by the caller. A block that overruns that cap arrives
     // empty rather than truncated, matching the out path: a torn tail would let
     // a note-on through while its note-off was dropped. Call once per input
-    // index per block - the drain is destructive. cycleOffset and cycleSamples
-    // are the block's place in a device cycle handed over as several blocks
-    // (device::CallbackContext), zero otherwise: the events then land in the
-    // block, and at the offset, their arrival maps to within the whole cycle.
+    // index per block - the drain is destructive. `place` is the block's place
+    // in a device cycle handed over as several blocks (device::CallbackContext),
+    // all zero otherwise: the events then land in the block, and at the offset,
+    // their arrival maps to within the whole cycle.
     void drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples,
-                     int cycleOffset = 0, int cycleSamples = 0) noexcept;
+                     const dusk::MidiCyclePlace& place = {}) noexcept;
 
 private:
     // Backend MIDI thread. Routes by source identifier to the matching

@@ -178,12 +178,12 @@ void MidiInputClient::postVirtualKeyboardMidi (const std::uint8_t* bytes, int nu
 }
 
 void MidiInputClient::drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples,
-                                  int cycleOffset, int cycleSamples) noexcept
+                                  const dusk::MidiCyclePlace& place) noexcept
 {
     out.clear();
     if (inputIndex < 0 || inputIndex >= (int) collectors.size()) return;
     if (auto* col = collectors[(size_t) inputIndex].get())
-        col->removeNextSubBlock (out, numSamples, cycleOffset, cycleSamples, backendClockMs());
+        col->removeNextSubBlock (out, numSamples, place, backendClockMs());
 }
 
 void MidiInputClient::handleIncoming (const std::string& identifier,
