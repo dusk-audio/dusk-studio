@@ -1271,6 +1271,10 @@ void TapeStrip::timerCallback()
     {
         stopTimer();
         timerCount.set (false);
+        // Only this timer takes the playhead off the vblank once it stops
+        // moving, so a hidden strip lets go of it here.
+        playheadOnVBlank = false;
+        vBlankAttachment = PlayheadVBlank();
         return;
     }
     if (std::exchange (catchUpTick, false))
