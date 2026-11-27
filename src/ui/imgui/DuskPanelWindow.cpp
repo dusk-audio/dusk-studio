@@ -636,7 +636,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             // idle callback, so a pointer reporting at 1 kHz cannot drive more than a
             // frame per tick on a platform that paints on every invalidate.
             if (now - drawnAt >= std::chrono::milliseconds (kActivePumpMs))
+            {
+                askedFor = what;
                 repaint();
+            }
         }
 
         void noteScenarioInput()
@@ -664,14 +667,17 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             if (frameWanted (now))
             {
                 lastWantedAt = now;
-                frameCause = wantedFor;
+                askedFor = wantedFor;
                 DGL::ImGuiTopLevelWidget::idleCallback();
             }
             else
             {
                 afterGap = true;
                 if ((! scenarioFramesOnDemand || scenarioFrameFloor) && now - drawnAt >= kFrameFloor)
+                {
+                    askedFor = "the periodic frame";
                     DGL::ImGuiTopLevelWidget::idleCallback();
+                }
             }
             owner.pace (now - lastWantedAt < kInputHold);
         }
@@ -842,6 +848,9 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             }
             drawnAt = std::chrono::steady_clock::now();
             framesOwed = std::max (0, framesOwed - 1);
+            // A frame nothing here asked for is the system's: an expose, a resize.
+            const char* const asked = std::exchange (askedFor, nullptr);
+            frameCause = asked != nullptr ? asked : "a repaint the system asked for";
             ++owner.completedFrames;
             ++framesShown;
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
@@ -927,10 +936,11 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         bool afterGap = false, drawingAfterGap = false;
         const char* lastActivity = "";
         const char* wantedFor = "";
+        const char* askedFor = nullptr;   // why the frame now on its way was asked for
 
     public:
-        // Why the newest frame that was asked for was drawn: the input that
-        // reached the panel, or what else called for it. Empty before one.
+        // Why the newest frame was drawn: the input that reached the panel, what
+        // else called for it, or the system. Empty before the first.
         const char* frameCause = "";
         // Dear ImGui's frame time on the last frame drawn after a gap.
         std::optional<float> clockAfterGap;

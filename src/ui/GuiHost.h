@@ -311,8 +311,9 @@ public:
     // Frames the open native panel with this log tag ("mini-timeline", "piano-roll",
     // "mastering-eq", ...) has completed; empty while none is open.
     virtual std::optional<std::uint64_t> panelFrames (const std::string& logTag) const = 0;
-    // What called for that panel's newest frame drawn on demand, in a few words:
-    // the kind of input that reached it, or what else changed. Empty without one.
+    // What that panel's newest frame was drawn for, in a few words: the kind of
+    // input that reached it, what else changed, or a repaint the system asked
+    // for. Empty without one.
     virtual std::string panelFrameCause (const std::string& logTag) const = 0;
     // How far that panel's last frame drawn after a rest moved Dear ImGui's clock, in
     // seconds. Cleared by the call; empty when it drew none since, or none is open.

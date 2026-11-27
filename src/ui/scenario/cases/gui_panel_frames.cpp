@@ -216,7 +216,8 @@ void pushFloor (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
             ctx.expect (drawn >= 1, panels[i] + " drew no safety frame" + in);
             ctx.expect (drawn <= most, panels[i] + " drew " + std::to_string (drawn) + " frames" + in
                                            + " with nothing changing, more than the safety frame's "
-                                           + std::to_string (most));
+                                           + std::to_string (most) + " (the newest for "
+                                           + host.panelFrameCause (panels[i]) + ")");
         }
         host.panelFramesOnDemand (false, true);
     } });
