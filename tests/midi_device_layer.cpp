@@ -424,7 +424,7 @@ public:
     void closeAll() override { routeOpen.store (false); }
     bool isOpen (const std::string&) const override { return routeOpen.load(); }
 
-    bool send (const std::string&, int, const dusk::MidiBuffer& events, double, double) override
+    bool send (const std::string&, int, const dusk::MidiBuffer& events, double baseTimeMs, double) override
     {
         if (! routeOpen.load()) return false;
         if (failNextSend.exchange (false))
@@ -435,7 +435,10 @@ public:
         }
         const std::lock_guard<std::mutex> lock (mutex);
         for (const auto meta : events)
+        {
             notes.push_back (meta.data[1]);
+            baseTimes.push_back (baseTimeMs);
+        }
         return true;
     }
 
@@ -445,6 +448,13 @@ public:
         return notes;
     }
 
+    // The time each delivered note's block is sent from, in delivered() order.
+    std::vector<double> deliveredBaseTimesMs() const
+    {
+        const std::lock_guard<std::mutex> lock (mutex);
+        return baseTimes;
+    }
+
     std::atomic<bool> routeOpen { false }, refuseOpen { false }, failNextSend { false };
     // Pump thread, inside the send that fails. Set before startPump.
     std::function<void()> duringFailedSend;
@@ -452,6 +462,7 @@ public:
 private:
     mutable std::mutex mutex;
     std::vector<int> notes;
+    std::vector<double> baseTimes;
 };
 
 dusk::MidiBuffer noteBlock (int note)
@@ -592,3 +603,27 @@ TEST_CASE ("Stopping the MIDI output pump wakes it from its sleep", "[midi][devi
     if (! stopped) (void) bank.release();
     REQUIRE (stopped);
 }
+
+// The blocks of a device cycle that is handed over in parts are all queued
+// when the cycle starts. The last of four 512-sample blocks at 48 kHz plays
+// 32 ms after the first, and has to be sent from there.
+TEST_CASE ("MIDI queued from a later block of a split cycle leaves at that block's time",
+           "[midi][devices]")
+{
+    MidiOutputBank bank;
+    auto& backend = installLogging (bank);
+    bank.startPump();
+    REQUIRE (bank.ensureOpen (0));
+
+    bank.queueRt (0, 0, noteBlock (60), 48000.0, 0);
+    bank.queueRt (0, 0, noteBlock (61), 48000.0, 3 * 512);
+    REQUIRE (eventually ([&] { return backend.delivered() == std::vector<int> { 60, 61 }; }));
+    bank.stopPump();
+
+    const auto times = backend.deliveredBaseTimesMs();
+    REQUIRE (times.size() == 2);
+    // The second was queued no earlier than the first, so its base is at least
+    // its 1536 samples later.
+    CHECK (times[1] - times[0] >= 32.0);
+}
+

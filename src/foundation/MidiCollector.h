@@ -34,10 +34,18 @@ class MidiCollector
 {
 public:
     explicit MidiCollector (std::size_t ringCapacityBytes = kMidiBlockBytes)
-        : ring (ringCapacityBytes) {}
+        : ring (ringCapacityBytes)
+    {
+        cycle.reserveBytes (ringCapacityBytes);
+    }
 
     // Off-RT only. Resize the backing ring.
-    void setCapacity (std::size_t capacityBytes) { ring.reset (capacityBytes); }
+    void setCapacity (std::size_t capacityBytes)
+    {
+        ring.reset (capacityBytes);
+        cycle.clear();
+        cycle.reserveBytes (capacityBytes);
+    }
 
     // Off-RT (audioDeviceAboutToStart). Set the sample rate the timestamps
     // convert against and clear any backlog; nowMs seeds lastCallbackTime.
@@ -46,6 +54,7 @@ public:
         sampleRate       = newSampleRate;
         lastCallbackTime = nowMs;
         ring.clear();
+        cycle.clear();
     }
 
     // Producer (backend MIDI thread). timeMs is the hi-res ms timestamp in the
@@ -144,6 +153,50 @@ public:
         if (overCap) out.clear();
     }
 
+    // Consumer (audio thread), once per block, for a device that hands one
+    // cycle over as several blocks run back to back (see
+    // device::CallbackContext). Every block of the cycle runs at the same
+    // moment, so draining each by the clock would put the whole cycle's input
+    // in the first. The first block (cycleOffset 0) retimes the pending events
+    // over the whole cycle instead, exactly as removeNextBlock would for one
+    // block that long, and each block takes the events that fall inside it.
+    // cycleSamples at or under numSamples is a whole cycle: removeNextBlock.
+    void removeNextSubBlock (dusk::MidiBuffer& out, int numSamples,
+                             int cycleOffset, int cycleSamples, double nowMs) noexcept
+    {
+        if (cycleSamples <= numSamples)
+        {
+            cycle.clear();
+            removeNextBlock (out, numSamples, nowMs);
+            return;
+        }
+        if (cycleOffset <= 0)
+        {
+            cycle.clear();
+            removeNextBlock (cycle, cycleSamples, nowMs);
+            cycleTaken = 0;
+        }
+        // A block that does not follow the one before it belongs to a cycle
+        // whose start was never drained here (the engine sat out its first
+        // blocks): what is held is an older cycle's, and must not play again.
+        else if (cycleOffset != cycleTaken)
+        {
+            cycle.clear();
+        }
+        if (numSamples <= 0) return;
+        cycleTaken = cycleOffset + numSamples;
+
+        bool overCap = false;
+        for (const auto meta : cycle)
+        {
+            const int pos = meta.samplePosition - cycleOffset;
+            if (pos < 0 || pos >= numSamples) continue;
+            if (! out.addEvent (meta.data, meta.numBytes, pos) && out.fitsWhenEmpty (meta.numBytes))
+                overCap = true;
+        }
+        if (overCap) out.clear();
+    }
+
 private:
     // Event sample number relative to the last drain, matching JUCE's
     // (timeStamp - 0.001*lastCallbackTime)*sampleRate with timeStamp in seconds;
@@ -158,6 +211,9 @@ private:
     static int roundToInt (double v) noexcept { return (int) std::lrint (v); }
 
     dusk::MidiRing ring;
+    // A split cycle's events at their offsets in the cycle; audio thread only.
+    dusk::MidiBuffer cycle;
+    int cycleTaken = 0;   // samples of that cycle already handed out
     double sampleRate       = 44100.0;
     double lastCallbackTime = 0.0;   // ms; consumer-side only, no atomics needed
 };

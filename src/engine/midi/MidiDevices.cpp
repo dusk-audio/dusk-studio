@@ -9,6 +9,7 @@
  #include "JuceMidiBackend.h"
 #endif
 
+#include <algorithm>
 #include <cstdio>
 #include <utility>
 
@@ -176,12 +177,13 @@ void MidiInputClient::postVirtualKeyboardMidi (const std::uint8_t* bytes, int nu
         col->addMessage (bytes, numBytes, backendClockMs());
 }
 
-void MidiInputClient::drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples) noexcept
+void MidiInputClient::drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples,
+                                  int cycleOffset, int cycleSamples) noexcept
 {
     out.clear();
     if (inputIndex < 0 || inputIndex >= (int) collectors.size()) return;
     if (auto* col = collectors[(size_t) inputIndex].get())
-        col->removeNextBlock (out, numSamples, backendClockMs());
+        col->removeNextSubBlock (out, numSamples, cycleOffset, cycleSamples, backendClockMs());
 }
 
 void MidiInputClient::handleIncoming (const std::string& identifier,
@@ -385,7 +387,8 @@ void MidiOutputBank::reopenDroppedPorts()
     }
 }
 
-void MidiOutputBank::queueRt (int port, int stream, const dusk::MidiBuffer& events, double sampleRate) noexcept
+void MidiOutputBank::queueRt (int port, int stream, const dusk::MidiBuffer& events, double sampleRate,
+                              int cycleOffset) noexcept
 {
     // Sampled before the port is tested, not after: a close landing between the
     // two must leave this block carrying the pre-close generation so the pump
@@ -412,8 +415,8 @@ void MidiOutputBank::queueRt (int port, int stream, const dusk::MidiBuffer& even
 
     slot.port       = port;
     slot.stream     = stream;
-    slot.timeMs     = backendClockMs();
     slot.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
+    slot.timeMs     = backendClockMs() + 1000.0 * (double) std::max (0, cycleOffset) / slot.sampleRate;
     slot.generation = generation;
     writeCount.store (w + 1, std::memory_order_release);
 }

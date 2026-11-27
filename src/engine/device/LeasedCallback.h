@@ -89,10 +89,15 @@ inline bool dispatchCycle (LeasedCallback& source, const ClockWatch& clock,
     auto* cb = lease.get();
     if (cb == nullptr)
         return false;
-    forEachSubBlock (in, numIn, out, numOut, numSamples, clock.preparedBufferSize(),
-                     [cb, numIn, numOut, &context] (const float* const* blockIn, float* const* blockOut, int len)
+    const int prepared = clock.preparedBufferSize();
+    CallbackContext block = context;
+    block.cycleSamples = prepared > 0 && numSamples > prepared ? numSamples : 0;
+    forEachSubBlock (in, numIn, out, numOut, numSamples, prepared,
+                     [cb, numIn, numOut, &block] (const float* const* blockIn, float* const* blockOut, int len)
                      {
-                         cb->audioDeviceIOCallback (blockIn, numIn, blockOut, numOut, len, context);
+                         cb->audioDeviceIOCallback (blockIn, numIn, blockOut, numOut, len, block);
+                         if (block.cycleSamples > 0)
+                             block.cycleOffset += len;
                      });
     return true;
 }
