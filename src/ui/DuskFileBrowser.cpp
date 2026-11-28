@@ -297,6 +297,7 @@ public:
         okBtn.setButtonText (opts.mode == Mode::Save ? "Save" : "Open");
         cancelBtn.setButtonText ("Cancel");
         okBtn.onClick     = [this] { commit(); };
+        okBtn.setEnabled (browser != nullptr);
         cancelBtn.onClick = [this] { dismissCancelled(); };
         addAndMakeVisible (okBtn);
         addAndMakeVisible (cancelBtn);
@@ -453,7 +454,8 @@ private:
 
     void commit()
     {
-        if (browser == nullptr) { dismissCancelled(); return; }
+        // Still waiting on the volumes: there is nothing to open or save yet.
+        if (browser == nullptr) return;
 
         if (multiResultFn)
         {
@@ -538,6 +540,7 @@ private:
                 if (auto* l = dynamic_cast<juce::Label*> (child))
                     if (l->getText() == TRANS ("file:"))
                         l->setText (TRANS ("Name:"), juce::dontSendNotification);
+        okBtn.setEnabled (true);
         resized();
     }
 

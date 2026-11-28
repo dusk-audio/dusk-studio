@@ -393,43 +393,107 @@ TEST_CASE ("MidiCollector takes a block that is a whole cycle by the clock", "[m
     REQUIRE (placed (a).size() == 3);
 }
 
+namespace
+{
+struct Note
+{
+    int status = 0, key = 0, offset = 0;
+    bool operator== (const Note& o) const { return status == o.status && key == o.key && offset == o.offset; }
+};
+
+void addNote (MidiCollector& c, bool on, int key, double timeMs)
+{
+    const std::uint8_t bytes[3] { (std::uint8_t) (on ? 0x90 : 0x80), (std::uint8_t) key, (std::uint8_t) (on ? 100 : 0) };
+    c.addMessage (bytes, 3, timeMs);
+}
+
+std::vector<Note> notesOf (MidiCollector& c, std::uint32_t serial, int block, double nowMs)
+{
+    dusk::MidiBuffer out;
+    c.removeNextSubBlock (out, kSubBlock, { block * kSubBlock, kSplitCycle, serial }, nowMs);
+    std::vector<Note> v;
+    for (const auto meta : out)
+        v.push_back ({ meta.data[0], meta.data[1], meta.samplePosition });
+    return v;
+}
+
+constexpr int kOn = 0x90, kOff = 0x80;
+} // namespace
+
 // The engine can sit blocks out (it is suspended while a device is
-// reconfigured). When it is back part way through a later cycle, what the
-// collector holds is an older cycle's: it must not sound now.
-TEST_CASE ("MidiCollector does not play a cycle it holds into a later one", "[midi][collector]")
+// reconfigured), which leaves the collector holding events for blocks that
+// never ran. They are not played where they were placed, in whatever block
+// comes next at that offset: a note-on would sound seconds late. Nor are they
+// all dropped: a note-off among them ends a note an earlier block started.
+TEST_CASE ("MidiCollector ends, and does not start, notes left over from blocks that never ran",
+           "[midi][collector]")
 {
     MidiCollector c;
     c.reset (48000.0, 0.0);
-    add (c, 1, 12.0);   // sample 576: block 1
-    add (c, 2, 23.0);   // sample 1104: block 2
-    add (c, 3, 34.0);   // sample 1632: block 3
+    addNote (c, true, 60, 12.0);    // sample 576: block 1
+    addNote (c, false, 60, 23.0);   // sample 1104: block 2
+    addNote (c, true, 64, 34.0);    // sample 1632: block 3
+    REQUIRE (notesOf (c, 1, 0, kCycleMs).empty());
+    REQUIRE (notesOf (c, 1, 1, kCycleMs) == std::vector<Note> { { kOn, 60, 64 } });
+    // Blocks 2 and 3 of cycle 1 never run. This arrives meanwhile.
+    addNote (c, true, 67, kCycleMs + 12.0);
 
-    SECTION ("a whole cycle played, then a later one joined after its start")
+    SECTION ("back at the same block of a later cycle")
     {
-        const auto first = drainSplitCycle (c, 1, kCycleMs);
-        REQUIRE (first[1] == std::vector<Placed> { { 1, 64 } });
-        REQUIRE (first[2] == std::vector<Placed> { { 2, 80 } });
-        add (c, 4, kCycleMs + 12.0);
-        for (int b = 1; b < 4; ++b)
-            CHECK (drainBlockOf (c, 2, b, 2.0 * kCycleMs).empty());
+        // By its offset this block follows the last one played: only the
+        // cycle's number says it is another cycle.
+        CHECK (notesOf (c, 7, 2, 3.0 * kCycleMs) == std::vector<Note> { { kOff, 60, 0 } });
+        CHECK (notesOf (c, 7, 3, 3.0 * kCycleMs).empty());
+    }
+    SECTION ("back at the start of the next cycle")
+    {
+        // The held note-off first, then the new cycle's own events.
+        const auto block0 = notesOf (c, 2, 0, 2.0 * kCycleMs);
+        REQUIRE (block0.size() == 1);
+        CHECK (block0[0] == Note { kOff, 60, 0 });
+        CHECK (notesOf (c, 2, 1, 2.0 * kCycleMs) == std::vector<Note> { { kOn, 67, 64 } });
+        CHECK (notesOf (c, 2, 2, 2.0 * kCycleMs).empty());
+        CHECK (notesOf (c, 2, 3, 2.0 * kCycleMs).empty());
+        return;
+    }
+    SECTION ("back in the same cycle, a block on")
+    {
+        CHECK (notesOf (c, 1, 3, kCycleMs) == std::vector<Note> { { kOff, 60, 0 }, { kOn, 64, 96 } });
+    }
+    SECTION ("back once cycles are whole again")
+    {
+        dusk::MidiBuffer out;
+        c.removeNextSubBlock (out, kSplitCycle, {}, 2.0 * kCycleMs);
+        std::vector<Note> got;
+        for (const auto meta : out)
+            got.push_back ({ meta.data[0], meta.data[1], meta.samplePosition });
+        CHECK (got == std::vector<Note> { { kOff, 60, 0 }, { kOn, 67, 576 } });
+        return;
     }
 
-    // The blocks the engine is back at follow, by their offsets, the ones it
-    // played before it left: only the cycle's number tells them apart.
-    SECTION ("left part way through a cycle, back at the same block of a later one")
-    {
-        REQUIRE (drainBlockOf (c, 1, 0, kCycleMs).empty());
-        REQUIRE (drainBlockOf (c, 1, 1, kCycleMs) == std::vector<Placed> { { 1, 64 } });
-        add (c, 4, kCycleMs + 12.0);
-        CHECK (drainBlockOf (c, 7, 2, 3.0 * kCycleMs).empty());
-        CHECK (drainBlockOf (c, 7, 3, 3.0 * kCycleMs).empty());
-    }
+    // What arrived meanwhile was never held: it plays once, in a cycle that
+    // is drained from its start.
+    std::vector<Note> later;
+    for (int b = 0; b < 4; ++b)
+        for (const auto& n : notesOf (c, 9, b, 4.0 * kCycleMs))
+            later.push_back (n);
+    REQUIRE (later.size() == 1);
+    CHECK (later[0].status == kOn);
+    CHECK (later[0].key == 67);
+}
 
-    // What arrived meanwhile is still pending, and plays once.
-    const auto later = drainSplitCycle (c, 9, 4.0 * kCycleMs);
-    std::vector<int> tags;
-    for (const auto& block : later)
-        for (const auto& e : block)
-            tags.push_back (e.tag);
-    CHECK (tags == std::vector<int> { 4 });
+// A cycle played to its end leaves nothing behind for a later one.
+TEST_CASE ("MidiCollector keeps nothing of a cycle it played in full", "[midi][collector]")
+{
+    MidiCollector c;
+    c.reset (48000.0, 0.0);
+    addNote (c, true, 60, 12.0);
+    addNote (c, false, 60, 34.0);
+    std::size_t played = 0;
+    for (int b = 0; b < 4; ++b)
+        played += notesOf (c, 1, b, kCycleMs).size();
+    REQUIRE (played == 2);
+    for (int b = 1; b < 4; ++b)
+        CHECK (notesOf (c, 2, b, 2.0 * kCycleMs).empty());
+    CHECK (notesOf (c, 3, 0, 3.0 * kCycleMs).empty());
 }

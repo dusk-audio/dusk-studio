@@ -643,8 +643,17 @@ void MasteringView::closePanelLists (const imgui::DuskPanelWindow* pressed)
    #endif
 }
 
+void MasteringView::releaseMonoWithPhaseOff()
+{
+    if (! session.mastering().phase.enabled.load (std::memory_order_relaxed) && engine.getMasteringMonoMonitor())
+        engine.setMasteringMonoMonitor (false);
+}
+
 void MasteringView::sessionReplaced()
 {
+    // A session that has PHASE off comes with Mono released, whether or not
+    // this page shows: its timer rests while it is hidden.
+    releaseMonoWithPhaseOff();
     compPresetChoice = 0;
    #if DUSKSTUDIO_HAS_NATIVE_UI
     for (auto* window : { eqWindow.get(), compWindow.get(), limiterWindow.get(), phaseWindow.get() })
@@ -1091,10 +1100,8 @@ void MasteringView::timerCallback()
     if (windowFocused && ! focused)
         closePanelLists();
     windowFocused = focused;
-    // The switch also changes with a session load, which knows nothing of the
-    // monitor fold.
-    if (! session.mastering().phase.enabled.load (std::memory_order_relaxed) && engine.getMasteringMonoMonitor())
-        engine.setMasteringMonoMonitor (false);
+    // PHASE switched off in its panel takes Mono with it.
+    releaseMonoWithPhaseOff();
     updatePhaseAnalysis();
     auto& player = engine.getMasteringPlayer();
     auto& m = session.mastering();

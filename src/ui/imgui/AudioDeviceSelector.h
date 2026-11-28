@@ -38,7 +38,9 @@ public:
 
 private:
     void rebuildFromManager();
-    void applySetupChange (bool deviceChanged);
+    // What the user picked from: a device, the rate list or the buffer list.
+    enum class Pick { device, rate, buffer };
+    void applySetupChange (Pick pick);
     void applyTypeChange();
     void deferred (std::function<void()> action);
 

@@ -26,6 +26,7 @@ public:
     ~MiniTimelineStrip() override;
 
     void captureMarkerPaintForScenario (bool enabled) { capturePaint = enabled; }
+    bool refreshRunningForScenario() const noexcept { return isTimerRunning(); }
     std::vector<scenario::MiniMarkerPaint> markerPaintForScenario() const;
     std::int64_t shownEndForScenario() const;
     bool clickSampleForScenario (std::int64_t);

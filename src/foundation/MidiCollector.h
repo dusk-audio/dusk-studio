@@ -55,6 +55,7 @@ public:
         ring.reset (capacityBytes);
         cycle.clear();
         cycle.reserveBytes (capacityBytes);
+        cycleTaken = heldEnd = 0;
     }
 
     // Off-RT (audioDeviceAboutToStart). Set the sample rate the timestamps
@@ -65,6 +66,7 @@ public:
         lastCallbackTime = nowMs;
         ring.clear();
         cycle.clear();
+        cycleTaken = heldEnd = 0;
     }
 
     // Producer (backend MIDI thread). timeMs is the hi-res ms timestamp in the
@@ -167,46 +169,73 @@ public:
     // cycle over as several blocks run back to back (see
     // device::CallbackContext). Every block of the cycle runs at the same
     // moment, so draining each by the clock would put the whole cycle's input
-    // in the first. The first block (cycleOffset 0) retimes the pending events
-    // over the whole cycle instead, exactly as removeNextBlock would for one
-    // block that long, and each block takes the events that fall inside it.
+    // in the first. The first block (offset 0) retimes the pending events over
+    // the whole cycle instead, exactly as removeNextBlock would for one block
+    // that long, and each block takes the events that fall inside it.
     // A cycle at or under numSamples long is a whole cycle: removeNextBlock.
+    //
+    // The callback can sit blocks out (the engine is suspended while a device
+    // is reconfigured), which leaves held events whose block never ran. They
+    // go out late, at the start of the next block that does run, in this cycle
+    // or a later one - all but the note-ons. A late note-off or pedal-up ends
+    // what an earlier block started; a note-on that late would only start a
+    // note whose end may already have gone by.
     void removeNextSubBlock (dusk::MidiBuffer& out, int numSamples,
                              const MidiCyclePlace& place, double nowMs) noexcept
     {
         if (place.samples <= numSamples)
         {
-            cycle.clear();
+            releaseHeld (out, heldEnd);
             removeNextBlock (out, numSamples, nowMs);
             return;
         }
+        if (place.offset <= 0 || place.serial != heldCycle)
+            releaseHeld (out, heldEnd);
         if (place.offset <= 0)
         {
-            cycle.clear();
             removeNextBlock (cycle, place.samples, nowMs);
             heldCycle = place.serial;
-        }
-        // A block of a cycle whose start was never drained here (the engine sat
-        // its first blocks out): what is held is an older cycle's, part played
-        // and long past, and must not sound now.
-        else if (place.serial != heldCycle)
-        {
-            cycle.clear();
+            heldEnd = place.samples;
         }
         if (numSamples <= 0) return;
 
+        // This cycle's blocks that never ran, then this block's own events.
+        const int taken = cycleTaken;
+        releaseHeld (out, place.offset, false);
         bool overCap = false;
         for (const auto meta : cycle)
         {
             const int pos = meta.samplePosition - place.offset;
-            if (pos < 0 || pos >= numSamples) continue;
+            if (meta.samplePosition < taken || pos < 0 || pos >= numSamples) continue;
             if (! out.addEvent (meta.data, meta.numBytes, pos) && out.fitsWhenEmpty (meta.numBytes))
                 overCap = true;
         }
         if (overCap) out.clear();
+        cycleTaken = std::max (taken, place.offset + numSamples);
     }
 
 private:
+    // Hands out, at the start of the block, the held events from cycleTaken up
+    // to `before` that are not note-ons, and counts them taken. With `drop`
+    // the held cycle is over: nothing of it is kept.
+    void releaseHeld (dusk::MidiBuffer& out, int before, bool drop = true) noexcept
+    {
+        for (const auto meta : cycle)
+        {
+            if (meta.samplePosition < cycleTaken || meta.samplePosition >= before) continue;
+            const bool noteOn = meta.numBytes >= 3 && (meta.data[0] & 0xF0) == 0x90 && meta.data[2] != 0;
+            if (! noteOn)
+                out.addEvent (meta.data, meta.numBytes, 0);
+        }
+        cycleTaken = std::max (cycleTaken, before);
+        if (drop)
+        {
+            cycle.clear();
+            cycleTaken = 0;
+            heldEnd = 0;
+        }
+    }
+
     // Event sample number relative to the last drain, matching JUCE's
     // (timeStamp - 0.001*lastCallbackTime)*sampleRate with timeStamp in seconds;
     // here both timestamps are ms. Truncates toward zero, as JUCE's (int) cast.
@@ -223,6 +252,8 @@ private:
     // A split cycle's events at their offsets in the cycle; audio thread only.
     dusk::MidiBuffer cycle;
     std::uint32_t heldCycle = 0;   // the serial of the cycle those are from
+    int heldEnd = 0;               // that cycle's length
+    int cycleTaken = 0;            // its samples already handed out
     double sampleRate       = 44100.0;
     double lastCallbackTime = 0.0;   // ms; consumer-side only, no atomics needed
 };
